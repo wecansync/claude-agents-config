@@ -3,9 +3,27 @@
 Version `1.0.0` packages the portable parts of the global Claude Code setup: the
 29-lane delegate fleet, generated native agents, routing hook, privacy-safe status
 line, global delegation policy, model picker, permissions, plugins, and optional
-model discovery. The canonical build location is
-`/var/www/html/claude-agents-config/`; the directory can be copied elsewhere and
-run from its new location.
+model discovery. The directory can be copied or cloned anywhere and run from its
+new location; the canonical build path is not required at install time.
+
+## Platform support and prerequisites
+
+| Platform / launcher | Status | Prerequisites and notes |
+|---|---|---|
+| Native Ubuntu/Linux | Supported | Python 3.10+; Node.js 18+ is required for fleet sync or explicit model discovery; Bash launchers are optional. |
+| macOS | Supported | Python 3.10+; Node.js 18+ is required for fleet sync or explicit model discovery; use `install.sh` or Python. |
+| Native Windows PowerShell | Supported | Python 3.10+; Node.js 18+ for fleet sync/discovery; use `install.ps1`, `update.ps1`, or `uninstall.ps1`. |
+| Native Windows CMD | Supported | Python 3.10+ (`py -3` or `python`); Node.js 18+ for sync/discovery; use the matching `.cmd` wrapper. |
+| Git Bash on Windows | Supported as POSIX compatibility mode | Requires Python 3.10+ and Node.js 18+ on PATH; native PowerShell/CMD entrypoints are preferred. |
+| WSL | Supported as Linux | Uses the Linux installation and Linux home/config paths; native Windows and WSL targets are separate. |
+
+The native Windows and POSIX entrypoints dispatch to the same Python installer. The
+bundle root is inferred from the resolved installer file, so cloning into a path
+with spaces or invoking through a symlink is supported. Python is authoritative;
+Bash, PowerShell, and CMD files are only quoting-safe dispatchers. No Windows
+runtime was available for execution in this validation environment, so the
+PowerShell/CMD claims are backed by static syntax-safe entrypoints and path
+construction tests, not a native Windows run.
 
 ## One-command installation
 
@@ -15,11 +33,18 @@ The installer never changes a machine without an explicit action. Preview first:
 ./install.sh --dry-run --home /tmp/claude-test --prefix /tmp/claude-test
 ```
 
-Apply to a normal user account, with no gateway enabled:
+Apply to a normal user account without a gateway. This selects the explicit
+`direct-anthropic` profile: all 29 lanes use only first-party Claude model IDs,
+gateway-only automatic routing is not installed, and model discovery remains
+disabled. This mode is usable with a normal Anthropic login:
 
 ```bash
 ./install.sh --apply
 ```
+
+For Linux/macOS, `XDG_CONFIG_HOME` is honored; use `--config-home DIR` when an
+explicit configuration root is needed. A `--prefix DIR` sandbox is self-contained
+and uses `DIR/.config` unless `--config-home` is supplied.
 
 Enable the gateway only when both URL and a non-empty token are supplied. The
 recommended non-interactive form reads the token from an environment variable and
@@ -33,15 +58,44 @@ export MY_CLAUDE_GATEWAY_TOKEN='set this outside shell history when possible'
 ```
 
 If `--gateway-url` is supplied without `--gateway-token-env`, the installer asks
-for the token with hidden input on a TTY. A non-interactive invocation fails rather
-than writing an enabled gateway without a token. A token environment variable
-without a URL is rejected. Gateway URLs may not contain embedded credentials.
+for the token with hidden input only when both stdin and stderr are real TTYs. A
+non-interactive invocation fails rather than reading piped data or writing an
+enabled gateway without a token. A token environment variable without a URL is
+rejected. Gateway URLs must use HTTPS, may not contain embedded credentials, and
+HTTP is accepted only for loopback (`localhost`, `127.0.0.1`, or `::1`) with the
+explicit `--allow-insecure-http` flag.
+
+Model discovery is not installed as a SessionStart hook by default. To opt in,
+provide gateway credentials and `--enable-model-discovery`; the script itself also
+requires `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`. Discovery writes cache
+and settings files atomically with mode 0600 and re-reads under an exclusive lock.
 
 For a disposable sandbox, `--prefix DIR` is a complete target home when `--home`
 is omitted: configuration goes under `DIR/.claude` and `DIR/.config`, and command
 wrappers under `DIR/bin`. When both are supplied, `--home` owns configuration and
 `--prefix/bin` owns command wrappers. Relative paths are resolved from the current
 working directory.
+
+### Context compaction safety
+
+The bundle sets both Claude Code compaction controls to `800000`: the top-level
+`autoCompactWindow` setting and the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` environment
+setting under `env`. The matching values are intentional because the environment
+setting takes precedence when Claude Code starts. This leaves headroom below the
+advertised `872000` input-token limit for the Codex/gpt-5.6-luna-max route; the
+observed full request was `876273` tokens, so the prior `950000` environment value
+could compact too late.
+
+Current Claude Code settings have one global auto-compact window, not a
+model-conditional expression. `800000` therefore applies to every installed
+session, but it does not make smaller gateway routes safe: custom routes advertised
+at 200K–400K must not be selected for long prompts that approach their provider
+limit. The bundle preserves those picker rows for compatibility, but users should
+select a route whose advertised context covers the workload; this installer does
+not claim dynamic per-model compaction. A user or higher-priority managed setting
+may still override the value. On update, a value that the bundle previously owned
+is refreshed to `800000`, while a later user edit is preserved by the ownership
+journal.
 
 The requested canonical destination is checked when this bundle is built or copied.
 If the destination's parent is unavailable or unwritable, creation fails clearly;
@@ -81,12 +135,19 @@ Backups are stored under `<home>/.claude/backups/claude-agents-config/`.
   is disabled by default and does nothing without both a gateway URL and token;
   when enabled, it never prints the token and preserves every model required by the fleet.
 * `<home>/.claude/agents/fleet-*.md` — exactly 29 generated agents.
-* `<home>/.config/delegate-skills/config.json` and
-  `generate-claude-agents.mjs` — the fleet map and portable generator.
-* `<prefix>/bin/claude-fleet-sync` and `claude-agents-doctor` — command wrappers.
+* `<config-home>/delegate-skills/config.json` and
+  `generate-claude-agents.mjs` — the fleet map and portable generator. The
+  config root is `XDG_CONFIG_HOME` on Linux/macOS, `<home>/.config` otherwise,
+  or the explicit `--config-home` value.
+* `<prefix>/bin/claude-fleet-sync` and `claude-agents-doctor` — POSIX wrappers,
+  plus `.ps1` and `.cmd` native Windows entrypoints.
+* `<home>/.claude/.claude-agents-config-manifest.json` — stable installed-tree
+  verification data, so the installed doctor does not need the source clone.
 
-The local `kai-research` marketplace and plugin entries from the source machine are
-intentionally not copied because the marketplace source is a machine-local path.
+Machine-local marketplace source paths are intentionally not copied because they
+cannot be portable. Remote marketplace entries, enabled plugin selections,
+permissions, model picker descriptions, and optional agent-brain hook stages are
+retained when applicable.
 Remote marketplace entries, enabled plugin selections, permissions, model picker descriptions, and optional
 agent-brain hook stages are retained. Agent-brain hooks are guarded with
 `command -v`; they are inert when that optional tool is not installed.
@@ -128,11 +189,14 @@ these values in the packaged and installed hook.
 
 ## Prerequisites and trust
 
-Only ordinary Linux Bash, Python 3, and Node.js are required. No project npm or
-Composer dependency is used. Python's standard library and Node built-ins are the
-only runtime libraries. Review `manifest.json`, the scripts, and the generated agent
-frontmatter before applying on a new device. The generator, routing hook, statusline,
-and installer are executable text files; no binaries are bundled.
+Python 3.10+ is required on every platform. Node.js 18+ is required before
+fleet sync or explicit model discovery; it is not required for a default direct
+profile apply when the generated agents are already present in the bundle. No
+project npm or Composer dependency is used. Python's standard library and Node
+built-ins are the only runtime libraries. Review `manifest.json`, the scripts, and
+the generated agent frontmatter before applying on a new device. The generator,
+routing hook, statusline, and installer are executable text files; no binaries are
+bundled.
 
 The gateway token is the only secret this setup normally needs. Keep it in a protected
 environment or provide it through hidden prompt input. Do not put it in this bundle,

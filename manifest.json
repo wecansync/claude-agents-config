@@ -1,17 +1,21 @@
 {
   "format": "claude-agents-config.bundle.v1",
   "version": "1.0.0",
-  "canonicalPath": "/var/www/html/claude-agents-config",
   "files": [
     {
+      "path": ".gitattributes",
+      "sha256": "1f69be76b9bf13ef44f5ed750760e632dc84dadcabe39f1e5c86f826bb013dfa",
+      "mode": "0o644"
+    },
+    {
       "path": "README.md",
-      "sha256": "45be7ce01b230b97dd4975bcd66d70b028d799082d4502a497c50eecccd3bab4",
-      "mode": "0o664"
+      "sha256": "1b6a7692b7528d7c09012971268289be6ac84ff833d6476102380039ed685d41",
+      "mode": "0o644"
     },
     {
       "path": "VERSION",
       "sha256": "59854984853104df5c353e2f681a15fc7924742f9a2e468c29af248dce45ce03",
-      "mode": "0o664"
+      "mode": "0o644"
     },
     {
       "path": "agents/fleet-diagnose-static.md",
@@ -160,47 +164,57 @@
     },
     {
       "path": "bin/claude-agents-doctor",
-      "sha256": "0849acee720d1fbc8806572d7edae0f4f466d1ff2afbce1d9d8453793654e6ae",
+      "sha256": "7aa7166085fb663c2d37c0daed7f6c026f8d31a6a374c114900a830bda1c4fbb",
       "mode": "0o755"
     },
     {
       "path": "bin/claude-fleet-sync",
-      "sha256": "fcac1ad7490167b99d6a9d40fa5ac00451f4b5152c904e6fa98c1a201849f9c2",
+      "sha256": "f5e37b1bc17fbabb3c47bda4e352161b8f5ab0565854d64cfbd6bfb745bdad9c",
       "mode": "0o755"
     },
     {
       "path": "bin/install.py",
-      "sha256": "8534c8796858bad0559a8c5607e037c01c34bdb0d7fd9a26c0e840f5e03f7f83",
+      "sha256": "2cd605739467ac0bae1f76cd7636b1b90d1c5270d490e8b9a704d61d27cbd349",
       "mode": "0o755"
     },
     {
       "path": "config/CLAUDE.md",
       "sha256": "c5522aeea1ab6dd3ff37f9777fa03c4c20e4c3e6413906bdad5c5322a8c3c913",
-      "mode": "0o664"
+      "mode": "0o644"
     },
     {
       "path": "config/delegate-fleet.json",
       "sha256": "b3f9b33fa4b104e373183cdf86b33b50ef291967b123f261b0af5ef9925988c2",
-      "mode": "0o664"
+      "mode": "0o644"
     },
     {
       "path": "config/settings.template.json",
-      "sha256": "1345761e15e792a145fa2f7720609b97fade16b0be8002aa160a868f1ea461f2",
-      "mode": "0o664"
+      "sha256": "3af6dde93e77b3d29c1cd2c9a7c55c54a69be3808ba2031cf4f87f572fc1237d",
+      "mode": "0o644"
+    },
+    {
+      "path": "install.cmd",
+      "sha256": "f93771cf7e968ec9b03afd5a0d7f9755270f06c8454f3699a1279e8bf9dcbb0c",
+      "mode": "0o644"
+    },
+    {
+      "path": "install.ps1",
+      "sha256": "b4e35e21a4d92186b868cc04a8681380b8b781534d966e2cef92a2610ad2eab3",
+      "mode": "0o644"
     },
     {
       "path": "install.sh",
-      "sha256": "5993e3bd148f7ea1155f8c4c941d095b710fd5ef7c35c5064e4bed696833846a",
+      "sha256": "5086a9984869b4e9703bd846922335113fb3dccbf1fe1e0b41bdc3dd67248d0b",
       "mode": "0o755"
     },
     {
       "path": "scripts/generate-claude-agents.mjs",
-      "sha256": "02717525bd63cda70daa12e7c84e8d5c7accaffb0169a9585698ff8106ecf461",
+      "sha256": "6626a39fc97a759deddb204ed7e756002d0b25695df040080c4ba9428d41627d",
       "mode": "0o755"
     },
     {
       "path": "scripts/route-to-fleet.py",
-      "sha256": "66181e106cdda5d9f1c3bf27ed40cbc050d700ec23cd551f4ce6c0c8fd96bb83",
+      "sha256": "69fd1e37c4ba56c0642207fa21701ac10a4224e0fee320379b777deea1861724",
       "mode": "0o755"
     },
     {
@@ -210,17 +224,37 @@
     },
     {
       "path": "scripts/sync-omniroute-models.mjs",
-      "sha256": "236fe57cbdb3c6258bcbe7229c0abed0fdc4a7c53af90dfde3a8587d3687e839",
+      "sha256": "8162381442e304b826749d44ff19a195040112a1ebb0e0b41cbbd204ee6de2bc",
       "mode": "0o755"
+    },
+    {
+      "path": "uninstall.cmd",
+      "sha256": "88b75b1ea19e33f9e7c3277712276b952b5fd875f0c16f9d6a7b8808bf476aee",
+      "mode": "0o644"
+    },
+    {
+      "path": "uninstall.ps1",
+      "sha256": "ec99b05510cb3858bfb122cacd4f13c42d9a3d4cb31de3a900f1dc6ea676dfc6",
+      "mode": "0o644"
     },
     {
       "path": "uninstall.sh",
-      "sha256": "38eebf1643dbc4d489ffe8b32d538eab85538fbeaa3a08ca2909fd2bd0191863",
+      "sha256": "6dca29222afb3463496ac012b1002051c4225dd7ba189b92f7aec97e3bc9de53",
       "mode": "0o755"
     },
     {
+      "path": "update.cmd",
+      "sha256": "29b07bdbf94af07de5468631d4bc2f0917566ca78c4e974f44c610cc9b963762",
+      "mode": "0o644"
+    },
+    {
+      "path": "update.ps1",
+      "sha256": "b5869166c8fb47aebaa2fe27c51678aeac7e443ff563bebb2adb19910b82a916",
+      "mode": "0o644"
+    },
+    {
       "path": "update.sh",
-      "sha256": "e83c658596b9ec12cb338cc4952f9ffcbfc70e92a97cc9ff86623728601bb3c2",
+      "sha256": "e9d0e5d1a783b5ccb66658f23a840271cac22abe044dca28429eeea46a7395e8",
       "mode": "0o755"
     }
   ]

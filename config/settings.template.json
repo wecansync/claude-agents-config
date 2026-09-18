@@ -2,11 +2,11 @@
   "env": {
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5[1m]",
     "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "0",
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "950000",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "800000",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5[1m]",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku",
     "ANTHROPIC_SMALL_FAST_MODEL": "claude-haiku",
-    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144"
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "800000"
   },
   "permissions": {
     "allow": [
@@ -21,7 +21,7 @@
     "deny": [],
     "ask": []
   },
-  "model": "codex-luna[1m]",
+  "model": "claude-sonnet-5[1m]",
   "modelPicker": {
     "options": [
       {
@@ -246,11 +246,9 @@
   },
   "outputStyle": "concise",
   "effortLevel": "xhigh",
-  "autoCompactWindow": 872000,
+  "autoCompactWindow": 800000,
   "advisorModel": "codex-sol-max[1m]",
   "tui": "fullscreen",
-  "skipDangerousModePermissionPrompt": true,
   "autoCompactEnabled": true,
-  "agentPushNotifEnabled": true,
-  "defaultMode": "bypassPermissions"
+  "agentPushNotifEnabled": true
 }

@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
-BUNDLE_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-if [[ ! -d "$BUNDLE_DIR" ]]; then
-  printf 'claude-agents-config: bundle directory is unavailable: %s\n' "$BUNDLE_DIR" >&2
+
+# Bash is only a compatibility dispatcher. Resolve the actual script with
+# Python so a symlinked clone works on systems without readlink -f (including
+# macOS), and so all installation behavior remains in the cross-platform Python
+# implementation.
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="$(command -v python3)"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_BIN="$(command -v python)"
+else
+  printf '%s\n' 'claude-agents-config: Python 3.10 or newer is required.' >&2
   exit 1
 fi
-if [[ ! -w "$(dirname -- "$BUNDLE_DIR")" && ! -w "$BUNDLE_DIR" ]]; then
-  printf 'claude-agents-config: bundle directory is unavailable or unwritable: %s\n' "$BUNDLE_DIR" >&2
-  exit 1
-fi
-exec python3 "$BUNDLE_DIR/bin/install.py" --bundle "$BUNDLE_DIR" "$@"
+INSTALLER="$($PYTHON_BIN -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parent / "bin" / "install.py")' "${BASH_SOURCE[0]}")"
+exec "$PYTHON_BIN" "$INSTALLER" "$@"

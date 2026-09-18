@@ -2,21 +2,40 @@
 # claude-agents-config:managed
 set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-HOME_OVERRIDE="${CLAUDE_FLEET_HOME:-${HOME:-}}"
+HOME_OVERRIDE="${CLAUDE_FLEET_HOME:-${HOME:-${USERPROFILE:-}}}"
+CONFIG_OVERRIDE="${CLAUDE_FLEET_CONFIG_HOME:-${XDG_CONFIG_HOME:-}}"
 args=("$@")
+has_home=false
+has_config=false
 for ((i=0; i<${#args[@]}; i++)); do
-  if [[ "${args[$i]}" == "--home" && $((i+1)) -lt ${#args[@]} ]]; then HOME_OVERRIDE="${args[$((i+1))]}"; fi
+  if [[ "${args[$i]}" == "--home" && $((i+1)) -lt ${#args[@]} ]]; then
+    HOME_OVERRIDE="${args[$((i+1))]}"
+    has_home=true
+  fi
+  if [[ "${args[$i]}" == "--config-home" && $((i+1)) -lt ${#args[@]} ]]; then
+    CONFIG_OVERRIDE="${args[$((i+1))]}"
+    has_config=true
+  fi
 done
 if [[ -f "$SCRIPT_DIR/../scripts/generate-claude-agents.mjs" ]]; then
-  exec node "$SCRIPT_DIR/../scripts/generate-claude-agents.mjs" "$@"
+  forwarded=()
+  if [[ "$has_home" != true && -n "$HOME_OVERRIDE" ]]; then forwarded+=(--home "$HOME_OVERRIDE"); fi
+  if [[ "$has_config" != true && -n "$CONFIG_OVERRIDE" ]]; then forwarded+=(--config-home "$CONFIG_OVERRIDE"); fi
+  forwarded+=("${args[@]}")
+  exec node "$SCRIPT_DIR/../scripts/generate-claude-agents.mjs" "${forwarded[@]}"
 fi
 if [[ -z "$HOME_OVERRIDE" ]]; then
   printf '%s\n' 'claude-fleet-sync: HOME is unset; pass --home DIR.' >&2
   exit 2
 fi
-GENERATOR="$HOME_OVERRIDE/.config/delegate-skills/generate-claude-agents.mjs"
+CONFIG_ROOT="${CONFIG_OVERRIDE:-$HOME_OVERRIDE/.config}"
+GENERATOR="$CONFIG_ROOT/delegate-skills/generate-claude-agents.mjs"
 if [[ ! -f "$GENERATOR" ]]; then
   printf 'claude-fleet-sync: generator not found at %s\n' "$GENERATOR" >&2
   exit 1
 fi
-exec node "$GENERATOR" "$@"
+forwarded=()
+if [[ "$has_home" != true ]]; then forwarded+=(--home "$HOME_OVERRIDE"); fi
+if [[ "$has_config" != true ]]; then forwarded+=(--config-home "$CONFIG_ROOT"); fi
+forwarded+=("${args[@]}")
+exec node "$GENERATOR" "${forwarded[@]}"

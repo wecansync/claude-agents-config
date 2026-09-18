@@ -108,9 +108,20 @@ def _purge_file(path, now):
         return
 
     tmp = path + ".tmp"
+    payload = ("\n".join(kept) + "\n").encode("utf-8")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        os.write(fd, ("\n".join(kept) + "\n").encode("utf-8"))
+        view = memoryview(payload)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("short routing-log write")
+            view = view[written:]
+        os.fsync(fd)
+        try:
+            os.fchmod(fd, 0o600)
+        except AttributeError:
+            pass
     finally:
         os.close(fd)
     os.replace(tmp, path)
@@ -128,7 +139,15 @@ def maybe_purge():
         for path in (LOG_PATH, LOG_PATH + ".1"):
             if os.path.exists(path):
                 _purge_file(path, now)
-        os.close(os.open(PURGE_STAMP, os.O_WRONLY | os.O_CREAT, 0o600))
+        stamp_fd = os.open(PURGE_STAMP, os.O_WRONLY | os.O_CREAT, 0o600)
+        try:
+            try:
+                os.fchmod(stamp_fd, 0o600)
+            except AttributeError:
+                pass
+            os.fsync(stamp_fd)
+        finally:
+            os.close(stamp_fd)
         os.utime(PURGE_STAMP, None)
     except Exception:
         pass
@@ -156,8 +175,18 @@ def record(reason, prompt, lane=None):
         flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
         fd = os.open(LOG_PATH, flags, 0o600)
         try:
-            os.fchmod(fd, 0o600)
-            os.write(fd, (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8"))
+            try:
+                os.fchmod(fd, 0o600)
+            except AttributeError:
+                pass
+            payload = (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8")
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("short routing-log write")
+                view = view[written:]
+            os.fsync(fd)
         finally:
             os.close(fd)
     except Exception:

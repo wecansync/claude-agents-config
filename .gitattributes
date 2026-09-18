@@ -1,0 +1,11 @@
+# Keep bundle bytes stable across clone platforms and core.autocrlf settings.
+*.sh text eol=lf
+*.py text eol=lf
+*.mjs text eol=lf
+*.ps1 text eol=lf
+*.cmd text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+VERSION text eol=lf
+checksums.sha256 text eol=lf
+manifest.json text eol=lf
