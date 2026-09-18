@@ -1,0 +1,179 @@
+{
+  "version": "delegate-fleet.v1",
+  "lanes": {
+    "plan": {
+      "implementer": "claude",
+      "model": "claude-opus-5[1m]",
+      "effort": "xhigh",
+      "readOnly": true
+    },
+    "plan-alt": {
+      "implementer": "claude",
+      "model": "codex-sol[1m]",
+      "effort": "xhigh",
+      "readOnly": true
+    },
+    "implement": {
+      "implementer": "claude",
+      "model": "codex-luna[1m]",
+      "effort": "xhigh",
+      "timeout": "2h"
+    },
+    "implement-02-gemini-flash": {
+      "implementer": "claude",
+      "model": "agy-gemini-flash[1m]",
+      "effort": "high",
+      "timeout": "2h"
+    },
+    "implement-03-agy-opus": {
+      "implementer": "claude",
+      "model": "agy-claude-opus[1m]",
+      "effort": "xhigh",
+      "timeout": "2h"
+    },
+    "implement-04-free-1m": {
+      "implementer": "claude",
+      "model": "omniroute-free-1m-ctx[1m]",
+      "effort": "medium",
+      "timeout": "2h"
+    },
+    "implement-05-agy-sonnet": {
+      "implementer": "claude",
+      "model": "agy-claude-sonnet[1m]",
+      "effort": "high",
+      "timeout": "2h"
+    },
+    "implement-06-free-256k": {
+      "implementer": "claude",
+      "model": "omniroute-free-256k-ctx",
+      "effort": "medium",
+      "timeout": "2h"
+    },
+    "implement-07-auto-128k": {
+      "implementer": "claude",
+      "model": "custom-auto",
+      "effort": "medium",
+      "timeout": "2h"
+    },
+    "implement-08-atria-experimental": {
+      "implementer": "claude",
+      "model": "Atria",
+      "effort": "medium",
+      "timeout": "2h"
+    },
+    "implement-09-codex-5-5": {
+      "implementer": "claude",
+      "model": "codex-5.5",
+      "effort": "high",
+      "timeout": "2h"
+    },
+    "implement-10-sonnet": {
+      "implementer": "claude",
+      "model": "claude-sonnet-5[1m]",
+      "effort": "high",
+      "timeout": "2h"
+    },
+    "implement-11-terra": {
+      "implementer": "claude",
+      "model": "codex-terra[1m]",
+      "effort": "high",
+      "timeout": "2h"
+    },
+    "implement-12-openclaw-free": {
+      "implementer": "claude",
+      "model": "openclaw-free",
+      "effort": "medium",
+      "timeout": "2h"
+    },
+    "implement-13-grok-no-cache": {
+      "implementer": "claude",
+      "model": "cursor-grok",
+      "effort": "xhigh",
+      "timeout": "2h"
+    },
+    "review": {
+      "implementer": "claude",
+      "model": "codex-sol[1m]",
+      "effort": "xhigh",
+      "readOnly": true
+    },
+    "review-02-opus": {
+      "implementer": "claude",
+      "model": "claude-opus-5[1m]",
+      "effort": "xhigh",
+      "readOnly": true
+    },
+    "review-03-terra": {
+      "implementer": "claude",
+      "model": "codex-terra[1m]",
+      "effort": "xhigh",
+      "readOnly": true
+    },
+    "review-04-gemini": {
+      "implementer": "claude",
+      "model": "agy-gemini-pro[1m]",
+      "effort": "high",
+      "readOnly": true
+    },
+    "review-05-grok": {
+      "implementer": "claude",
+      "model": "cursor-grok",
+      "effort": "xhigh",
+      "readOnly": true
+    },
+    "diagnose-static": {
+      "implementer": "claude",
+      "model": "codex-sol-max[1m]",
+      "effort": "xhigh",
+      "readOnly": true
+    },
+    "security-review": {
+      "implementer": "claude",
+      "model": "claude-opus-5[1m]",
+      "effort": "xhigh",
+      "readOnly": true
+    },
+    "ui": {
+      "implementer": "claude",
+      "model": "agy-claude-opus[1m]",
+      "effort": "high",
+      "timeout": "2h"
+    },
+    "tests": {
+      "implementer": "claude",
+      "model": "agy-gemini-flash[1m]",
+      "effort": "high",
+      "timeout": "2h"
+    },
+    "docs": {
+      "implementer": "claude",
+      "model": "agy-claude-sonnet[1m]",
+      "effort": "medium",
+      "timeout": "2h"
+    },
+    "explore-narrow": {
+      "implementer": "claude",
+      "model": "claude-haiku",
+      "effort": "medium",
+      "readOnly": true
+    },
+    "research-codebase": {
+      "implementer": "claude",
+      "model": "agy-gemini-pro[1m]",
+      "effort": "high",
+      "readOnly": true
+    },
+    "research-web": {
+      "implementer": "claude",
+      "model": "agy-gemini-pro[1m]",
+      "effort": "high",
+      "readOnly": true
+    },
+    "triage-static": {
+      "implementer": "claude",
+      "model": "cursor-auto",
+      "effort": "high",
+      "readOnly": true
+    }
+  }
+}

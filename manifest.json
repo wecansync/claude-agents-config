@@ -1,0 +1,227 @@
+{
+  "format": "claude-agents-config.bundle.v1",
+  "version": "1.0.0",
+  "canonicalPath": "/var/www/html/claude-agents-config",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "45be7ce01b230b97dd4975bcd66d70b028d799082d4502a497c50eecccd3bab4",
+      "mode": "0o664"
+    },
+    {
+      "path": "VERSION",
+      "sha256": "59854984853104df5c353e2f681a15fc7924742f9a2e468c29af248dce45ce03",
+      "mode": "0o664"
+    },
+    {
+      "path": "agents/fleet-diagnose-static.md",
+      "sha256": "79ecc01eac4054e12eba866e75962ee50c72be47bf9396881492c8a6ce85aa06",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-docs.md",
+      "sha256": "5106418c8cba1af7bfa3bd6fa2c287f5e50a8c03394e2c6c9b34a4e95bab065f",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-explore-narrow.md",
+      "sha256": "dc019be293ded78f3c03cc6a07c06c1e8ec41e056825794983fa59740cd8844a",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-02-gemini-flash.md",
+      "sha256": "41e8554f81d57724190e2fef458c27cff93392260512ee5b5c531a3b2f008dcf",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-03-agy-opus.md",
+      "sha256": "d59e29a4e3414e826ea07c45047920ba36958cec3a039656616c51b70fe00238",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-04-free-1m.md",
+      "sha256": "22684a599b3bcc51e4115dcc60a0a76e100a01cadc83e23de0d74b928f34060e",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-05-agy-sonnet.md",
+      "sha256": "0d56315d33167207284c10674458fa59706753a5ce78b57cbabcbdd6afad3553",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-06-free-256k.md",
+      "sha256": "c8bfc73b14fc717405f3ce8ccc90fa135f0374a99470c2163bdfed97da4803fe",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-07-auto-128k.md",
+      "sha256": "3d54ab8b65bf9cc7c168216b3729b5db32976c5266448792932a9bee5d2a2776",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-08-atria-experimental.md",
+      "sha256": "2ef293e2393ac76d1b6bdaeea6bc6f245dd7b279b03f2401fd0341ae6b2d4d1e",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-09-codex-5-5.md",
+      "sha256": "ebc12ff6118968490b78351aea3b1a253f2fd35776ff66e7015a3078f765f286",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-10-sonnet.md",
+      "sha256": "f4cc7138fb7a1b5279cca3f6e0727d7d97484f39aa0922b9e8c9d377496b2c0f",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-11-terra.md",
+      "sha256": "0107225ca538338298b9798dc489e826d21c8b452f929b95ec102eedff4c46a6",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-12-openclaw-free.md",
+      "sha256": "b0a79796059e27e43a6bef290ce0fd6f1be8fcbe9d449d50e0348072287038ab",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement-13-grok-no-cache.md",
+      "sha256": "8e4b075a46db0d1cc0aa500a52730029d9d92f447f8454b5eb0f7030c0a13268",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-implement.md",
+      "sha256": "66c268fac0e76dd513ff63d5715cd7be4b63509440ab72a83fe84822d4f0ae2a",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-plan-alt.md",
+      "sha256": "381a5d4c1757168173928e1172dd2f768ede480b8faef874f25dc0ad3a629610",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-plan.md",
+      "sha256": "51cfd449c7e9ca3f687bd4deda6e859ba0fcac10f1b3cdfc97dd7e7c1a7e4989",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-research-codebase.md",
+      "sha256": "ca76bd9aa61e87a330d6aa4b5844416f0160fd1f0c7de4a7bba7f5498f7ef56c",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-research-web.md",
+      "sha256": "2ccdb4b450be0dfb207a6d173c0f86b6c27dcca278bf58512a02c8a27bff5ef2",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-review-02-opus.md",
+      "sha256": "45e337037a92f756010c226563ecf3df5157408161baea4f501fe079b6fa3b71",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-review-03-terra.md",
+      "sha256": "61998986334d2330cdc254e08bde18fc78d3aa9e85b54ff6a54236af15c30459",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-review-04-gemini.md",
+      "sha256": "546b95a8cc689bf233fe2aa1341a4e831a9fe1ff1ad65812f01c1f12750a412b",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-review-05-grok.md",
+      "sha256": "646cacd1feee0f132ce378373b2ef45683e13c7614d87f65d298ec521f493cfe",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-review.md",
+      "sha256": "5b65df19451d35e175f4d53a5b363c4f6c68467cc681a9fb9e240d939f60b590",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-security-review.md",
+      "sha256": "82cb6026981580572fc1dea3589cfd0f2de40b05d610c1040df8e0376d1d36e3",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-tests.md",
+      "sha256": "95c076d2698ae426ca9075acdbe5860d6f40bda59e81004255d4603898d49d80",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-triage-static.md",
+      "sha256": "addbe6741322b0503f62d317304ea6244735ede3297036a1e036331311772281",
+      "mode": "0o644"
+    },
+    {
+      "path": "agents/fleet-ui.md",
+      "sha256": "eee54d47fe6e24b00147df435c9cf53f802eafede8af27993c7449bec19032e7",
+      "mode": "0o644"
+    },
+    {
+      "path": "bin/claude-agents-doctor",
+      "sha256": "0849acee720d1fbc8806572d7edae0f4f466d1ff2afbce1d9d8453793654e6ae",
+      "mode": "0o755"
+    },
+    {
+      "path": "bin/claude-fleet-sync",
+      "sha256": "fcac1ad7490167b99d6a9d40fa5ac00451f4b5152c904e6fa98c1a201849f9c2",
+      "mode": "0o755"
+    },
+    {
+      "path": "bin/install.py",
+      "sha256": "8534c8796858bad0559a8c5607e037c01c34bdb0d7fd9a26c0e840f5e03f7f83",
+      "mode": "0o755"
+    },
+    {
+      "path": "config/CLAUDE.md",
+      "sha256": "c5522aeea1ab6dd3ff37f9777fa03c4c20e4c3e6413906bdad5c5322a8c3c913",
+      "mode": "0o664"
+    },
+    {
+      "path": "config/delegate-fleet.json",
+      "sha256": "b3f9b33fa4b104e373183cdf86b33b50ef291967b123f261b0af5ef9925988c2",
+      "mode": "0o664"
+    },
+    {
+      "path": "config/settings.template.json",
+      "sha256": "1345761e15e792a145fa2f7720609b97fade16b0be8002aa160a868f1ea461f2",
+      "mode": "0o664"
+    },
+    {
+      "path": "install.sh",
+      "sha256": "5993e3bd148f7ea1155f8c4c941d095b710fd5ef7c35c5064e4bed696833846a",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/generate-claude-agents.mjs",
+      "sha256": "02717525bd63cda70daa12e7c84e8d5c7accaffb0169a9585698ff8106ecf461",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/route-to-fleet.py",
+      "sha256": "66181e106cdda5d9f1c3bf27ed40cbc050d700ec23cd551f4ce6c0c8fd96bb83",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/subagent-statusline.py",
+      "sha256": "8e6afe26b0a90cf369bfd632d1598e62c52d8ba0c12c81d31c05d22cbe6c94ec",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/sync-omniroute-models.mjs",
+      "sha256": "236fe57cbdb3c6258bcbe7229c0abed0fdc4a7c53af90dfde3a8587d3687e839",
+      "mode": "0o755"
+    },
+    {
+      "path": "uninstall.sh",
+      "sha256": "38eebf1643dbc4d489ffe8b32d538eab85538fbeaa3a08ca2909fd2bd0191863",
+      "mode": "0o755"
+    },
+    {
+      "path": "update.sh",
+      "sha256": "e83c658596b9ec12cb338cc4952f9ffcbfc70e92a97cc9ff86623728601bb3c2",
+      "mode": "0o755"
+    }
+  ]
+}

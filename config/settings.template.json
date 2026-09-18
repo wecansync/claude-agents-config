@@ -1,0 +1,256 @@
+{
+  "env": {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5[1m]",
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "0",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "950000",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5[1m]",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku",
+    "ANTHROPIC_SMALL_FAST_MODEL": "claude-haiku",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144"
+  },
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "WebFetch",
+      "WebSearch",
+      "mcp__agent-brain-memory"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "model": "codex-luna[1m]",
+  "modelPicker": {
+    "options": [
+      {
+        "model": "openclaw-free",
+        "label": "Openclaw Free",
+        "description": "400K gateway context"
+      },
+      {
+        "model": "claude-opus-5[1m]",
+        "label": "Opus 5",
+        "description": "Opus 5 · 1M ctx · strongest reasoning (w/ Antigravity fallback)"
+      },
+      {
+        "model": "claude-sonnet-5[1m]",
+        "label": "Sonnet 5",
+        "description": "Sonnet 5 · 1M ctx · best everyday balance (w/ Antigravity fallback)"
+      },
+      {
+        "model": "claude-haiku",
+        "label": "Haiku",
+        "description": "Haiku 4.5 · 200K ctx · fastest + cheapest Claude"
+      },
+      {
+        "model": "agy-claude-opus[1m]",
+        "label": "Agy Claude Opus",
+        "description": "Opus 4.6 thinking via Antigravity · 1M ctx · does NOT use Anthropic seats"
+      },
+      {
+        "model": "agy-claude-sonnet[1m]",
+        "label": "Agy Claude Sonnet",
+        "description": "Sonnet 4.6 via Antigravity · 1M ctx · does NOT use Anthropic seats"
+      },
+      {
+        "model": "agy-gemini-flash[1m]",
+        "label": "Gemini Flash",
+        "description": "Gemini 3.8/3.7 Flash tiered→high→medium · 1M ctx · fast bulk work"
+      },
+      {
+        "model": "agy-gemini-pro[1m]",
+        "label": "Gemini 3.1 Pro",
+        "description": "Gemini 3.1 Pro high → agent → low · 1M ctx · deeper reasoning"
+      },
+      {
+        "model": "codex-sol[1m]",
+        "label": "Codex Sol",
+        "description": "GPT-5.6 Sol xhigh → high · 872K ctx · general coding"
+      },
+      {
+        "model": "codex-sol-max[1m]",
+        "label": "Codex Sol Max",
+        "description": "GPT-5.6 Sol ultra → max · 872K ctx · top effort, deliberate use"
+      },
+      {
+        "model": "codex-luna[1m]",
+        "label": "Codex Luna",
+        "description": "GPT-5.6 Luna max → xhigh · 872K ctx · heavy implementation"
+      },
+      {
+        "model": "codex-terra[1m]",
+        "label": "Codex Terra",
+        "description": "GPT-5.6 Terra xhigh → high · 872K ctx · alt Codex family"
+      },
+      {
+        "model": "codex-5.5",
+        "label": "Codex 5.5",
+        "description": "GPT-5.5 xhigh → high · 272K ctx · older, smaller window"
+      },
+      {
+        "model": "cursor-grok",
+        "label": "Grok 4.6 (Cursor)",
+        "description": "Grok 4.6 high-fast → high → xhigh · 200K ctx · no prompt cache, ~9x slower"
+      },
+      {
+        "model": "cursor-auto",
+        "label": "Cursor Auto",
+        "description": "Cursor auto-router intelligence → balance → cost · 200K ctx"
+      },
+      {
+        "model": "omniroute-free-1m-ctx[1m]",
+        "label": "Free — 1M",
+        "description": "FREE · 1M ctx · Nemotron 3.5 Lightning & Ultra 550B · fast/batch"
+      },
+      {
+        "model": "omniroute-free-256k-ctx",
+        "label": "Free — 256K",
+        "description": "FREE · 256K ctx · Nemotron Super, Nex N2.5, Ling, Gemma 4, Laguna XS · fast"
+      },
+      {
+        "model": "custom-auto",
+        "label": "Custom Auto",
+        "description": "AUTO · picks cheapest capable model and escalates · size-aware"
+      },
+      {
+        "model": "Atria",
+        "label": "Atria",
+        "description": "Atria Dawn Preview"
+      }
+    ],
+    "replaceBuiltInOptions": true
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v agent-brain >/dev/null 2>&1; then agent-brain hook tool-use; fi # claude-agents-config:agent-brain",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v agent-brain >/dev/null 2>&1; then agent-brain hook session-end; fi # claude-agents-config:agent-brain",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v agent-brain >/dev/null 2>&1; then agent-brain hook session-start; fi # claude-agents-config:agent-brain",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"__CLAUDE_HOME__/sync-omniroute-models.mjs\" --quiet # claude-agents-config:model-sync",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v agent-brain >/dev/null 2>&1; then agent-brain hook stop; fi # claude-agents-config:agent-brain",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v agent-brain >/dev/null 2>&1; then agent-brain hook subagent-stop; fi # claude-agents-config:agent-brain",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v agent-brain >/dev/null 2>&1; then agent-brain hook prompt; fi # claude-agents-config:agent-brain",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"__CLAUDE_HOME__/route-to-fleet.py\" # claude-agents-config:route",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "subagentStatusLine": {
+    "command": "python3 \"__CLAUDE_HOME__/subagent-statusline.py\" # claude-agents-config:statusline",
+    "type": "command"
+  },
+  "enabledPlugins": {
+    "claude-md-management@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "php-lsp@claude-plugins-official": true,
+    "plannotator@plannotator": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "warp@claude-code-warp": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-code-warp": {
+      "source": {
+        "source": "github",
+        "repo": "warpdotdev/claude-code-warp"
+      }
+    },
+    "claude-plugins-official": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/anthropics/claude-plugins-official.git"
+      }
+    },
+    "plannotator": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/backnotprop/plannotator.git"
+      }
+    }
+  },
+  "outputStyle": "concise",
+  "effortLevel": "xhigh",
+  "autoCompactWindow": 872000,
+  "advisorModel": "codex-sol-max[1m]",
+  "tui": "fullscreen",
+  "skipDangerousModePermissionPrompt": true,
+  "autoCompactEnabled": true,
+  "agentPushNotifEnabled": true,
+  "defaultMode": "bypassPermissions"
+}
