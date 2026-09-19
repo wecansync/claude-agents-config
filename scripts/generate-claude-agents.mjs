@@ -179,8 +179,11 @@ const autoLanes = new Set([
   "triage-static",
 ]);
 
-function descriptionFor(lane, model, role) {
+const FLEET_FALLBACK_DESCRIPTION = "Required by delegate fleet";
+
+function descriptionFor(lane, model, role, config) {
   const spec = roleConfig[role];
+  if (config.description) return `${config.description} Runs on ${model}.`;
   if (autoLanes.has(lane)) {
     return `${spec.trigger} Runs on ${model}.`;
   }
@@ -192,7 +195,26 @@ function renderAgent(lane, config, sourceHash) {
   const spec = roleConfig[role];
   if (!spec) fail(`no agent role mapping for lane ${lane}`);
   const agentName = `fleet-${lane}`;
-  return `---\nname: ${agentName}\ndescription: ${yamlString(descriptionFor(lane, config.model, role))}\nmodel: ${yamlString(config.model)}\neffort: ${config.effort || "high"}\ntools: ${spec.tools}\nbackground: true\nomitClaudeMd: true\ncolor: ${spec.color}\nmaxTurns: ${spec.maxTurns}\n---\n\n<!-- ${marker}; source-sha256: ${sourceHash} -->\n\n# Fleet lane: ${lane}\n\nYou are the native Claude Code subagent for global fleet lane \`${lane}\`. The main agent owns decomposition, integration, final gates, and outward-facing actions. You own only the bounded assignment in your invocation.\n\n${spec.prompt}\n\nThe main agent must put every applicable project instruction, gate, and handoff requirement in the brief because this generated agent omits CLAUDE.md to keep context bounded and avoid delegated handoff writes. Project memory search may be unavailable in custom-agent sessions; use it when permitted and continue from the brief and repository evidence when it is not. Before stopping, save only durable project knowledge and write the local session summary required by the agent-brain lifecycle. If the brief lacks a decision required to continue safely, stop and report the gap instead of expanding scope.\n`;
+  return `---\nname: ${agentName}\ndescription: ${yamlString(descriptionFor(lane, config.model, role, config))}\nmodel: ${yamlString(config.model)}\neffort: ${config.effort || "high"}\ntools: ${spec.tools}\nbackground: true\nomitClaudeMd: true\ncolor: ${spec.color}\nmaxTurns: ${spec.maxTurns}\n---\n\n<!-- ${marker}; source-sha256: ${sourceHash} -->\n\n# Fleet lane: ${lane}\n\nYou are the native Claude Code subagent for global fleet lane \`${lane}\`. The main agent owns decomposition, integration, final gates, and outward-facing actions. You own only the bounded assignment in your invocation.\n\n${spec.prompt}\n\nThe main agent must put every applicable project instruction, gate, and handoff requirement in the brief because this generated agent omits CLAUDE.md to keep context bounded and avoid delegated handoff writes. Project memory search may be unavailable in custom-agent sessions; use it when permitted and continue from the brief and repository evidence when it is not. Before stopping, save only durable project knowledge and write the local session summary required by the agent-brain lifecycle. If the brief lacks a decision required to continue safely, stop and report the gap instead of expanding scope.\n`;
+}
+
+function candidatesFor(config) {
+  const candidates = [config.model, ...(Array.isArray(config.fallbacks) ? config.fallbacks : [])];
+  return [...new Set(candidates.filter((model) => typeof model === "string" && model))];
+}
+
+function resolveModel(lane, config, picker) {
+  const candidates = candidatesFor(config);
+  const available = (model) => {
+    const row = picker.get(model);
+    return row && row.description !== FLEET_FALLBACK_DESCRIPTION;
+  };
+  const resolved = candidates.find(available) || candidates.find((model) => picker.has(model));
+  if (!resolved) fail(`${lane} has no usable model candidate: ${candidates.join(", ") || "<missing>"}`);
+  if (resolved !== config.model) {
+    process.stderr.write(`claude-fleet-sync: ${lane} resolved ${config.model} -> ${resolved}\n`);
+  }
+  return resolved;
 }
 
 const fleetRaw = readFileSync(fleetPath, "utf8");
@@ -201,20 +223,21 @@ const settings = readJson(settingsPath);
 if (fleet.version !== "delegate-fleet.v1" || !fleet.lanes || typeof fleet.lanes !== "object") {
   fail(`${fleetPath} is not a delegate-fleet.v1 map`);
 }
-const picker = new Set((settings.modelPicker?.options || []).map((row) => row.model));
+const picker = new Map((settings.modelPicker?.options || []).map((row) => [row.model, row]));
 if (picker.size === 0) fail(`${settingsPath} has no modelPicker options`);
 
 const laneNamePattern = /^[a-z0-9][a-z0-9-]*$/;
+const resolvedModels = new Map();
 for (const [lane, config] of Object.entries(fleet.lanes)) {
   if (!laneNamePattern.test(lane)) fail(`invalid lane name: ${lane}`);
   if (config.implementer !== "claude") fail(`${lane} uses unsupported implementer ${config.implementer}`);
-  if (!config.model || !picker.has(config.model)) fail(`${lane} model ${config.model || "<missing>"} is absent from the current modelPicker`);
+  resolvedModels.set(lane, resolveModel(lane, config, picker));
 }
 
 const sourceHash = createHash("sha256").update(fleetRaw).digest("hex").slice(0, 16);
 const desired = new Map();
 for (const [lane, config] of Object.entries(fleet.lanes)) {
-  desired.set(`fleet-${lane}.md`, renderAgent(lane, config, sourceHash));
+  desired.set(`fleet-${lane}.md`, renderAgent(lane, { ...config, model: resolvedModels.get(lane) }, sourceHash));
 }
 
 if (!checkOnly) mkdirSync(agentsDir, { recursive: true });

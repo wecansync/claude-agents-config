@@ -90,6 +90,11 @@
         "description": "GPT-5.5 xhigh → high · 272K ctx · older, smaller window"
       },
       {
+        "model": "codex-astra[1m]",
+        "label": "Codex Astra",
+        "description": "GPT-6 Astra medium → high · 872K ctx · frontier reviews and complex plans"
+      },
+      {
         "model": "cursor-grok",
         "label": "Grok 4.6 (Cursor)",
         "description": "Grok 4.6 high-fast → high → xhigh · 200K ctx · no prompt cache, ~9x slower"
@@ -182,7 +187,7 @@
           {
             "type": "command",
             "command": "node \"__CLAUDE_HOME__/sync-omniroute-models.mjs\" --quiet # claude-agents-config:model-sync",
-            "timeout": 5
+            "timeout": 8
           }
         ]
       },

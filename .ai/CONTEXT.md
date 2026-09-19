@@ -6,12 +6,12 @@ This repository packages the portable parts of a global Claude Code setup so a u
 
 ## Bundle contents
 
-- 29 generated `fleet-*` agent definitions.
+- 30 generated `fleet-*` agent definitions.
 - A portable delegation policy and fleet map.
 - Sanitized Claude settings template and model-picker entries.
 - Automatic prompt-to-fleet routing hook with privacy-safe retention.
 - Subagent status-line helper.
-- Optional gateway model synchronizer.
+- Optional gateway model synchronizer and advisory model-drift proposal.
 - Authoritative Python installer plus POSIX, PowerShell, and CMD dispatchers.
 - Update, uninstall, rollback, and doctor/check commands.
 - `VERSION`, `manifest.json`, and `checksums.sha256` integrity metadata.

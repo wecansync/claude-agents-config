@@ -94,6 +94,7 @@
     "review": {
       "implementer": "claude",
       "model": "codex-sol[1m]",
+      "fallbacks": ["claude-opus-5[1m]"],
       "effort": "xhigh",
       "readOnly": true
     },
@@ -118,6 +119,14 @@
     "review-05-grok": {
       "implementer": "claude",
       "model": "cursor-grok",
+      "effort": "xhigh",
+      "readOnly": true
+    },
+    "review-06-astra": {
+      "implementer": "claude",
+      "model": "codex-astra[1m]",
+      "fallbacks": ["claude-opus-5[1m]"],
+      "description": "Frontier reviewer for very hard reviews. Use only when the user names it, when the change crosses a security or trust boundary, touches installer, migration, or concurrency paths, risks data loss, or when primary findings conflict.",
       "effort": "xhigh",
       "readOnly": true
     },

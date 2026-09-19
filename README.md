@@ -1,7 +1,7 @@
 # Portable Claude Code Fleet Bundle
 
 Version `1.0.0` packages the portable parts of the global Claude Code setup: the
-29-lane delegate fleet, generated native agents, routing hook, privacy-safe status
+30-lane delegate fleet, generated native agents, routing hook, privacy-safe status
 line, global delegation policy, model picker, permissions, plugins, and optional
 model discovery. The directory can be copied or cloned anywhere and run from its
 new location; the canonical build path is not required at install time.
@@ -34,7 +34,7 @@ The installer never changes a machine without an explicit action. Preview first:
 ```
 
 Apply to a normal user account without a gateway. This selects the explicit
-`direct-anthropic` profile: all 29 lanes use only first-party Claude model IDs,
+`direct-anthropic` profile: all 30 lanes use only first-party Claude model IDs,
 gateway-only automatic routing is not installed, and model discovery remains
 disabled. This mode is usable with a normal Anthropic login:
 
@@ -139,13 +139,17 @@ Backups are stored under `<home>/.claude/backups/claude-agents-config/`.
 * `<home>/.claude/subagent-statusline.py` — native subagent status rendering.
 * `<home>/.claude/sync-omniroute-models.mjs` — optional gateway model discovery. It
   is disabled by default and does nothing without both a gateway URL and token;
-  when enabled, it never prints the token and preserves every model required by the fleet.
+  when enabled, it never prints the token, preserves every model required by the fleet,
+  and runs drift detection only after a successful cache refresh.
+* `<home>/.claude/fleet-model-drift.py` — fail-open, advisory drift detector that
+  writes a mode-0600 proposal and emits bounded SessionStart context; it never edits
+  the fleet map or applies a remapping without explicit approval.
 * `<home>/.claude/sync-model-context.py` — PostModelSwitch/SessionStart hook that
   copies the selected gateway model's real `context_length` from the discovery
   cache into `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so the next launch budgets the
   session at that model's actual window instead of one static value. It never
   touches `claude-*` model IDs and is fail-open.
-* `<home>/.claude/agents/fleet-*.md` — exactly 29 generated agents.
+* `<home>/.claude/agents/fleet-*.md` — exactly 30 generated agents.
 * `<config-home>/delegate-skills/config.json` and
   `generate-claude-agents.mjs` — the fleet map and portable generator. The
   config root is `XDG_CONFIG_HOME` on Linux/macOS, `<home>/.config` otherwise,
@@ -165,7 +169,7 @@ agent-brain hook stages are retained. Agent-brain hooks are guarded with
 
 ## Fleet behavior and model constraints
 
-The fleet has 29 lanes. `fleet-plan` and `fleet-plan-alt` are read-only planning;
+The fleet has 30 lanes. `fleet-plan` and `fleet-plan-alt` are read-only planning;
 `fleet-implement` and numbered implement lanes are writable; `fleet-review`, static
 diagnosis, security, repository research, and triage are read-only. `fleet-research-web`
 has `WebSearch` and `WebFetch`; `fleet-research-codebase` is deliberately repository-only
@@ -176,7 +180,7 @@ integration, final gates, commits, releases, and deployments.
 
 Every lane model must remain a member of `settings.json`'s `modelPicker.options`.
 The doctor checks this invariant and the generator refuses to proceed if it drifts.
-If model discovery runs, it preserves missing lane models as fallback picker rows.
+If model discovery runs, it preserves missing lane models as fallback picker rows. The fleet map may also declare an ordered `fallbacks` list; `claude-fleet-sync` uses the first live picker candidate without editing the map. `fleet-review` uses Codex Sol first, Claude Opus 5 second, and `fleet-review-06-astra` is reserved for very hard reviews; provider drift remains advisory and requires explicit approval before remapping.
 After changing the fleet map or picker, run:
 
 ```bash
@@ -217,7 +221,7 @@ not an installed settings file that the user deliberately configured.
 
 ## Checks and maintenance
 
-The doctor validates JSON, executable bits, 29-lane fleet shape, model-picker
+The doctor validates JSON, executable bits, 30-lane fleet shape, model-picker
 membership, generated-agent synchronization, frontmatter, research tool boundaries,
 privacy constants, source-machine path leakage, and credential-shaped literals. It
 also refuses an installed gateway URL without a token. `manifest.json` records SHA-256

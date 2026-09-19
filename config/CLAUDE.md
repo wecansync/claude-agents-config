@@ -23,7 +23,7 @@ Delegate substantive work to the matching `fleet-*` subagent as a standing defau
 
 Do the work inline when it is a single obvious edit, a question already answered by context, or a command whose output you need for your next step. Dispatch when the task spans several files, needs real digging, or benefits from an independent model.
 
-Chain lanes when the work has stages: plan, then implement, then review. Run a second reviewer on a risky change. Numbered lanes (`fleet-implement-04-*`, `fleet-review-03-*`) are alternates — reach for one when the user names it, when a primary lane has failed twice, or when a genuinely independent model improves the check; state the reason.
+Chain lanes when the work has stages: plan, then implement, then review. Run a second reviewer on a risky change. The primary `fleet-review` lane runs on Codex Sol; use `fleet-review-02-opus` on Claude Opus 5 as the standard fallback, and reserve `fleet-review-06-astra` on Codex Astra for very hard reviews involving security or trust boundaries, installer, migration, concurrency, data-loss risk, or conflicting findings. Model fallbacks are advisory and resolve only when the provider's picker row is live; they never edit the fleet map automatically. Numbered lanes (`fleet-implement-04-*`, `fleet-review-03-*`) are alternates — reach for one when the user names it, when a primary lane has failed twice, or when a genuinely independent model improves the check; state the reason.
 
 ## Own the outcome
 

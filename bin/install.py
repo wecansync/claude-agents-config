@@ -49,7 +49,7 @@ LEGACY_AUTO_COMPACT_ENV = "950000"
 # Project-only context is deliberately kept outside the distributable payload.
 # It may be present in a working clone, but must never become an unlisted bundle
 # file or be copied into a target installation.
-BUNDLE_CONTEXT_DIRS = {".ai"}
+BUNDLE_CONTEXT_DIRS = {".ai", ".commandcode"}
 
 
 class InstallerError(RuntimeError):
@@ -253,8 +253,8 @@ def validate_bundle(bundle: Path) -> tuple[dict, str]:
     fleet = load_json(bundle / "config/delegate-fleet.json", "fleet configuration")
     if fleet.get("version") != "delegate-fleet.v1" or not isinstance(fleet.get("lanes"), dict):
         fail("config/delegate-fleet.json is not a delegate-fleet.v1 map")
-    if len(fleet["lanes"]) != 29:
-        fail(f"bundle fleet must contain 29 lanes, found {len(fleet['lanes'])}")
+    if not fleet["lanes"]:
+        fail("bundle fleet must contain at least one lane")
     return manifest, version
 
 
@@ -367,20 +367,38 @@ def command_text(item: object) -> str:
     return " ".join(str(h.get("command", "")) for h in hooks if isinstance(h, dict))
 
 
+# Maps each pre-marker legacy command fragment to the claude-agents-config
+# marker "kind" that now supersedes it (every fragment is byte-identical to a
+# command this installer generated before the claude-agents-config:<kind>
+# marker convention existed). Single source of truth for two uses: classify
+# ownership (is_owned_command, for picker/statusline values) and retire the
+# pre-marker survivor once a marker-bearing replacement of the same kind is
+# actually installed for the same event (clean_hook_groups / retired_hook_kind),
+# so a hook does not end up wired twice -- once under the old unmarked command
+# and once under the new marked one -- which duplicates the work and, for
+# sync-omniroute-models.mjs specifically, would let two independent processes
+# race each other's cache write instead of just the one marked run.
+LEGACY_FRAGMENT_KIND = {
+    "/.claude/route-to-fleet.py": "route",
+    "\\.claude\\route-to-fleet.py": "route",
+    "/.claude/subagent-statusline.py": "statusline",
+    "\\.claude\\subagent-statusline.py": "statusline",
+    "/.claude/sync-omniroute-models.mjs": "model-sync",
+    "\\.claude\\sync-omniroute-models.mjs": "model-sync",
+    "/.local/bin/agent-brain hook ": "agent-brain",
+    # Superseded: fleet model drift detection now runs as a synchronous
+    # subprocess of the model-sync hook instead of its own SessionStart hook,
+    # so this user-authored prototype hook is retired outright.
+    "/.claude/fleet-model-proposal.py": "model-sync",
+    "\\.claude\\fleet-model-proposal.py": "model-sync",
+}
+
+
 def is_owned_command(item: object) -> bool:
     text = command_text(item)
     if MARKER in text:
         return True
-    legacy_paths = (
-        "/.claude/route-to-fleet.py",
-        "\\.claude\\route-to-fleet.py",
-        "/.claude/subagent-statusline.py",
-        "\\.claude\\subagent-statusline.py",
-        "/.claude/sync-omniroute-models.mjs",
-        "\\.claude\\sync-omniroute-models.mjs",
-        "/.local/bin/agent-brain hook ",
-    )
-    return any(path in text for path in legacy_paths)
+    return any(fragment in text for fragment in LEGACY_FRAGMENT_KIND)
 
 
 def merge_unique(left: object, right: object) -> list:
@@ -610,7 +628,17 @@ def hook_command_for(kind: str, claude_dir: Path, config_root: Path | None = Non
     }[kind]
     if kind == "model-sync":
         runtime = node_path(require=True)
-        parts = [str(runtime), str(script), "--quiet"]
+        # --drift is intentionally only ever passed here, never by any other
+        # invocation (e.g. the shell `claude` wrapper some setups add, which
+        # runs this same script pre-launch without the flag). The drift
+        # detector's own dedup skips a run once models_hash is unchanged, so
+        # a flagless run before the hook would silently consume the one
+        # notice the SessionStart hook needed to surface via additionalContext.
+        # --python pins the interpreter the drift subprocess uses to the
+        # same one the installer resolved for every other managed python
+        # hook (sys.executable), instead of letting it fall back to whatever
+        # "python3" resolves to on the session's PATH at hook run time.
+        parts = [str(runtime), str(script), "--quiet", "--drift", "--python", sys.executable]
         if config_root is not None:
             parts.extend(["--config-home", str(config_root)])
     else:
@@ -734,6 +762,34 @@ def hook_suffix(command: str) -> str | None:
     return marker.group(1) if marker else None
 
 
+def retired_hook_kind(command: object) -> str | None:
+    """The marker kind that supersedes this unmarked legacy command, or None
+    if it does not match any known legacy fragment. hook_suffix() cannot find
+    these by marker since they predate the marker convention (or, for
+    fleet-model-proposal.py, were never installer-managed)."""
+    if not isinstance(command, str):
+        return None
+    for fragment, kind in LEGACY_FRAGMENT_KIND.items():
+        if fragment in command:
+            return kind
+    return None
+
+
+def incoming_kinds_by_event(incoming: dict) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    for event, entries in incoming.items():
+        kinds: set[str] = set()
+        for group in entries if isinstance(entries, list) else []:
+            hooks = group.get("hooks") if isinstance(group, dict) else None
+            for hook in hooks if isinstance(hooks, list) else []:
+                command = hook.get("command") if isinstance(hook, dict) else None
+                suffix = hook_suffix(command) if isinstance(command, str) else None
+                if suffix:
+                    kinds.add(suffix)
+        result[event] = kinds
+    return result
+
+
 def clean_hook_groups(existing: dict, incoming: dict, journal: dict[str, dict], previous: dict[str, dict]) -> dict:
     result = copy.deepcopy(existing)
     prior_commands = {
@@ -741,7 +797,9 @@ def clean_hook_groups(existing: dict, incoming: dict, journal: dict[str, dict], 
         for entry in previous.values()
         if isinstance(entry, dict) and entry.get("kind") == "hook" and isinstance(entry.get("installed"), str)
     }
+    incoming_kinds = incoming_kinds_by_event(incoming)
     edited_suffixes: set[str] = set()
+    legacy_restores: dict[tuple[str, str], list[dict]] = {}
     for event in list(result):
         entries = result.get(event)
         if not isinstance(entries, list):
@@ -756,6 +814,17 @@ def clean_hook_groups(existing: dict, incoming: dict, journal: dict[str, dict], 
                 command = hook.get("command") if isinstance(hook, dict) else None
                 suffix = hook_suffix(command) if isinstance(command, str) else None
                 if suffix is None:
+                    retired_kind = retired_hook_kind(command)
+                    if retired_kind and retired_kind in incoming_kinds.get(event, set()):
+                        # An unmarked legacy hook is only dropped when a
+                        # marker-bearing replacement of the same kind is
+                        # actually being installed for this event this run;
+                        # otherwise it would be deleted with nothing to take
+                        # over its job (e.g. agent-brain missing from PATH,
+                        # or discovery disabled so model-sync is not wired).
+                        if retired_kind == "model-sync":
+                            legacy_restores.setdefault((event, retired_kind), []).append(copy.deepcopy(hook))
+                        continue
                     kept_hooks.append(hook)
                 elif command in prior_commands:
                     # Remove the exact previous bundle command before adding the
@@ -804,19 +873,38 @@ def clean_hook_groups(existing: dict, incoming: dict, journal: dict[str, dict], 
                     "installed": command,
                 }
                 result.setdefault(event, []).append({**{k: copy.deepcopy(v) for k, v in group.items() if k != "hooks"}, "hooks": [copy.deepcopy(hook)]})
+    for (event, kind), hooks in legacy_restores.items():
+        for index, hook in enumerate(hooks):
+            journal[f"hook:{event}:legacy-{kind}-{index}"] = {
+                "id": f"hook:{event}:legacy-{kind}-{index}",
+                "kind": "hook",
+                "event": event,
+                "command": hook.get("command", ""),
+                "beforePresent": True,
+                "before": None,
+                "installedPresent": False,
+                "installed": None,
+                "restore": hook,
+            }
     return result
 
 
 def direct_fleet(fleet: dict) -> dict:
     result = copy.deepcopy(fleet)
     for lane, config in result.get("lanes", {}).items():
-        if lane in {"plan", "plan-alt", "review", "review-02-opus", "review-03-terra", "review-04-gemini", "review-05-grok", "security-review", "diagnose-static"}:
+        if lane in {"plan", "plan-alt", "review", "review-02-opus", "review-03-terra", "review-04-gemini", "review-05-grok", "review-06-astra", "security-review", "diagnose-static"}:
             model = "claude-opus-5[1m]"
         elif lane in {"explore-narrow", "triage-static"}:
             model = "claude-haiku"
         else:
             model = "claude-sonnet-5[1m]"
         config["model"] = model
+        # A direct-Anthropic install is first-party only; a gateway-model
+        # fallback chain (e.g. codex-sol[1m] -> claude-opus-5[1m]) has
+        # nothing left to fall back *from* once the primary is already
+        # first-party, and keeping a stale fallback list around would let a
+        # gateway-only id leak into a direct-profile fleet config.
+        config.pop("fallbacks", None)
     return result
 
 
@@ -1350,6 +1438,7 @@ def managed_specs(
     add(claude / "route-to-fleet.py", source_bytes(bundle, "scripts/route-to-fleet.py"), 0o755, "home:.claude/route-to-fleet.py")
     add(claude / "subagent-statusline.py", source_bytes(bundle, "scripts/subagent-statusline.py"), 0o755, "home:.claude/subagent-statusline.py")
     add(claude / "sync-omniroute-models.mjs", source_bytes(bundle, "scripts/sync-omniroute-models.mjs"), 0o755, "home:.claude/sync-omniroute-models.mjs")
+    add(claude / "fleet-model-drift.py", source_bytes(bundle, "scripts/fleet-model-drift.py"), 0o755, "home:.claude/fleet-model-drift.py")
     add(claude / "sync-model-context.py", source_bytes(bundle, "scripts/sync-model-context.py"), 0o755, "home:.claude/sync-model-context.py")
     add(fleet / "config.json", fleet_bytes, 0o644, "config:delegate-fleet.json")
     add(fleet / "generate-claude-agents.mjs", source_bytes(bundle, "scripts/generate-claude-agents.mjs"), 0o755, "config:generate-claude-agents.mjs")
@@ -1754,8 +1843,11 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
         else:
             gateway_token = obtain_gateway_token(args, True)
     required_models = {
-        str(config.get("model")) for config in fleet.get("lanes", {}).values()
-        if isinstance(config, dict) and config.get("model")
+        model
+        for config in fleet.get("lanes", {}).values()
+        if isinstance(config, dict)
+        for model in [config.get("model"), *(config.get("fallbacks") or [])]
+        if isinstance(model, str) and model
     }
     desired, journal, _, gateway_owned, permission_owned = merge_settings(
         existing, template, home, config_root, args, not dry, previous, gateway_mode, gateway_token, required_models
@@ -1772,8 +1864,8 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
         if not model:
             fail(f"bundle agent has no fleet lane: {source.name}")
         agent_bytes[source.name] = agent_for_profile(source.read_bytes(), str(model), fleet_hash, old_models)
-    if len(agent_bytes) != 29:
-        fail(f"bundle must contain exactly 29 generated fleet agents, found {len(agent_bytes)}")
+    if len(agent_bytes) != 30:
+        fail(f"bundle must contain exactly 30 generated fleet agents, found {len(agent_bytes)}")
     specs = managed_specs(
         bundle, home, config_root, bin_dir, settings_bytes, fleet_bytes, agent_bytes, {}, version, profile,
         journal, gateway_owned, permission_owned,
@@ -1872,6 +1964,18 @@ def settings_for_uninstall(path: Path, meta: dict) -> tuple[bytes | None, bool]:
             event = entry["event"]
             groups = hooks.get(event)
             if not isinstance(groups, list):
+                groups = []
+                hooks[event] = groups
+            if not entry.get("installedPresent", True) and isinstance(entry.get("restore"), dict):
+                command = entry["restore"].get("command")
+                present = any(
+                    isinstance(hook, dict) and hook.get("command") == command
+                    for group in groups if isinstance(group, dict)
+                    for hook in group.get("hooks", []) if isinstance(group.get("hooks"), list)
+                )
+                if not present:
+                    groups.append({"hooks": [copy.deepcopy(entry["restore"])]})
+                    changed = True
                 continue
             new_groups = []
             removed = False

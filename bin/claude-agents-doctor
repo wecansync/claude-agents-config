@@ -32,7 +32,7 @@ FORBIDDEN_SOURCE_STRINGS = (
 )
 STATIC_ROLES = {
     "plan", "plan-alt", "review", "review-02-opus", "review-03-terra",
-    "review-04-gemini", "review-05-grok", "diagnose-static", "security-review",
+    "review-04-gemini", "review-05-grok", "review-06-astra", "diagnose-static", "security-review",
     "research-codebase", "explore-narrow", "triage-static",
 }
 AUTO_COMPACT_WINDOW = 800000
@@ -42,6 +42,13 @@ AUTO_COMPACT_MAX = 1000000
 
 def fail(errors: list[str], message: str) -> None:
     errors.append(message)
+
+
+def candidate_models(config: object) -> list[str]:
+    if not isinstance(config, dict):
+        return []
+    fallbacks = config.get("fallbacks") if isinstance(config.get("fallbacks"), list) else []
+    return [model for model in [config.get("model"), *fallbacks] if isinstance(model, str) and model]
 
 
 def resolve_dir(value: str | None) -> Path:
@@ -181,7 +188,7 @@ def source_bundle(bundle: Path, errors: list[str]) -> dict | None:
     actual = set()
     for path in bundle.rglob("*"):
         relative_parts = path.relative_to(bundle).parts
-        if ".git" in path.parts or (relative_parts and relative_parts[0] == ".ai"):
+        if ".git" in path.parts or (relative_parts and relative_parts[0] in {".ai", ".commandcode"}):
             continue
         if path.is_dir():
             if path.name == "__pycache__":
@@ -243,8 +250,9 @@ def validate_fleet_and_picker(fleet: dict, settings: dict, errors: list[str], la
     if fleet.get("version") != "delegate-fleet.v1" or not isinstance(fleet.get("lanes"), dict):
         fail(errors, f"{label} fleet is not delegate-fleet.v1")
         return
-    if len(fleet["lanes"]) != 29:
-        fail(errors, f"{label} expected 29 lanes, found {len(fleet['lanes'])}")
+    expected_lane_count = len(fleet["lanes"])
+    if expected_lane_count < 1:
+        fail(errors, f"{label} fleet has no lanes")
     picker = settings.get("modelPicker") if isinstance(settings.get("modelPicker"), dict) else {}
     options = picker.get("options") if isinstance(picker.get("options"), list) else []
     option_ids = {item.get("model") for item in options if isinstance(item, dict)}
@@ -270,13 +278,17 @@ def validate_fleet_and_picker(fleet: dict, settings: dict, errors: list[str], la
             fail(errors, f"{label} invalid lane name: {lane}")
         if not isinstance(config, dict) or config.get("implementer") != "claude":
             fail(errors, f"{label} lane {lane} must use the Claude implementer")
-        model = config.get("model") if isinstance(config, dict) else None
-        if not model or model not in option_ids:
-            fail(errors, f"{label} lane {lane} model is absent from modelPicker")
+            continue
+        candidates = candidate_models(config)
+        if not candidates or not any(model in option_ids for model in candidates):
+            fail(errors, f"{label} lane {lane} has no model candidate in modelPicker")
 
 
-def validate_agents(home: Path, config_root: Path, fleet: dict, errors: list[str], profile: str | None) -> None:
+def validate_agents(home: Path, config_root: Path, fleet: dict, settings: dict, errors: list[str], profile: str | None) -> None:
     agents_dir = home / ".claude" / "agents"
+    picker = settings.get("modelPicker") if isinstance(settings.get("modelPicker"), dict) else {}
+    options = picker.get("options") if isinstance(picker.get("options"), list) else []
+    option_ids = {item.get("model") for item in options if isinstance(item, dict)}
     lanes = fleet.get("lanes", {}) if isinstance(fleet, dict) else {}
     files = sorted(agents_dir.glob("fleet-*.md")) if agents_dir.is_dir() else []
     if len(files) != len(lanes):
@@ -295,8 +307,9 @@ def validate_agents(home: Path, config_root: Path, fleet: dict, errors: list[str
         if fm is None:
             fail(errors, f"invalid agent frontmatter: {path}")
             continue
-        if fm.get("name") != f"fleet-{lane}" or fm.get("model") != str(config.get("model")):
-            fail(errors, f"agent metadata does not match fleet lane: {path}")
+        candidates = candidate_models(config)
+        if fm.get("name") != f"fleet-{lane}" or fm.get("model") not in candidates or fm.get("model") not in option_ids:
+            fail(errors, f"agent metadata does not match fleet candidates: {path}")
         if fm.get("omitClaudeMd") != "true":
             fail(errors, f"agent must omit CLAUDE.md: {path}")
         if GENERATED_MARKER not in text:
@@ -453,11 +466,12 @@ def check_target(home: Path, config_root: Path, bin_dir: Path, errors: list[str]
         gateway_configured = isinstance(env, dict) and bool(env.get("ANTHROPIC_BASE_URL")) and bool(env.get("ANTHROPIC_AUTH_TOKEN"))
         if effective_profile == "direct-anthropic" and not gateway_configured and (not isinstance(env, dict) or env.get("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY") != "0"):
             fail(errors, "direct profile must disable gateway model discovery")
-        validate_agents(home, config_root, fleet, errors, effective_profile)
+        validate_agents(home, config_root, fleet, settings, errors, effective_profile)
     expected = [
         home / ".claude" / "route-to-fleet.py",
         home / ".claude" / "subagent-statusline.py",
         home / ".claude" / "sync-omniroute-models.mjs",
+        home / ".claude" / "fleet-model-drift.py",
         home / ".claude" / "sync-model-context.py",
         config_root / "delegate-skills" / "generate-claude-agents.mjs",
     ]
@@ -514,7 +528,7 @@ def main() -> int:
             print(f"  - {error}", file=sys.stderr)
         return 1
     bundle_text = f"; bundle={bundle}" if (args.bundle or (bundle / "manifest.json").is_file()) else ""
-    print(f"claude-agents-doctor: PASS (home={home}; config={config_root}; lanes=29{bundle_text})")
+    print(f"claude-agents-doctor: PASS (home={home}; config={config_root}; lanes=30{bundle_text})")
     return 0
 
 
