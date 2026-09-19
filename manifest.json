@@ -9,7 +9,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "1b6a7692b7528d7c09012971268289be6ac84ff833d6476102380039ed685d41",
+      "sha256": "ac55daa3fc0e2d36d02785bb28b6b72b8294532c936f2cac56ef4ad485e43937",
       "mode": "0o644"
     },
     {
@@ -164,7 +164,7 @@
     },
     {
       "path": "bin/claude-agents-doctor",
-      "sha256": "7aa7166085fb663c2d37c0daed7f6c026f8d31a6a374c114900a830bda1c4fbb",
+      "sha256": "aff01b921ad6cd0add6063fbba76e9eebdbdaa0ba54d9266394b099562f0303c",
       "mode": "0o755"
     },
     {
@@ -174,7 +174,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "2cd605739467ac0bae1f76cd7636b1b90d1c5270d490e8b9a704d61d27cbd349",
+      "sha256": "bcc6acde3a358b69d7a46a126a54131dd7913e5ccb294ccf5fc2e6328395e518",
       "mode": "0o755"
     },
     {

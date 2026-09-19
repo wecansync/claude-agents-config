@@ -67,8 +67,14 @@ explicit `--allow-insecure-http` flag.
 
 Model discovery is not installed as a SessionStart hook by default. To opt in,
 provide gateway credentials and `--enable-model-discovery`; the script itself also
-requires `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`. Discovery writes cache
-and settings files atomically with mode 0600 and re-reads under an exclusive lock.
+requires `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`. Once the environment
+value is enabled in installed settings that also carry a gateway URL and token,
+either by this installer or by the user directly, subsequent installs and
+updates preserve it in every profile; a fresh install still defaults to
+disabled. For the same reason, the direct profile's first-party model
+enforcement applies only when the installed settings carry no gateway
+credentials. Discovery writes cache and settings files atomically with mode
+0600 and re-reads under an exclusive lock.
 
 For a disposable sandbox, `--prefix DIR` is a complete target home when `--home`
 is omitted: configuration goes under `DIR/.claude` and `DIR/.config`, and command

@@ -1027,9 +1027,13 @@ def merge_settings(
         })["ownedRows"] = sorted(owned_picker_rows)
 
     # The active model must never remain a gateway-only ID in the direct profile.
+    # The first-party guarantee applies only when the installed settings carry no
+    # gateway credentials; a user-configured gateway URL and token make gateway
+    # model IDs and model discovery intentional rather than drift.
+    gateway_ready = bool(env.get("ANTHROPIC_BASE_URL")) and bool(env.get("ANTHROPIC_AUTH_TOKEN"))
     preferred = template.get("model")
     current_model = desired.get("model", ABSENT)
-    direct_invalid = not gateway_mode and current_model is not ABSENT and (
+    direct_invalid = not gateway_mode and not gateway_ready and current_model is not ABSENT and (
         current_model not in FIRST_PARTY_MODELS
         or any(str(current_model).startswith(prefix) for prefix in GATEWAY_ONLY_MODEL_PREFIXES)
         or current_model in GATEWAY_ONLY_MODELS
@@ -1045,7 +1049,7 @@ def merge_settings(
     # retain a gateway-only advisor from the gateway template or an old install.
     preferred_advisor = template.get("advisorModel")
     current_advisor = desired.get("advisorModel", ABSENT)
-    direct_advisor_invalid = not gateway_mode and current_advisor is not ABSENT and (
+    direct_advisor_invalid = not gateway_mode and not gateway_ready and current_advisor is not ABSENT and (
         current_advisor not in FIRST_PARTY_MODELS
         or any(str(current_advisor).startswith(prefix) for prefix in GATEWAY_ONLY_MODEL_PREFIXES)
         or current_advisor in GATEWAY_ONLY_MODELS
@@ -1060,12 +1064,22 @@ def merge_settings(
             desired["advisorModel"] = preferred_advisor
 
     # Platform-safe hook merge at inner-command granularity. Discovery is an
-    # explicit opt-in, but remains enabled across updates when this bundle
-    # previously installed the opt-in environment value.
-    discovery_enabled = gateway_mode and (
-        args.enable_model_discovery
+    # explicit opt-in, but a previously enabled value backed by gateway
+    # credentials is preserved across updates in either profile, whether this
+    # bundle installed it or the user set it directly; a fresh install still
+    # defaults to disabled.
+    discovery_enabled = (
+        gateway_mode
+        and (
+            args.enable_model_discovery
+            or (
+                previous.get("profile") == "gateway"
+                and env.get("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY") == "1"
+            )
+        )
         or (
-            previous.get("profile") == "gateway"
+            not gateway_mode
+            and gateway_ready
             and env.get("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY") == "1"
         )
     )

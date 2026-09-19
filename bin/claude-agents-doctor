@@ -254,12 +254,17 @@ def validate_fleet_and_picker(fleet: dict, settings: dict, errors: list[str], la
     if active and active not in option_ids:
         fail(errors, f"{label} active model is absent from modelPicker")
     if profile == "direct-anthropic":
-        if active not in FIRST_PARTY_MODELS:
-            fail(errors, f"direct profile active model is not first-party Claude: {active}")
-        if settings.get("advisorModel") not in FIRST_PARTY_MODELS:
-            fail(errors, f"direct profile advisor model is not first-party Claude: {settings.get('advisorModel')}")
-        if any(model not in FIRST_PARTY_MODELS for model in option_ids if model in {c.get("model") for c in fleet["lanes"].values() if isinstance(c, dict)}):
-            fail(errors, "direct profile fleet contains a non-first-party model")
+        installed_env = settings.get("env")
+        gateway_configured = isinstance(installed_env, dict) and bool(installed_env.get("ANTHROPIC_BASE_URL")) and bool(installed_env.get("ANTHROPIC_AUTH_TOKEN"))
+        # First-party enforcement applies only to a pure direct setup. A user
+        # configured gateway URL and token make gateway model IDs intentional.
+        if not gateway_configured:
+            if active not in FIRST_PARTY_MODELS:
+                fail(errors, f"direct profile active model is not first-party Claude: {active}")
+            if settings.get("advisorModel") not in FIRST_PARTY_MODELS:
+                fail(errors, f"direct profile advisor model is not first-party Claude: {settings.get('advisorModel')}")
+            if any(model not in FIRST_PARTY_MODELS for model in option_ids if model in {c.get("model") for c in fleet["lanes"].values() if isinstance(c, dict)}):
+                fail(errors, "direct profile fleet contains a non-first-party model")
     for lane, config in fleet["lanes"].items():
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", lane):
             fail(errors, f"{label} invalid lane name: {lane}")
@@ -445,7 +450,8 @@ def check_target(home: Path, config_root: Path, bin_dir: Path, errors: list[str]
                 fail(errors, "installed gateway URL is malformed")
             if not env.get("ANTHROPIC_AUTH_TOKEN"):
                 fail(errors, "installed settings enable a gateway URL without a token")
-        if effective_profile == "direct-anthropic" and (not isinstance(env, dict) or env.get("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY") != "0"):
+        gateway_configured = isinstance(env, dict) and bool(env.get("ANTHROPIC_BASE_URL")) and bool(env.get("ANTHROPIC_AUTH_TOKEN"))
+        if effective_profile == "direct-anthropic" and not gateway_configured and (not isinstance(env, dict) or env.get("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY") != "0"):
             fail(errors, "direct profile must disable gateway model discovery")
         validate_agents(home, config_root, fleet, errors, effective_profile)
     expected = [
