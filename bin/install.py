@@ -606,6 +606,7 @@ def hook_command_for(kind: str, claude_dir: Path, config_root: Path | None = Non
         "route": "route-to-fleet.py",
         "statusline": "subagent-statusline.py",
         "model-sync": "sync-omniroute-models.mjs",
+        "model-context": "sync-model-context.py",
     }[kind]
     if kind == "model-sync":
         runtime = node_path(require=True)
@@ -703,6 +704,8 @@ def platform_hook_template(home: Path, config_root: Path, template: dict, enable
                     if not enable_discovery:
                         continue
                     command = hook_command_for("model-sync", home / ".claude", config_root) + hook_marker("model-sync")
+                elif kind == "model-context":
+                    command = hook_command_for("model-context", home / ".claude") + hook_marker("model-context")
                 elif kind == "agent-brain":
                     match = re.search(r"agent-brain\s+hook\s+([A-Za-z0-9_-]+)", command)
                     if not match:
@@ -918,9 +921,10 @@ def merge_settings(
     desired["env"] = env
     template_env = template.get("env") if isinstance(template.get("env"), dict) else {}
     for key, value in template_env.items():
-        # Gateway credentials and discovery are handled below with profile-
-        # specific ownership rules.
-        if key in {"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"}:
+        # Gateway credentials, discovery, and the compaction env control are
+        # handled below with profile- or pairing-specific ownership rules; a
+        # plain template refresh here could desync the compaction pair.
+        if key in {"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"}:
             continue
         identity = f"value:env:{key}"
         if key not in env:
@@ -931,10 +935,11 @@ def merge_settings(
             record_value_journal(journal, identity, ["env", key], env[key], value, prior)
             env[key] = copy.deepcopy(value)
 
-    # Resolve the paired compaction controls after defaults are merged. This
-    # intentionally runs before profile-specific settings so no output can
-    # reach the write stage with a mismatched pair.
-    merge_compaction_controls(desired, existing, prior, journal)
+    # Resolve the paired compaction controls after defaults are merged. The
+    # pairing logic reads the merged state, not the pre-merge original, so any
+    # earlier merge step that touched a compaction value is still re-paired and
+    # no output can reach the write stage with a mismatched pair.
+    merge_compaction_controls(desired, desired, prior, journal)
     env = desired.get("env") if isinstance(desired.get("env"), dict) else {}
 
     # Merge maps without clobbering user choices.
@@ -1345,6 +1350,7 @@ def managed_specs(
     add(claude / "route-to-fleet.py", source_bytes(bundle, "scripts/route-to-fleet.py"), 0o755, "home:.claude/route-to-fleet.py")
     add(claude / "subagent-statusline.py", source_bytes(bundle, "scripts/subagent-statusline.py"), 0o755, "home:.claude/subagent-statusline.py")
     add(claude / "sync-omniroute-models.mjs", source_bytes(bundle, "scripts/sync-omniroute-models.mjs"), 0o755, "home:.claude/sync-omniroute-models.mjs")
+    add(claude / "sync-model-context.py", source_bytes(bundle, "scripts/sync-model-context.py"), 0o755, "home:.claude/sync-model-context.py")
     add(fleet / "config.json", fleet_bytes, 0o644, "config:delegate-fleet.json")
     add(fleet / "generate-claude-agents.mjs", source_bytes(bundle, "scripts/generate-claude-agents.mjs"), 0o755, "config:generate-claude-agents.mjs")
     for name, data in sorted(agent_bytes.items()):

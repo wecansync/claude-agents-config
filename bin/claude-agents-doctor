@@ -458,6 +458,7 @@ def check_target(home: Path, config_root: Path, bin_dir: Path, errors: list[str]
         home / ".claude" / "route-to-fleet.py",
         home / ".claude" / "subagent-statusline.py",
         home / ".claude" / "sync-omniroute-models.mjs",
+        home / ".claude" / "sync-model-context.py",
         config_root / "delegate-skills" / "generate-claude-agents.mjs",
     ]
     for path in expected:

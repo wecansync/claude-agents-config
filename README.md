@@ -140,6 +140,11 @@ Backups are stored under `<home>/.claude/backups/claude-agents-config/`.
 * `<home>/.claude/sync-omniroute-models.mjs` — optional gateway model discovery. It
   is disabled by default and does nothing without both a gateway URL and token;
   when enabled, it never prints the token and preserves every model required by the fleet.
+* `<home>/.claude/sync-model-context.py` — PostModelSwitch/SessionStart hook that
+  copies the selected gateway model's real `context_length` from the discovery
+  cache into `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so the next launch budgets the
+  session at that model's actual window instead of one static value. It never
+  touches `claude-*` model IDs and is fail-open.
 * `<home>/.claude/agents/fleet-*.md` — exactly 29 generated agents.
 * `<config-home>/delegate-skills/config.json` and
   `generate-claude-agents.mjs` — the fleet map and portable generator. The

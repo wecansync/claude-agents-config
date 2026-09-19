@@ -9,7 +9,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "ac55daa3fc0e2d36d02785bb28b6b72b8294532c936f2cac56ef4ad485e43937",
+      "sha256": "fc65cefb1cb4f1bf150e650ec197d93a91d0fd11636159f7ff6db69823add36f",
       "mode": "0o644"
     },
     {
@@ -164,7 +164,7 @@
     },
     {
       "path": "bin/claude-agents-doctor",
-      "sha256": "aff01b921ad6cd0add6063fbba76e9eebdbdaa0ba54d9266394b099562f0303c",
+      "sha256": "9c764985100e7879cec1627149c49b6645de5b75e39bac9dbb5e1e5ab3675a4d",
       "mode": "0o755"
     },
     {
@@ -174,7 +174,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "bcc6acde3a358b69d7a46a126a54131dd7913e5ccb294ccf5fc2e6328395e518",
+      "sha256": "502a63faf5b8e9d60a9b16a35602099a8a0431ed0e9b7928f7ee059630199314",
       "mode": "0o755"
     },
     {
@@ -189,7 +189,7 @@
     },
     {
       "path": "config/settings.template.json",
-      "sha256": "3af6dde93e77b3d29c1cd2c9a7c55c54a69be3808ba2031cf4f87f572fc1237d",
+      "sha256": "fe967adcecad7f8b1cf211e2464cc17a9e5a3a62fe41ba94cbf75b8a5535187e",
       "mode": "0o644"
     },
     {
@@ -215,6 +215,11 @@
     {
       "path": "scripts/route-to-fleet.py",
       "sha256": "69fd1e37c4ba56c0642207fa21701ac10a4224e0fee320379b777deea1861724",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/sync-model-context.py",
+      "sha256": "2f58cbdcb1553a837cc51ac999a2a36a277caa1f8457e012e30c8a8bdd8a598d",
       "mode": "0o755"
     },
     {

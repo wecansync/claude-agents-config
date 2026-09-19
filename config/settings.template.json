@@ -145,6 +145,17 @@
         ]
       }
     ],
+    "PostModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"__CLAUDE_HOME__/sync-model-context.py\" # claude-agents-config:model-context",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
@@ -160,6 +171,15 @@
           {
             "type": "command",
             "command": "node \"__CLAUDE_HOME__/sync-omniroute-models.mjs\" --quiet # claude-agents-config:model-sync",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"__CLAUDE_HOME__/sync-model-context.py\" # claude-agents-config:model-context",
             "timeout": 5
           }
         ]
