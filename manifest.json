@@ -229,7 +229,7 @@
     },
     {
       "path": "scripts/sync-omniroute-models.mjs",
-      "sha256": "8162381442e304b826749d44ff19a195040112a1ebb0e0b41cbbd204ee6de2bc",
+      "sha256": "da871a6128a3df25c5871da680f55aed410bffaa634778c8d87768352e75e443",
       "mode": "0o755"
     },
     {

@@ -89,10 +89,18 @@ async function main() {
   const required = fleet?.lanes && typeof fleet.lanes === "object"
     ? [...new Set(Object.values(fleet.lanes).map(row => row?.model).filter(Boolean))]
     : [];
+  const lanesByModel = {};
+  if (fleet?.lanes && typeof fleet.lanes === "object") {
+    for (const [lane, row] of Object.entries(fleet.lanes)) {
+      if (row?.model) (lanesByModel[row.model] = lanesByModel[row.model] || []).push(lane);
+    }
+  }
+  let newFallbackModels = [];
   function optionsFor(baseOptions) {
     const discoveredByModel = new Map(newOptions.map(row => [modelKey(row), row]));
     const baseByModel = new Map(baseOptions.map(row => [modelKey(row), row]));
     const requiredByModel = new Map();
+    const fallbackModels = [];
     for (const requiredModel of required) {
       if (!discoveredByModel.has(requiredModel)) {
         requiredByModel.set(requiredModel, baseByModel.get(requiredModel) || {
@@ -100,20 +108,29 @@ async function main() {
           label: requiredModel,
           description: "Required by delegate fleet",
         });
+        // Report only a NEW loss: a row that is absent or was previously a
+        // real gateway entry. Steady-state fallback rows stay silent.
+        const existingRow = baseByModel.get(requiredModel);
+        if (!existingRow || existingRow.description !== "Required by delegate fleet") {
+          fallbackModels.push(requiredModel);
+        }
       }
     }
+    newFallbackModels = fallbackModels;
     const desiredByModel = new Map([...discoveredByModel, ...requiredByModel]);
     const options = [];
     const seen = new Set();
-    // Reapply only rows affected by discovery. Any unrelated picker row,
-    // including one added while the network request was in flight, survives.
+    // Reapply only rows affected by discovery. claude-* rows resolve inside
+    // Claude Code itself and always survive. A gateway-spelling row the
+    // gateway no longer advertises is a dead reference and is pruned; keeping
+    // it made the picker accumulate stale IDs across gateway renames.
     for (const row of baseOptions) {
       const id = modelKey(row);
       const replacement = desiredByModel.get(id);
       if (replacement) {
         options.push({ ...replacement });
         seen.add(id);
-      } else {
+      } else if (id.startsWith("claude-")) {
         options.push(row);
         seen.add(id);
       }
@@ -140,6 +157,7 @@ async function main() {
   const temp = SETTINGS_PATH + ".tmp." + process.pid;
   let lockFd;
   let lockCreated = false;
+  let wrote = false;
   try {
     lockFd = fs.openSync(lockPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
     lockCreated = true;
@@ -170,10 +188,23 @@ async function main() {
     } finally { fs.closeSync(fd); }
     fs.chmodSync(temp, 0o600);
     fs.renameSync(temp, SETTINGS_PATH);
+    wrote = true;
   } catch (err) { try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch {} }
   finally {
     try { if (lockFd !== undefined) fs.closeSync(lockFd); } catch {}
     if (lockCreated) { try { fs.unlinkSync(lockPath); } catch {} }
+  }
+  if (wrote && newFallbackModels.length) {
+    // Claude Code shows a SessionStart hook's systemMessage to the user, so a
+    // newly lost fleet model is announced instead of silently falling back.
+    const parts = newFallbackModels.map(id => {
+      const lanes = lanesByModel[id] || [];
+      return lanes.length ? `${id} (lane${lanes.length > 1 ? "s" : ""}: ${lanes.join(", ")})` : id;
+    });
+    process.stdout.write(JSON.stringify({
+      systemMessage: "Gateway no longer offers fleet model(s): " + parts.join("; ")
+        + ". Fallback picker rows were kept; remap the affected lanes and run claude-fleet-sync, then restart Claude Code.",
+    }) + "\n");
   }
 }
 main().catch(() => {});
