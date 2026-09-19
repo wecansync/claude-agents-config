@@ -189,7 +189,7 @@
     },
     {
       "path": "config/settings.template.json",
-      "sha256": "fe967adcecad7f8b1cf211e2464cc17a9e5a3a62fe41ba94cbf75b8a5535187e",
+      "sha256": "f6f4f4240bf8c5093b81d10dd078bd597ca4e381de1b8eca73f9aec0a214fbae",
       "mode": "0o644"
     },
     {
@@ -219,7 +219,7 @@
     },
     {
       "path": "scripts/sync-model-context.py",
-      "sha256": "2f58cbdcb1553a837cc51ac999a2a36a277caa1f8457e012e30c8a8bdd8a598d",
+      "sha256": "3e5e50c68436d8f635e06688bdde66c25486cef43b71933d4fb0298f2e26807d",
       "mode": "0o755"
     },
     {

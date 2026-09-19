@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Keep CLAUDE_CODE_MAX_CONTEXT_TOKENS aligned with the selected gateway model.
 
-Runs as a PostModelSwitch or SessionStart hook. Claude Code applies
-CLAUDE_CODE_MAX_CONTEXT_TOKENS to every gateway model ID it cannot resolve, so
-one static value is wrong for every model whose real context window differs.
-The omniroute discovery cache records each model's context_length; this hook
-copies the selected model's real limit into the settings env so the next launch
-budgets the session at that model's actual window. Fail-open: any error exits 0
-and the session proceeds with the previous value.
+Runs as a PreModelSwitch, PostModelSwitch, or SessionStart hook. Claude Code
+applies CLAUDE_CODE_MAX_CONTEXT_TOKENS to every gateway model ID it cannot
+resolve, so one static value is wrong for every model whose real context window
+differs. The omniroute discovery cache records each model's context_length;
+this hook copies the selected model's real limit into the settings env so the
+next launch budgets the session at that model's actual window. A PreModelSwitch
+run that changes the value prints a systemMessage telling the user to restart
+Claude Code, because the override is only read at startup. Fail-open: any error
+exits 0 and the session proceeds with the previous value.
 """
 
 import json
@@ -23,6 +25,7 @@ def main() -> int:
         return 0
     if not isinstance(payload, dict):
         return 0
+    event = payload.get("hook_event_name")
     model = payload.get("to_model") or payload.get("model")
     if not isinstance(model, str) or not model:
         return 0
@@ -73,6 +76,7 @@ def main() -> int:
     env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = value
 
     temp = settings_path.with_name(settings_path.name + ".tmp." + str(os.getpid()))
+    wrote = False
     try:
         fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
@@ -85,11 +89,22 @@ def main() -> int:
             os.close(fd)
         os.chmod(temp, 0o600)
         os.replace(temp, settings_path)
+        wrote = True
     except OSError:
         try:
             os.unlink(temp)
         except OSError:
             pass
+    if wrote and event == "PreModelSwitch":
+        # Claude Code reads the override at startup, so the corrected budget
+        # only applies to the next launch. PreModelSwitch systemMessage output
+        # reaches the user regardless of the switch decision.
+        print(json.dumps({
+            "systemMessage": (
+                f"Context window for {base} set to {value} in settings.json. "
+                "Restart Claude Code to apply it to this session."
+            )
+        }))
     return 0
 
 

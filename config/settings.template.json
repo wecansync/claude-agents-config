@@ -145,6 +145,17 @@
         ]
       }
     ],
+    "PreModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"__CLAUDE_HOME__/sync-model-context.py\" # claude-agents-config:model-context",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PostModelSwitch": [
       {
         "hooks": [
