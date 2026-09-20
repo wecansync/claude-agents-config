@@ -9,15 +9,7 @@
     "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "800000"
   },
   "permissions": {
-    "allow": [
-      "Bash",
-      "Read",
-      "Edit",
-      "Write",
-      "WebFetch",
-      "WebSearch",
-      "mcp__agent-brain-memory"
-    ],
+    "allow": [],
     "deny": [],
     "ask": []
   },
@@ -166,7 +158,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"__CLAUDE_HOME__/sync-model-context.py\" # claude-agents-config:model-context",
+            "command": "python3 \"__CLAUDE_HOME__/sync-model-context.py\" --home \"__CLAUDE_HOME__/..\" # claude-agents-config:model-context",
             "timeout": 5
           }
         ]
@@ -186,17 +178,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"__CLAUDE_HOME__/sync-omniroute-models.mjs\" --quiet # claude-agents-config:model-sync",
+            "command": "node \"__CLAUDE_HOME__/sync-omniroute-models.mjs\" --quiet --drift # claude-agents-config:model-sync",
             "timeout": 8
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"__CLAUDE_HOME__/sync-model-context.py\" # claude-agents-config:model-context",
-            "timeout": 5
           }
         ]
       }
@@ -248,38 +231,8 @@
     "command": "python3 \"__CLAUDE_HOME__/subagent-statusline.py\" # claude-agents-config:statusline",
     "type": "command"
   },
-  "enabledPlugins": {
-    "claude-md-management@claude-plugins-official": true,
-    "code-simplifier@claude-plugins-official": true,
-    "context7@claude-plugins-official": true,
-    "feature-dev@claude-plugins-official": true,
-    "frontend-design@claude-plugins-official": true,
-    "github@claude-plugins-official": true,
-    "php-lsp@claude-plugins-official": true,
-    "plannotator@plannotator": true,
-    "typescript-lsp@claude-plugins-official": true,
-    "warp@claude-code-warp": true
-  },
-  "extraKnownMarketplaces": {
-    "claude-code-warp": {
-      "source": {
-        "source": "github",
-        "repo": "warpdotdev/claude-code-warp"
-      }
-    },
-    "claude-plugins-official": {
-      "source": {
-        "source": "git",
-        "url": "https://github.com/anthropics/claude-plugins-official.git"
-      }
-    },
-    "plannotator": {
-      "source": {
-        "source": "git",
-        "url": "https://github.com/backnotprop/plannotator.git"
-      }
-    }
-  },
+  "enabledPlugins": {},
+  "extraKnownMarketplaces": {},
   "outputStyle": "concise",
   "effortLevel": "xhigh",
   "autoCompactWindow": 800000,

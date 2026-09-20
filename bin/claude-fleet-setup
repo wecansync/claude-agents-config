@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Explicit provider/fleet setup interview and noninteractive policy command.
+
+This command may prompt on a TTY. SessionStart hooks must never invoke it;
+they report pending decisions and continue with the last approved state.
+"""
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+_HERE = Path(__file__).resolve().parent
+SCRIPTS = _HERE if (_HERE / "provider_catalog.py").is_file() else _HERE.parent.parent / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+from provider_catalog import CatalogError, acquire_lock, load_policy, release_lock  # noqa: E402
+
+
+def read_json(path: Path, default: object = None) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return default
+
+
+def atomic_json(path: Path, value: object, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    temp = Path(raw)
+    try:
+        data = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        os.write(fd, data)
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.chmod(temp, mode)
+        os.replace(temp, path)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        temp.unlink(missing_ok=True)
+
+
+def ask_yes_no(prompt: str, default: bool = False) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    answer = input(f"{prompt} [{suffix}] ").strip().lower()
+    if not answer:
+        return default
+    return answer in {"y", "yes"}
+
+
+def resolved_home(args: argparse.Namespace) -> Path:
+    return Path(args.home).expanduser().resolve() if args.home else Path.home().resolve()
+
+
+def policy_path(args: argparse.Namespace) -> Path:
+    if args.policy:
+        return Path(args.policy).expanduser().resolve()
+    home = resolved_home(args)
+    config = Path(args.config_home).expanduser().resolve() if args.config_home else Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")).resolve()
+    return config / "delegate-skills" / "provider-policy.json"
+
+
+def parse_decisions(value: str | None) -> dict:
+    if not value:
+        return {}
+    path = Path(value).expanduser().resolve()
+    data = read_json(path)
+    if not isinstance(data, dict):
+        raise SystemExit(f"decision file is not a JSON object: {path}")
+    return data
+
+
+PROPOSAL_KEYS = {"proposalDecision", "proposalHash", "supersededBy"}
+FAMILY_KEYS = {"approvedFamilies", "allowDiscovery"}
+
+
+def validate_decisions(decisions: dict) -> None:
+    """Reject an unsupported or ambiguous decision document before any
+    write happens. A decision file is exactly one of a proposal-decision
+    document or a family-approval document; it must never mix fields from
+    both (that would make it ambiguous which side effect the caller
+    intended), and it must never carry an unrecognized key such as the
+    since-removed "fallbacks" selection."""
+    if decisions.get("format") not in {None, "provider-policy-decisions.v1"}:
+        raise SystemExit("unsupported decision file format")
+    has_proposal_fields = bool(PROPOSAL_KEYS & decisions.keys())
+    has_family_fields = bool(FAMILY_KEYS & decisions.keys())
+    if has_proposal_fields and has_family_fields:
+        raise SystemExit("decision file mixes proposal-decision fields with family-approval fields; submit them separately")
+    allowed = {"format"} | (PROPOSAL_KEYS if has_proposal_fields else FAMILY_KEYS)
+    unknown = set(decisions) - allowed
+    if unknown:
+        raise SystemExit(f"unsupported decision file keys: {sorted(unknown)}")
+
+
+def interview(policy: dict) -> dict:
+    if not sys.stdin.isatty() or not sys.stderr.isatty():
+        raise SystemExit("setup interview requires a TTY; pass --decisions FILE for noninteractive use")
+    print("Fleet setup interview. New provider families, discovery, and permission choices require explicit approval.")
+    approved = []
+    for family in policy.get("families", []):
+        if not isinstance(family, dict) or not isinstance(family.get("name"), str):
+            continue
+        if family.get("approved") is True or ask_yes_no(f"Approve automatic reconciliation for family {family['name']}?", False):
+            approved.append(family["name"])
+    allow_discovery = ask_yes_no("Allow gateway model discovery at SessionStart?", bool(policy.get("discoveryApproved")))
+    print("Optional broad permissions/plugins remain disabled by default; configure them separately after review.")
+    return {"format": "provider-policy-decisions.v1", "approvedFamilies": approved, "allowDiscovery": allow_discovery}
+
+
+def proposal_path(home: Path) -> Path:
+    """The fleet model proposal always lives under the resolved --home, never
+    derived from the policy file's location. An external --config-home,
+    XDG_CONFIG_HOME, or a fully custom --policy path must not change where
+    the proposal decision is read from or written to."""
+    return home / ".claude" / "fleet-model-proposal.json"
+
+
+def resolve_proposal(home: Path, decisions: dict) -> None:
+    proposal_file = proposal_path(home)
+    proposal = read_json(proposal_file)
+    if not isinstance(proposal, dict) or not proposal.get("models_hash"):
+        raise SystemExit("no pending fleet model proposal is available")
+    if decisions.get("proposalHash") != proposal.get("models_hash"):
+        raise SystemExit("proposalHash must match the current pending proposal")
+    action = decisions.get("proposalDecision")
+    if action not in {"approve", "reject", "supersede"}:
+        raise SystemExit("proposalDecision must be approve, reject, or supersede")
+    proposal["decision"] = action
+    proposal["decision_at"] = __import__("time").time()
+    proposal["superseded_by"] = decisions.get("supersededBy") if action == "supersede" else None
+    atomic_json(proposal_file, proposal, 0o600)
+
+
+def apply_family_decisions(path: Path, decisions: dict, approved: list[str]) -> None:
+    """Re-read the policy from disk immediately before validating and
+    writing. The caller holds the shared home lock across this call, so a
+    concurrent installer or another setup invocation can never have its
+    changes silently discarded by a write built from a snapshot loaded
+    before -- possibly long-running, interactive -- interview input was
+    collected."""
+    try:
+        latest_policy = load_policy(path)
+    except CatalogError as exc:
+        raise SystemExit(str(exc))
+    for value in approved:
+        if not any(isinstance(family, dict) and family.get("name") == value for family in latest_policy.get("families", [])):
+            raise SystemExit(f"unknown family requires review before approval: {value}")
+    latest_policy["approvedFamilies"] = sorted(set(approved))
+    latest_policy["decisionsFormat"] = "provider-policy-decisions.v1"
+    approved_set = set(approved)
+    for family in latest_policy.get("families", []):
+        if isinstance(family, dict) and isinstance(family.get("name"), str):
+            family["approved"] = family["name"] in approved_set
+    latest_policy["discoveryApproved"] = decisions.get("allowDiscovery") is True
+    atomic_json(path, latest_policy, 0o644)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Review provider-aware fleet policy")
+    parser.add_argument("--home")
+    parser.add_argument("--prefix")
+    parser.add_argument("--config-home")
+    parser.add_argument("--policy")
+    parser.add_argument("--decisions", help="JSON decision file for noninteractive setup")
+    parser.add_argument("--show", action="store_true", help="print effective policy without changing it")
+    parser.add_argument("--lock-timeout", type=float, default=4.0, help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    home = resolved_home(args)
+    path = policy_path(args)
+    try:
+        policy = load_policy(path)
+    except CatalogError as exc:
+        raise SystemExit(str(exc))
+    decisions = parse_decisions(args.decisions)
+    if decisions:
+        validate_decisions(decisions)
+    if decisions.get("proposalDecision"):
+        # The interview is never involved on this path, so the lock is held
+        # only across the read-validate-write of the proposal file itself.
+        fd, lock = acquire_lock(home, timeout=args.lock_timeout)
+        if fd is None:
+            raise SystemExit(f"another fleet writer holds the lock for {home}; try again")
+        try:
+            resolve_proposal(home, decisions)
+        finally:
+            release_lock(fd, lock)
+        print(f"Recorded proposal decision in {proposal_path(home)}")
+        return 0
+    if not args.show and not decisions:
+        # The interactive interview must never run while holding the shared
+        # lock: it blocks on human TTY input for an unbounded time, and
+        # holding the lock across that would wedge every other fleet writer
+        # (installer, hooks, reconcile, sync) for as long as the operator
+        # takes to answer.
+        decisions = interview(policy)
+    if decisions:
+        approved = decisions.get("approvedFamilies")
+        if not isinstance(approved, list) or any(not isinstance(value, str) for value in approved):
+            raise SystemExit("approvedFamilies must be a list of strings")
+        fd, lock = acquire_lock(home, timeout=args.lock_timeout)
+        if fd is None:
+            raise SystemExit(f"another fleet writer holds the lock for {home}; try again")
+        try:
+            apply_family_decisions(path, decisions, approved)
+        finally:
+            release_lock(fd, lock)
+        print(f"Saved explicit fleet policy decisions to {path}")
+    else:
+        print(json.dumps(policy, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

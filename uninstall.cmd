@@ -5,6 +5,7 @@ set "ACTION=--apply"
 :scan_args
 if "%~1"=="" goto run
 if /I "%~1"=="--dry-run" set "ACTION="
+if /I "%~1"=="--check" set "ACTION="
 shift
 goto scan_args
 :run

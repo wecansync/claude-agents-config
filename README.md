@@ -2,9 +2,10 @@
 
 Version `1.0.0` packages the portable parts of the global Claude Code setup: the
 30-lane delegate fleet, generated native agents, routing hook, privacy-safe status
-line, global delegation policy, model picker, permissions, plugins, and optional
-model discovery. The directory can be copied or cloned anywhere and run from its
-new location; the canonical build path is not required at install time.
+line, global delegation policy, model picker, conservative permissions/plugins
+defaults, provider-aware discovery, and explicit setup policy command. The
+directory can be copied or cloned anywhere and run from its new location; the
+canonical build path is not required at install time.
 
 ## Platform support and prerequisites
 
@@ -73,7 +74,13 @@ either by this installer or by the user directly, subsequent installs and
 updates preserve it in every profile; a fresh install still defaults to
 disabled. For the same reason, the direct profile's first-party model
 enforcement applies only when the installed settings carry no gateway
-credentials. Discovery writes cache and settings files atomically with mode
+credentials. Discovery fetches and validates through the shared Python
+provider catalog, scopes caches to endpoint/account, accepts successful empty
+catalogs, and refuses incomplete pagination or stale caches. The ordered hook
+then serializes drift reporting and fleet reconciliation under the shared lock.
+Use `claude-fleet-setup --show` to inspect policy or pass a reviewed
+`provider-policy-decisions.v1` JSON file to approve families/discovery; startup
+never prompts. Discovery writes cache and settings files atomically with mode
 0600 and re-reads under an exclusive lock.
 
 For a disposable sandbox, `--prefix DIR` is a complete target home when `--home`
@@ -84,24 +91,21 @@ working directory.
 
 ### Context compaction safety
 
-The bundle sets both Claude Code compaction controls to `800000`: the top-level
-`autoCompactWindow` setting and the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` environment
-setting under `env`. The matching values are intentional because the environment
-setting takes precedence when Claude Code starts. This leaves headroom below the
-advertised `872000` input-token limit for the Codex/gpt-5.6-luna-max route; the
-observed full request was `876273` tokens, so the prior `950000` environment value
-could compact too late.
+The bundle keeps the top-level `autoCompactWindow` and the
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` environment setting paired and bounded. The
+initial direct/gateway template uses `800000` as a conservative budget for the
+advertised 872K route, below the observed 876273-token request envelope. At
+SessionStart and PostModelSwitch, discovery reports the active model's supported
+context and applies 90% headroom (for example, 272K becomes 244800); both paired
+controls are written to the same value. An existing lower user budget is never
+inflated. These are startup-only settings, so the hook emits a restart notice.
 
-Current Claude Code settings have one global auto-compact window, not a
-model-conditional expression. `800000` therefore applies to every installed
-session, but it does not make smaller gateway routes safe: custom routes advertised
-at 200K–400K must not be selected for long prompts that approach their provider
-limit. The bundle preserves those picker rows for compatibility, but users should
-select a route whose advertised context covers the workload; this installer does
-not claim dynamic per-model compaction. A user or higher-priority managed setting
-may still override the value. On update, a value that the bundle previously owned
-is refreshed to `800000`, while a later user edit is preserved by the ownership
-journal.
+Claude Code still exposes one global auto-compact window rather than a native
+model-conditional expression. The hooks therefore maintain a conservative paired
+budget for the active verified route; they do not claim to change a running
+session's limit. Unsupported or stale provider context leaves existing settings
+unchanged, and later user-owned values remain authoritative through installer
+updates.
 
 The requested canonical destination is checked when this bundle is built or copied.
 If the destination's parent is unavailable or unwritable, creation fails clearly;
@@ -139,17 +143,32 @@ Backups are stored under `<home>/.claude/backups/claude-agents-config/`.
 * `<home>/.claude/subagent-statusline.py` — native subagent status rendering.
 * `<home>/.claude/sync-omniroute-models.mjs` — optional gateway model discovery. It
   is disabled by default and does nothing without both a gateway URL and token;
-  when enabled, it never prints the token, preserves every model required by the fleet,
-  and runs drift detection only after a successful cache refresh.
-* `<home>/.claude/fleet-model-drift.py` — fail-open, advisory drift detector that
-  writes a mode-0600 proposal and emits bounded SessionStart context; it never edits
-  the fleet map or applies a remapping without explicit approval.
+  when enabled, it delegates exact-ID normalization, pagination, cache scoping,
+  and schema validation to `provider_catalog.py`, preserves every model required
+  by the fleet, and runs drift detection/reconciliation in one ordered SessionStart
+  transaction.
+* `<home>/.claude/provider_catalog.py` and `fleet-reconcile.py` — shared provider
+  identity/cache and approved-family reconciliation helpers. Reconciliation keeps
+  custom lanes and unrelated picker rows, installs at most three fallback candidates,
+  and reports pending decisions instead of silently approving a new family.
+* `<home>/.claude/claude-fleet-setup.py` — explicit setup/reconfigure interview.
+  It may prompt only in a TTY; hooks never invoke an interactive interview. Use
+  `claude-fleet-setup --show` or a reviewed decision JSON for automation.
+* `<home>/.claude/fleet-model-drift.py` — fail-open drift detector that writes a
+  mode-0600 proposal and emits bounded SessionStart context. Approved families may
+  be reconciled automatically when live and policy-approved; new families and
+  proposal remaps require an explicit `claude-fleet-setup` approve/reject/supersede
+  decision. It never silently escalates trust or cost policy.
 * `<home>/.claude/sync-model-context.py` — PostModelSwitch/SessionStart hook that
-  copies the selected gateway model's real `context_length` from the discovery
-  cache into `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so the next launch budgets the
-  session at that model's actual window instead of one static value. It never
-  touches `claude-*` model IDs and is fail-open.
-* `<home>/.claude/agents/fleet-*.md` — exactly 30 generated agents.
+  verifies the selected gateway model's real `context_length`, applies 90% headroom
+  to `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, and keeps `autoCompactWindow` paired with
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW`. It never inflates a lower user budget, emits
+  restart guidance for startup-only settings, never touches `claude-*` IDs, and is
+  fail-open.
+* `<home>/.claude/agents/fleet-*.md` — one generated agent per fleet lane. Each
+  agent carries an optional native `fallbackModel` chain of at most three entries;
+  it is intended for provider unavailability/overload only, not authentication,
+  billing, rate-limit, request-size, transport, or policy-denial failures.
 * `<config-home>/delegate-skills/config.json` and
   `generate-claude-agents.mjs` — the fleet map and portable generator. The
   config root is `XDG_CONFIG_HOME` on Linux/macOS, `<home>/.config` otherwise,
@@ -169,7 +188,8 @@ agent-brain hook stages are retained. Agent-brain hooks are guarded with
 
 ## Fleet behavior and model constraints
 
-The fleet has 30 lanes. `fleet-plan` and `fleet-plan-alt` are read-only planning;
+The fleet currently has 30 lanes. Counts are derived from the fleet map rather
+than hardcoded in the installer/doctor. `fleet-plan` and `fleet-plan-alt` are read-only planning;
 `fleet-implement` and numbered implement lanes are writable; `fleet-review`, static
 diagnosis, security, repository research, and triage are read-only. `fleet-research-web`
 has `WebSearch` and `WebFetch`; `fleet-research-codebase` is deliberately repository-only
@@ -180,7 +200,7 @@ integration, final gates, commits, releases, and deployments.
 
 Every lane model must remain a member of `settings.json`'s `modelPicker.options`.
 The doctor checks this invariant and the generator refuses to proceed if it drifts.
-If model discovery runs, it preserves missing lane models as fallback picker rows. The fleet map may also declare an ordered `fallbacks` list; `claude-fleet-sync` uses the first live picker candidate without editing the map. `fleet-review` uses Codex Sol first, Claude Opus 5 second, and `fleet-review-06-astra` is reserved for very hard reviews; provider drift remains advisory and requires explicit approval before remapping.
+If model discovery runs, it preserves missing lane models as fallback picker rows. The fleet map may also declare an ordered `fallbacks` list; `claude-fleet-sync` uses the first live picker candidate without editing the map. `fleet-review` uses Codex Sol first, Claude Opus 5 second, and `fleet-review-06-astra` is reserved for very hard reviews. Approved families may reconcile automatically when live; a new family or explicit proposal remap remains pending until `claude-fleet-setup` records an approve/reject/supersede decision.
 After changing the fleet map or picker, run:
 
 ```bash

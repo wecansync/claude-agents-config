@@ -47,8 +47,13 @@ try:
 except Exception:
     sys.exit(0)
 
+if not isinstance(payload, dict):
+    sys.exit(0)
 columns = payload.get("columns")
-width = max(24, int(columns)) if isinstance(columns, (int, float)) else 120
+try:
+    width = max(24, int(columns)) if isinstance(columns, (int, float)) else 120
+except (TypeError, ValueError, OverflowError):
+    width = 120
 icons = {
     "running": "▶",
     "completed": "✓",

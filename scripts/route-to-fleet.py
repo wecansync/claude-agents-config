@@ -43,7 +43,9 @@ INLINE = re.compile(
 
 try:
     payload = json.load(sys.stdin)
-except Exception:
+except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+    sys.exit(0)
+if not isinstance(payload, dict):
     sys.exit(0)
 
 CONFIG_HOME = Path(os.environ.get("CLAUDE_FLEET_HOME", Path(__file__).resolve().parent.parent)).expanduser()
@@ -170,8 +172,10 @@ def record(reason, prompt, lane=None):
             "chars": len(prompt),
         }
         # Only the silent prompts are the tuning surface, so only they keep text.
+        # Redact the complete excerpt before truncation so a secret crossing the
+        # boundary cannot leave a partially preserved token in the log.
         if reason == "no-match":
-            entry["prompt"] = SECRETS.sub("[redacted]", prompt[:PROMPT_EXCERPT])
+            entry["prompt"] = SECRETS.sub("[redacted]", prompt)[:PROMPT_EXCERPT]
         flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
         fd = os.open(LOG_PATH, flags, 0o600)
         try:

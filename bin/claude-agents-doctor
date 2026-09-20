@@ -473,12 +473,16 @@ def check_target(home: Path, config_root: Path, bin_dir: Path, errors: list[str]
         home / ".claude" / "sync-omniroute-models.mjs",
         home / ".claude" / "fleet-model-drift.py",
         home / ".claude" / "sync-model-context.py",
+        home / ".claude" / "provider_catalog.py",
+        home / ".claude" / "fleet-reconcile.py",
+        home / ".claude" / "claude-fleet-setup.py",
+        config_root / "delegate-skills" / "provider-policy.json",
         config_root / "delegate-skills" / "generate-claude-agents.mjs",
     ]
     for path in expected:
         if not path.is_file():
             fail(errors, f"missing installed runtime file: {path}")
-    for path in [home / ".claude" / "CLAUDE.md", *expected, fleet_path, *sorted((home / ".claude" / "agents").glob("fleet-*.md"))]:
+    for path in [home / ".claude" / "CLAUDE.md", *expected, home / ".claude" / "provider_catalog.py", home / ".claude" / "fleet-reconcile.py", config_root / "delegate-skills" / "provider-policy.json", fleet_path, *sorted((home / ".claude" / "agents").glob("fleet-*.md"))]:
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
@@ -528,7 +532,9 @@ def main() -> int:
             print(f"  - {error}", file=sys.stderr)
         return 1
     bundle_text = f"; bundle={bundle}" if (args.bundle or (bundle / "manifest.json").is_file()) else ""
-    print(f"claude-agents-doctor: PASS (home={home}; config={config_root}; lanes=30{bundle_text})")
+    fleet_value = read_json(config_root / "delegate-skills" / "config.json", errors, "fleet") if (config_root / "delegate-skills" / "config.json").is_file() else None
+    lane_count = len(fleet_value.get("lanes", {})) if isinstance(fleet_value, dict) else 0
+    print(f"claude-agents-doctor: PASS (home={home}; config={config_root}; lanes={lane_count}{bundle_text})")
     return 0
 
 
