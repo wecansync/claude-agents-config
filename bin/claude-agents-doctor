@@ -12,6 +12,7 @@ import shutil
 import stat
 import subprocess
 import sys
+sys.dont_write_bytecode = True
 import urllib.parse
 
 MARKER = "claude-agents-config:"

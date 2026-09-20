@@ -1054,5 +1054,51 @@ class ProviderRepairTests(unittest.TestCase):
                 holder.stdout.close()
 
 
+    def test_entry_points_never_write_bytecode_caches(self):
+        """The installer's own bundle-inventory preflight rejects any unlisted
+        directory, so a __pycache__ written next to the managed scripts makes
+        install.py fail against its own source tree. Every other test in this
+        file passes PYTHONDONTWRITEBYTECODE=1 to the child, which is exactly
+        the environment variable a real user does not have set -- so this test
+        deliberately omits it and asserts the in-process guards hold on their
+        own, both in the bundle and in an installed home."""
+        cache_roots = [ROOT / "scripts", ROOT / "bin", ROOT / "tests"]
+        for stale in cache_roots:
+            shutil.rmtree(stale / "__pycache__", ignore_errors=True)
+        with tempfile.TemporaryDirectory(prefix="fleet bytecode ") as raw:
+            root = Path(raw)
+            home = root / "home"
+            config = root / "config"
+            # No PYTHONDONTWRITEBYTECODE: this is the real-user environment.
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config)}
+            install = subprocess.run(
+                [PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)],
+                cwd=ROOT, env=env, text=True, capture_output=True,
+            )
+            self.assertEqual(install.returncode, 0, install.stderr)
+            for source_dir in cache_roots:
+                self.assertFalse(
+                    (source_dir / "__pycache__").exists(),
+                    f"{source_dir}/__pycache__ was created; install.py would fail its own bundle inventory preflight",
+                )
+            switch = subprocess.run(
+                [PYTHON, str(home / ".claude/sync-model-context.py"), "--home", str(home), "--config-home", str(config)],
+                cwd=ROOT, env=env, text=True, capture_output=True,
+                input=json.dumps({"hook_event_name": "PostModelSwitch", "to_model": "codex-5.5"}),
+            )
+            self.assertEqual(switch.returncode, 0, switch.stderr)
+            self.assertFalse(
+                (home / ".claude/__pycache__").exists(),
+                "the installed model-switch hook left a __pycache__ in the user's home",
+            )
+            setup = subprocess.run(
+                [str(home / ".local/bin/claude-fleet-setup"), "--show"],
+                cwd=ROOT, env=env, text=True, capture_output=True,
+            )
+            self.assertEqual(setup.returncode, 0, setup.stderr)
+            self.assertFalse((home / ".claude/__pycache__").exists(), "claude-fleet-setup left a __pycache__ in the user's home")
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
