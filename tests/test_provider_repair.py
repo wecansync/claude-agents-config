@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -92,6 +93,72 @@ class ProviderRepairTests(unittest.TestCase):
         self.assertEqual(rows[0]["id"], "codex-luna")
         self.assertFalse(complete)
 
+    def test_family_approved_rejects_malformed_explicit_allowlist_without_shipped_fallback(self):
+        # "codex" ships with families[].approved == True in the fixture
+        # policy, and no top-level approvedFamilies key. Once an explicit
+        # approvedFamilies key is present at all, a malformed value (null, a
+        # bare string, or a list containing a non-string entry) must never
+        # fall back to that shipped per-family default -- doing so would
+        # silently re-approve a family the user may have deliberately
+        # revoked. Only an absent approvedFamilies key may use the legacy
+        # per-family default.
+        family_approved = self.catalog["family_approved"]
+        self.assertNotIn("approvedFamilies", POLICY, "fixture assumption: shipped policy has no explicit decision yet")
+
+        # Absent key: legacy per-family "approved": true default applies.
+        self.assertTrue(family_approved("codex-luna", POLICY), "absent approvedFamilies must still honor the shipped per-family default")
+
+        # Key present but null.
+        null_policy = {**POLICY, "approvedFamilies": None}
+        self.assertFalse(family_approved("codex-luna", null_policy), "a null approvedFamilies must not fall back to the shipped default")
+
+        # Key present but a bare string, not a list.
+        string_policy = {**POLICY, "approvedFamilies": "codex"}
+        self.assertFalse(family_approved("codex-luna", string_policy), "a string approvedFamilies must not fall back to the shipped default")
+
+        # Key present as a list containing a non-string entry.
+        non_string_policy = {**POLICY, "approvedFamilies": ["codex", 123]}
+        self.assertFalse(family_approved("codex-luna", non_string_policy), "a list with a non-string entry must not fall back to the shipped default")
+
+        # Key present as an empty list: an explicit denial, not "no decision yet".
+        empty_policy = {**POLICY, "approvedFamilies": []}
+        self.assertFalse(family_approved("codex-luna", empty_policy), "an empty approvedFamilies list must deny every family")
+
+        # Key present and well-formed: only the named families are approved.
+        claude_only_policy = {**POLICY, "approvedFamilies": ["claude"]}
+        self.assertTrue(family_approved("claude-sonnet-5", claude_only_policy))
+        self.assertFalse(family_approved("codex-luna", claude_only_policy), "a well-formed allowlist must still exclude families it does not name")
+
+    def test_load_policy_rejects_invalid_documents(self):
+        load_policy = self.catalog["load_policy"]
+        CatalogError = self.catalog["CatalogError"]
+        with tempfile.TemporaryDirectory(prefix="fleet load policy ") as raw:
+            path = Path(raw) / "provider-policy.json"
+
+            path.write_text(json.dumps(["not", "a", "dict"]))
+            with self.assertRaises(CatalogError):
+                load_policy(path)
+
+            path.write_text(json.dumps({"version": "provider-policy.v0", "provider": "omniroute", "families": []}))
+            with self.assertRaises(CatalogError):
+                load_policy(path)
+
+            path.write_text(json.dumps({"version": "provider-policy.v1", "provider": "not-omniroute", "families": []}))
+            with self.assertRaises(CatalogError):
+                load_policy(path)
+
+            path.write_text(json.dumps({"version": "provider-policy.v1", "provider": "omniroute"}))
+            with self.assertRaises(CatalogError):
+                load_policy(path)
+
+            path.write_bytes(b"{not valid json")
+            with self.assertRaises(CatalogError):
+                load_policy(path)
+
+            path.write_text(json.dumps({"version": "provider-policy.v1", "provider": "omniroute", "families": []}))
+            loaded = load_policy(path)
+            self.assertEqual(loaded["families"], [])
+
     def test_fake_provider_fetch_and_error_classes(self):
         FakeProvider.rows = [{"id": "codex-luna", "context_length": 872000}]
         server = socketserver.TCPServer(("127.0.0.1", 0), FakeProvider)
@@ -141,6 +208,151 @@ class ProviderRepairTests(unittest.TestCase):
             self.assertFalse("fake-token" in setup.stdout or "fake-token" in setup.stderr)
             uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(uninstall.returncode, 0, uninstall.stderr)
+
+    def test_family_revocation_survives_reinstall_update(self):
+        # A user who explicitly approves only "claude" must have that
+        # revocation of every other shipped family (all of which ship with
+        # "approved": true) survive a later reinstall/update. Before the
+        # fix, install.py's merge only preserved the top-level
+        # approvedFamilies list while restoring the shipped families array
+        # verbatim, and family_approved() OR'd the stale per-family
+        # "approved": true flag back in, silently re-enabling revoked
+        # families and their fallback candidates.
+        with tempfile.TemporaryDirectory(prefix="fleet revocation ") as raw:
+            root = Path(raw)
+            home = root / "home"
+            config = root / "config"
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config), "PYTHONDONTWRITEBYTECODE": "1"}
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr)
+            policy_path = config / "delegate-skills" / "provider-policy.json"
+
+            decisions = root / "decisions-claude-only.json"
+            decisions.write_text(json.dumps({"format": "provider-policy-decisions.v1", "approvedFamilies": ["claude"], "allowDiscovery": False}))
+            setup = subprocess.run([str(home / ".local/bin/claude-fleet-setup"), "--decisions", str(decisions)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(setup.returncode, 0, setup.stderr)
+
+            family_approved = self.catalog["family_approved"]
+            eligible_candidates = self.catalog["eligible_candidates"]
+            available = {"claude-sonnet-5": {}, "codex-luna": {}}
+            fallback_config = {"model": "claude-sonnet-5", "fallbacks": ["codex-luna"]}
+
+            policy = json.loads(policy_path.read_text())
+            self.assertFalse(family_approved("codex-luna", policy), "codex must not be approved right after setup")
+            self.assertTrue(family_approved("claude-sonnet-5", policy))
+            eligible, pending = eligible_candidates(fallback_config, available, policy)
+            self.assertEqual(eligible, ["claude-sonnet-5"])
+            self.assertIn("codex-luna", pending)
+
+            # Reinstall/update: this must not resurrect the shipped
+            # "approved": true default for the revoked "codex" family.
+            update = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(update.returncode, 0, update.stderr)
+            policy_after_update = json.loads(policy_path.read_text())
+            self.assertEqual(policy_after_update.get("approvedFamilies"), ["claude"])
+            self.assertFalse(family_approved("codex-luna", policy_after_update), "reinstall must not silently re-approve a revoked family")
+            self.assertTrue(family_approved("claude-sonnet-5", policy_after_update))
+            eligible_after_update, pending_after_update = eligible_candidates(fallback_config, available, policy_after_update)
+            self.assertEqual(eligible_after_update, ["claude-sonnet-5"], "the live fallback selection must still exclude the revoked family after an update")
+            self.assertIn("codex-luna", pending_after_update)
+            codex_family = next(family for family in policy_after_update["families"] if family.get("name") == "codex")
+            self.assertFalse(codex_family.get("approved"), "the per-family approved flag must also stay revoked on disk, not just the top-level list")
+            doctor_after_update = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(doctor_after_update.returncode, 0, doctor_after_update.stderr)
+
+            # An empty approval set (everything revoked) must also remain
+            # empty, rather than falling back to "no explicit decisions yet".
+            decisions_empty = root / "decisions-empty.json"
+            decisions_empty.write_text(json.dumps({"format": "provider-policy-decisions.v1", "approvedFamilies": [], "allowDiscovery": False}))
+            setup_empty = subprocess.run([str(home / ".local/bin/claude-fleet-setup"), "--decisions", str(decisions_empty)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(setup_empty.returncode, 0, setup_empty.stderr)
+            update_empty = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(update_empty.returncode, 0, update_empty.stderr)
+            policy_final = json.loads(policy_path.read_text())
+            self.assertEqual(policy_final.get("approvedFamilies"), [])
+            self.assertFalse(family_approved("claude-sonnet-5", policy_final), "an empty approval set must stay empty, not fall back to shipped defaults")
+
+    def test_install_upgrade_rejects_corrupt_or_malformed_installed_policy_without_mutation(self):
+        # An installed policy that already holds an explicit revocation is
+        # the sole record of that decision (see family_approved() and the
+        # merge in install.py's managed_specs()). If a later update finds
+        # that file corrupted or its approvedFamilies allowlist malformed,
+        # it must abort before touching any target -- settings.json, the
+        # fleet config, and the damaged policy bytes themselves -- rather
+        # than silently reinstalling the shipped all-approved defaults. The
+        # shared home lock must still be released (not left held) once the
+        # aborted update unwinds.
+        with tempfile.TemporaryDirectory(prefix="fleet policy corruption ") as raw:
+            root = Path(raw)
+            home = root / "home"
+            config = root / "config"
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config), "PYTHONDONTWRITEBYTECODE": "1"}
+            install_args = [PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)]
+            install = subprocess.run(install_args, cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr)
+
+            policy_path = config / "delegate-skills" / "provider-policy.json"
+            settings_path = home / ".claude" / "settings.json"
+            fleet_path = config / "delegate-skills" / "config.json"
+            lock_file = self.catalog["lock_path"](home)
+
+            # Revoke every family but "claude" before corrupting anything, so
+            # a fall-back-to-shipped-defaults bug would be visible as a
+            # resurrected approval rather than a merely absent one.
+            decisions = root / "decisions-claude-only.json"
+            decisions.write_text(json.dumps({"format": "provider-policy-decisions.v1", "approvedFamilies": ["claude"], "allowDiscovery": False}))
+            setup = subprocess.run([str(home / ".local/bin/claude-fleet-setup"), "--decisions", str(decisions)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(setup.returncode, 0, setup.stderr)
+            known_family_names = {family["name"] for family in json.loads(policy_path.read_text())["families"] if isinstance(family, dict) and isinstance(family.get("name"), str)}
+            self.assertIn("codex", known_family_names, "fixture assumption: a revocable family other than claude must exist")
+
+            def snapshot():
+                return policy_path.read_bytes(), settings_path.read_bytes(), fleet_path.read_bytes() if fleet_path.is_file() else None
+
+            good_policy_bytes = policy_path.read_bytes()
+            baseline = snapshot()
+
+            def assert_update_aborts_without_mutation(bad_bytes: bytes, label: str):
+                policy_path.write_bytes(bad_bytes)
+                update = subprocess.run(install_args, cwd=ROOT, env=env, text=True, capture_output=True)
+                self.assertNotEqual(update.returncode, 0, f"{label}: update must refuse to proceed")
+                self.assertIn("resolve or restore it before installing", update.stderr, f"{label}: must abort for the installed-policy reason, not an unrelated failure")
+                self.assertEqual(policy_path.read_bytes(), bad_bytes, f"{label}: damaged/malformed policy bytes must be preserved untouched")
+                self.assertEqual(settings_path.read_bytes(), baseline[1], f"{label}: settings.json must not be mutated by an aborted update")
+                if baseline[2] is not None:
+                    self.assertEqual(fleet_path.read_bytes(), baseline[2], f"{label}: fleet config must not be mutated by an aborted update")
+                self.assertFalse(lock_file.exists(), f"{label}: shared home lock must not remain held after an aborted update")
+
+            # Unreadable/invalid JSON bytes.
+            assert_update_aborts_without_mutation(b"{not valid json at all", "corrupt bytes")
+
+            # approvedFamilies present but null.
+            null_allowlist = json.loads(good_policy_bytes)
+            null_allowlist["approvedFamilies"] = None
+            assert_update_aborts_without_mutation(json.dumps(null_allowlist).encode("utf-8"), "null approvedFamilies")
+
+            # approvedFamilies present but a string, not a list.
+            string_allowlist = json.loads(good_policy_bytes)
+            string_allowlist["approvedFamilies"] = "claude"
+            assert_update_aborts_without_mutation(json.dumps(string_allowlist).encode("utf-8"), "string approvedFamilies")
+
+            # approvedFamilies containing a non-string element.
+            non_string_entry = json.loads(good_policy_bytes)
+            non_string_entry["approvedFamilies"] = ["claude", 123]
+            assert_update_aborts_without_mutation(json.dumps(non_string_entry).encode("utf-8"), "non-string approvedFamilies entry")
+
+            # approvedFamilies naming a family the policy does not define.
+            unknown_name = json.loads(good_policy_bytes)
+            unknown_name["approvedFamilies"] = ["claude", "not-a-real-family"]
+            assert_update_aborts_without_mutation(json.dumps(unknown_name).encode("utf-8"), "unknown approvedFamilies name")
+
+            # Restore the known-good, revoked policy and confirm an update
+            # still succeeds and preserves the empty-list-is-a-denial case.
+            policy_path.write_bytes(good_policy_bytes)
+            recovered = subprocess.run(install_args, cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(recovered.returncode, 0, recovered.stderr)
+            self.assertEqual(json.loads(policy_path.read_text()).get("approvedFamilies"), ["claude"])
+            self.assertFalse(lock_file.exists(), "lock must not remain held after a successful update")
 
     def test_installed_fake_gateway_sessionstart_update_uninstall(self):
         if shutil.which("node") is None:
@@ -292,6 +504,143 @@ class ProviderRepairTests(unittest.TestCase):
             unchanged = json.loads(proposal_file.read_text())
             self.assertEqual(unchanged["decision"], "approve")
 
+    def test_setup_rejects_malformed_decision_documents_without_any_side_effect(self):
+        # An unsupported format, a document mixing proposal-decision fields
+        # with family-approval fields, or an unknown key must all be
+        # rejected before any write happens. Before the fix, a mixed
+        # document was accepted: the early-return proposal branch resolved
+        # the pending proposal (a real write) and silently dropped the
+        # approvedFamilies fields, and format validation never ran for it.
+        with tempfile.TemporaryDirectory(prefix="fleet setup validation ") as raw:
+            root = Path(raw)
+            home = root / "home"
+            config = root / "config"
+            claude_dir = home / ".claude"
+            claude_dir.mkdir(parents=True)
+            shutil.copy(ROOT / "scripts/provider_catalog.py", claude_dir / "provider_catalog.py")
+            setup_script = claude_dir / "claude-fleet-setup.py"
+            shutil.copy(ROOT / "bin/claude-fleet-setup", setup_script)
+            policy_dir = config / "delegate-skills"
+            policy_dir.mkdir(parents=True)
+            policy_path = policy_dir / "provider-policy.json"
+            policy_path.write_text((ROOT / "config/provider-policy.json").read_text())
+            proposal_file = claude_dir / "fleet-model-proposal.json"
+            proposal_file.write_text(json.dumps({"models_hash": "abc123"}))
+
+            def digests():
+                return (hashlib.sha256(policy_path.read_bytes()).hexdigest(), hashlib.sha256(proposal_file.read_bytes()).hexdigest())
+
+            baseline = digests()
+
+            wrong_format = root / "decisions-wrong-format.json"
+            wrong_format.write_text(json.dumps({"format": "bogus-format.v1", "approvedFamilies": ["claude"]}))
+            result_wrong_format = subprocess.run([PYTHON, str(setup_script), "--home", str(home), "--config-home", str(config), "--decisions", str(wrong_format)], cwd=ROOT, text=True, capture_output=True)
+            self.assertNotEqual(result_wrong_format.returncode, 0)
+            self.assertEqual(digests(), baseline, "an unsupported format must not write anything")
+
+            mixed = root / "decisions-mixed.json"
+            mixed.write_text(json.dumps({
+                "format": "provider-policy-decisions.v1",
+                "proposalDecision": "approve",
+                "proposalHash": "abc123",
+                "approvedFamilies": ["claude"],
+            }))
+            result_mixed = subprocess.run([PYTHON, str(setup_script), "--home", str(home), "--config-home", str(config), "--decisions", str(mixed)], cwd=ROOT, text=True, capture_output=True)
+            self.assertNotEqual(result_mixed.returncode, 0, result_mixed.stdout)
+            self.assertEqual(digests(), baseline, "a mixed proposal/family-approval document must not resolve the proposal or touch the policy")
+
+            unknown_key = root / "decisions-unknown-key.json"
+            unknown_key.write_text(json.dumps({"format": "provider-policy-decisions.v1", "approvedFamilies": ["claude"], "fallbacks": {"fleet-implement": ["claude-sonnet-5"]}}))
+            result_unknown = subprocess.run([PYTHON, str(setup_script), "--home", str(home), "--config-home", str(config), "--decisions", str(unknown_key)], cwd=ROOT, text=True, capture_output=True)
+            self.assertNotEqual(result_unknown.returncode, 0)
+            self.assertEqual(digests(), baseline, "an unsupported/unknown decision key must not write anything")
+
+            # A genuinely valid, unmixed document must still succeed, proving
+            # the new validation is not simply rejecting everything.
+            valid = root / "decisions-valid.json"
+            valid.write_text(json.dumps({"format": "provider-policy-decisions.v1", "approvedFamilies": ["claude"], "allowDiscovery": False}))
+            result_valid = subprocess.run([PYTHON, str(setup_script), "--home", str(home), "--config-home", str(config), "--decisions", str(valid)], cwd=ROOT, text=True, capture_output=True)
+            self.assertEqual(result_valid.returncode, 0, result_valid.stderr)
+            self.assertEqual(json.loads(policy_path.read_text())["approvedFamilies"], ["claude"])
+
+    def test_setup_defers_under_lock_contention_without_success_or_mutation(self):
+        # claude-fleet-setup writes both the provider policy and the fleet
+        # model proposal, both of which are also written by other fleet
+        # writers (the installer, fleet-model-drift) under the same shared
+        # home lock. Before the fix, setup never acquired that lock at all,
+        # so a concurrent writer's changes could be silently clobbered. This
+        # exercises an *actual* contended holder (not just a unit check of
+        # the lock primitive) against both setup decision types and asserts
+        # that contention produces neither a success message nor a mutation.
+        with tempfile.TemporaryDirectory(prefix="fleet setup lock ") as raw:
+            root = Path(raw)
+            home = root / "home"
+            config = root / "config"
+            claude_dir = home / ".claude"
+            claude_dir.mkdir(parents=True)
+            shutil.copy(ROOT / "scripts/provider_catalog.py", claude_dir / "provider_catalog.py")
+            setup_script = claude_dir / "claude-fleet-setup.py"
+            shutil.copy(ROOT / "bin/claude-fleet-setup", setup_script)
+            policy_dir = config / "delegate-skills"
+            policy_dir.mkdir(parents=True)
+            policy_path = policy_dir / "provider-policy.json"
+            policy_path.write_text((ROOT / "config/provider-policy.json").read_text())
+            proposal_file = claude_dir / "fleet-model-proposal.json"
+            proposal_file.write_text(json.dumps({"models_hash": "abc123"}))
+
+            def digests():
+                return (hashlib.sha256(policy_path.read_bytes()).hexdigest(), hashlib.sha256(proposal_file.read_bytes()).hexdigest())
+
+            baseline = digests()
+            hold_script = (
+                "import sys, time; sys.path.insert(0, sys.argv[1]);"
+                "from provider_catalog import acquire_lock, release_lock;"
+                "from pathlib import Path;"
+                "fd, path = acquire_lock(Path(sys.argv[2]), timeout=2.0);"
+                "print('ACQUIRED' if fd is not None else 'FAILED', flush=True);"
+                "time.sleep(1.5);"
+                "release_lock(fd, path)"
+            )
+            holder_env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+            holder = subprocess.Popen([PYTHON, "-c", hold_script, str(ROOT / "scripts"), str(home)], env=holder_env, text=True, stdout=subprocess.PIPE)
+            try:
+                self.assertEqual(holder.stdout.readline().strip(), "ACQUIRED")
+
+                family_decisions = root / "decisions-family.json"
+                family_decisions.write_text(json.dumps({"format": "provider-policy-decisions.v1", "approvedFamilies": ["claude"], "allowDiscovery": False}))
+                family_result = subprocess.run(
+                    [PYTHON, str(setup_script), "--home", str(home), "--config-home", str(config), "--decisions", str(family_decisions), "--lock-timeout", "0.2"],
+                    cwd=ROOT, text=True, capture_output=True,
+                )
+                self.assertNotEqual(family_result.returncode, 0)
+                self.assertNotIn("Saved explicit fleet policy decisions", family_result.stdout)
+                self.assertEqual(digests(), baseline, "a contended family-approval write must not mutate anything")
+
+                proposal_decisions = root / "decisions-proposal.json"
+                proposal_decisions.write_text(json.dumps({"format": "provider-policy-decisions.v1", "proposalHash": "abc123", "proposalDecision": "approve"}))
+                proposal_result = subprocess.run(
+                    [PYTHON, str(setup_script), "--home", str(home), "--config-home", str(config), "--decisions", str(proposal_decisions), "--lock-timeout", "0.2"],
+                    cwd=ROOT, text=True, capture_output=True,
+                )
+                self.assertNotEqual(proposal_result.returncode, 0)
+                self.assertNotIn("Recorded proposal decision", proposal_result.stdout)
+                self.assertEqual(digests(), baseline, "a contended proposal-decision write must not mutate anything")
+            finally:
+                holder.wait(timeout=5)
+                holder.stdout.close()
+
+            # Once the lock clears, both decision types must still succeed normally.
+            family_after = subprocess.run(
+                [PYTHON, str(setup_script), "--home", str(home), "--config-home", str(config), "--decisions", str(family_decisions)],
+                cwd=ROOT, text=True, capture_output=True,
+            )
+            self.assertEqual(family_after.returncode, 0, family_after.stderr)
+            proposal_after = subprocess.run(
+                [PYTHON, str(setup_script), "--home", str(home), "--config-home", str(config), "--decisions", str(proposal_decisions)],
+                cwd=ROOT, text=True, capture_output=True,
+            )
+            self.assertEqual(proposal_after.returncode, 0, proposal_after.stderr)
+
     def test_context_sync_repairs_stale_compaction_pair_when_max_context_already_matches(self):
         with tempfile.TemporaryDirectory(prefix="fleet context repair ") as raw:
             root = Path(raw)
@@ -414,10 +763,12 @@ class ProviderRepairTests(unittest.TestCase):
             root = Path(raw)
             home = root / "home"
             config = root / "config"
-            # The writer lock lives under tmpdir(); node's os.tmpdir() falls
-            # back to "/tmp" when TMPDIR is absent, so the child must see the
-            # same tmpdir this test uses below to plant the phase-3 lock.
-            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config), "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": tempfile.gettempdir()}
+            # The writer lock lives under home/.claude, not under tmpdir(), so
+            # a distinct TMPDIR for this child proves the lock location does
+            # not depend on it (see test_lock_path_is_home_scoped_not_tmpdir).
+            child_tmp = root / "child-tmp"
+            child_tmp.mkdir()
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config), "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(child_tmp)}
             install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(install.returncode, 0, install.stderr)
             sync_bin = home / ".local/bin/claude-fleet-sync"
@@ -443,6 +794,7 @@ class ProviderRepairTests(unittest.TestCase):
                     "path": str(agent_file),
                     "existed": True,
                     "previous": base64.b64encode(original.encode()).decode(),
+                    "previousSha256": hashlib.sha256(original.encode()).hexdigest(),
                     "payload": None,
                     "mode": 0o644,
                 }],
@@ -479,22 +831,140 @@ class ProviderRepairTests(unittest.TestCase):
             shutil.rmtree(txn_dir)
             marker.unlink()
 
-            # --- Phase 3: a live (recently created) canonical writer lock
-            # must defer the generator without mutating anything, and must
-            # not be evicted merely for being contended.
-            digest = hashlib.sha256(str(home.resolve()).encode()).hexdigest()
-            lock_path = Path(tempfile.gettempdir()) / f"claude-agents-config-{digest}.lock"
-            lock_path.write_text("999999999")
+            # --- Phase 3: a canonical writer lock owned by a still-live pid
+            # must defer the generator without mutating anything even once it
+            # is older than the stale-age bound; only age plus a dead owning
+            # pid may evict a lock. The lock is planted with this test
+            # process's own pid (guaranteed alive) and an mtime pushed well
+            # past the stale bound, isolating the pid-liveness check from the
+            # age check.
+            lock_path = home.resolve() / ".claude" / ".claude-agents-config.lock"
+            lock_path.write_text(f"{os.getpid()}:deadbeefdeadbeef")
+            old = time.time() - 3600
+            os.utime(lock_path, (old, old))
             try:
                 before = agent_file.read_text()
                 deferred = run_sync()
                 self.assertNotEqual(deferred.returncode, 0)
-                self.assertEqual(agent_file.read_text(), before, "a live lock must defer without mutating any target")
-                self.assertTrue(lock_path.exists(), "a live lock must not be evicted")
+                self.assertEqual(agent_file.read_text(), before, "a live-owner lock must defer without mutating any target")
+                self.assertTrue(lock_path.exists(), "a live-owner lock must not be evicted merely for its age")
             finally:
                 lock_path.unlink(missing_ok=True)
 
+            # A lock older than the stale bound whose owning pid is provably
+            # dead (an unused, unparseable-as-live pid) must be reclaimed so
+            # the fleet does not wedge forever behind a crashed writer.
+            dead_pid = 999999999
+            lock_path.write_text(f"{dead_pid}:deadbeefdeadbeef")
+            os.utime(lock_path, (old, old))
+            reclaimed = run_sync()
+            self.assertEqual(reclaimed.returncode, 0, reclaimed.stderr)
+
             # The generator must still work normally once the live lock clears.
+            final = run_sync()
+            self.assertEqual(final.returncode, 0, final.stderr)
+
+    def test_generator_transaction_fault_regressions(self):
+        if shutil.which("node") is None:
+            self.skipTest("Node.js is required for the fleet-sync generator")
+        with tempfile.TemporaryDirectory(prefix="fleet generator faults ") as raw:
+            root = Path(raw)
+            home = root / "home"
+            config = root / "config"
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config), "PYTHONDONTWRITEBYTECODE": "1"}
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr)
+            sync_bin = home / ".local/bin/claude-fleet-sync"
+            agent_file = home / ".claude/agents/fleet-implement.md"
+            live_content = agent_file.read_text()
+            txn_dir = home / ".claude" / ".claude-fleet-sync-txn"
+            marker = home / ".claude" / ".claude-fleet-sync-pending.json"
+
+            def run_sync():
+                return subprocess.run([str(sync_bin)], cwd=ROOT, env=env, text=True, capture_output=True)
+
+            # --- A corrupted "previous" backup payload (previousSha256 no
+            # longer matches the decoded bytes) must be rejected -- and must
+            # preserve the evidence and every target -- rather than restoring
+            # the wrong bytes over a live target undetected.
+            txn_dir.mkdir(parents=True)
+            stale_previous = "some prior agent content that predates this backup"
+            (txn_dir / "manifest.json").write_text(json.dumps({
+                "format": "claude-agents-config.sync-transaction.v1",
+                "state": "prepared",
+                "records": [{
+                    "path": str(agent_file),
+                    "existed": True,
+                    "previous": base64.b64encode(stale_previous.encode()).decode(),
+                    "previousSha256": hashlib.sha256(b"different bytes than what was actually encoded").hexdigest(),
+                    "payload": None,
+                    "mode": 0o644,
+                }],
+            }))
+            marker.write_text(json.dumps({"format": "claude-agents-config.sync-transaction.v1", "state": "prepared", "directory": str(txn_dir)}))
+            corrupted = run_sync()
+            self.assertNotEqual(corrupted.returncode, 0)
+            self.assertIn("backup is corrupted", corrupted.stderr)
+            self.assertTrue(marker.exists(), "corrupted-backup evidence must be preserved, not deleted")
+            self.assertTrue(txn_dir.exists())
+            self.assertEqual(agent_file.read_text(), live_content, "a rejected corrupted backup must not mutate the target")
+            shutil.rmtree(txn_dir)
+            marker.unlink()
+
+            # --- A "committed" marker whose transaction directory is already
+            # gone (a prior cleanup crashed after removing the directory but
+            # before unlinking the marker) must be recovered by simply
+            # dropping the stale marker, without touching any target.
+            marker.write_text(json.dumps({"format": "claude-agents-config.sync-transaction.v1", "state": "committed", "directory": str(txn_dir)}))
+            self.assertFalse(txn_dir.exists())
+            recovered_missing_dir = run_sync()
+            self.assertEqual(recovered_missing_dir.returncode, 0, recovered_missing_dir.stderr)
+            self.assertFalse(marker.exists(), "a committed marker pointing at a missing directory must be dropped")
+            doctor = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(doctor.returncode, 0, doctor.stderr)
+            live_content = agent_file.read_text()
+
+            # --- A "committed" transaction whose bookkeeping cleanup itself
+            # fails (here: an unexpected subdirectory left inside the
+            # transaction directory makes the unlinkSync loop throw) must
+            # leave every target exactly as committed -- never rolled back to
+            # the pre-commit "previous" payload -- since a committed write
+            # already landed for real. "previous" is deliberately different
+            # from the live target content so a wrongful rollback would be
+            # detectable.
+            txn_dir.mkdir(parents=True)
+            pre_commit_content = "pre-commit content that must never be restored"
+            self.assertNotEqual(pre_commit_content, live_content)
+            (txn_dir / "manifest.json").write_text(json.dumps({
+                "format": "claude-agents-config.sync-transaction.v1",
+                "state": "committed",
+                "records": [{
+                    "path": str(agent_file),
+                    "existed": True,
+                    "previous": base64.b64encode(pre_commit_content.encode()).decode(),
+                    "previousSha256": hashlib.sha256(pre_commit_content.encode()).hexdigest(),
+                    "payload": None,
+                    "mode": 0o644,
+                }],
+            }))
+            marker.write_text(json.dumps({"format": "claude-agents-config.sync-transaction.v1", "state": "committed", "directory": str(txn_dir)}))
+            (txn_dir / "leftover-directory").mkdir()
+            cleanup_failure = run_sync()
+            self.assertNotEqual(cleanup_failure.returncode, 0, "an unlinkSync failure during committed-transaction cleanup must not be silently swallowed")
+            self.assertNotIn("evidence preserved at", cleanup_failure.stderr, "this must fail from the cleanup loop itself, not from an earlier validation guard")
+            self.assertEqual(agent_file.read_text(), live_content, "a committed transaction must never roll a target back to its pre-commit content, even when cleanup itself fails")
+            self.assertTrue(marker.exists() or txn_dir.exists(), "cleanup-failure evidence must be preserved, not silently discarded")
+            shutil.rmtree(txn_dir, ignore_errors=True)
+            marker.unlink(missing_ok=True)
+            # The crashed child raised past its own writer-lock release, so
+            # the lock outlives it (by design: an unattended lock is only
+            # ever reclaimed once it is provably stale, exactly as exercised
+            # in test_generator_recovers_interrupted_transaction_...). Clear
+            # it here as the manual operator repair that scenario documents.
+            lock_path = home.resolve() / ".claude" / ".claude-agents-config.lock"
+            lock_path.unlink(missing_ok=True)
+
+            # The generator must still work normally afterward.
             final = run_sync()
             self.assertEqual(final.returncode, 0, final.stderr)
 
@@ -510,6 +980,78 @@ class ProviderRepairTests(unittest.TestCase):
                 self.assertIsNone(catalog["acquire_lock"](home, timeout=0.05)[0])
             finally:
                 catalog["release_lock"](fd, lock)
+
+    def test_lock_path_is_home_scoped_not_tmpdir(self):
+        # Two processes resolving the same home must land on the identical
+        # lock file even when their TMPDIR/TMP/TEMP differ, since that is an
+        # environment value each caller (shell, sandbox, test harness) can
+        # set independently for the very same target home.
+        with tempfile.TemporaryDirectory(prefix="fleet lock path ") as raw:
+            home = Path(raw) / "home"
+            (home / ".claude").mkdir(parents=True)
+            tmp_a = Path(raw) / "tmp-a"
+            tmp_b = Path(raw) / "tmp-b"
+            tmp_a.mkdir()
+            tmp_b.mkdir()
+            script = (
+                "import sys; sys.path.insert(0, sys.argv[1]);"
+                "from provider_catalog import lock_path;"
+                "from pathlib import Path;"
+                "print(lock_path(Path(sys.argv[2])))"
+            )
+
+            def resolved_path(tmp_dir: Path) -> str:
+                env = {**os.environ, "TMPDIR": str(tmp_dir), "TMP": str(tmp_dir), "TEMP": str(tmp_dir), "PYTHONDONTWRITEBYTECODE": "1"}
+                result = subprocess.run([PYTHON, "-c", script, str(ROOT / "scripts"), str(home)], env=env, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return result.stdout.strip()
+
+            path_a = resolved_path(tmp_a)
+            path_b = resolved_path(tmp_b)
+            self.assertEqual(path_a, path_b, "the writer lock must not depend on TMPDIR/TMP/TEMP")
+            self.assertTrue(path_a.startswith(str(home.resolve())), "the writer lock must live under the resolved home")
+            self.assertNotIn(str(tmp_a), path_a)
+            self.assertNotIn(str(tmp_b), path_a)
+
+    def test_shared_lock_contention_defers_across_different_tmpdir_envs(self):
+        # Two genuinely separate subprocess environments -- distinct TMPDIR
+        # values, no shared env dict -- must still serialize on one lock.
+        # Aligning TMPDIR between the two sides would hide exactly the bug
+        # this regression targets.
+        with tempfile.TemporaryDirectory(prefix="fleet lock cross-env ") as raw:
+            home = Path(raw) / "home"
+            (home / ".claude").mkdir(parents=True)
+            tmp_a = Path(raw) / "tmp-a"
+            tmp_b = Path(raw) / "tmp-b"
+            tmp_a.mkdir()
+            tmp_b.mkdir()
+            hold_script = (
+                "import sys, time; sys.path.insert(0, sys.argv[1]);"
+                "from provider_catalog import acquire_lock, release_lock;"
+                "from pathlib import Path;"
+                "fd, path = acquire_lock(Path(sys.argv[2]), timeout=2.0);"
+                "print('ACQUIRED' if fd is not None else 'FAILED', flush=True);"
+                "time.sleep(1.5);"
+                "release_lock(fd, path)"
+            )
+            env_a = {**os.environ, "TMPDIR": str(tmp_a), "TMP": str(tmp_a), "TEMP": str(tmp_a), "PYTHONDONTWRITEBYTECODE": "1"}
+            holder = subprocess.Popen([PYTHON, "-c", hold_script, str(ROOT / "scripts"), str(home)], env=env_a, text=True, stdout=subprocess.PIPE)
+            try:
+                self.assertEqual(holder.stdout.readline().strip(), "ACQUIRED")
+                probe_script = (
+                    "import sys; sys.path.insert(0, sys.argv[1]);"
+                    "from provider_catalog import acquire_lock;"
+                    "from pathlib import Path;"
+                    "fd, path = acquire_lock(Path(sys.argv[2]), timeout=0.2);"
+                    "print('ACQUIRED' if fd is not None else 'DEFERRED')"
+                )
+                env_b = {**os.environ, "TMPDIR": str(tmp_b), "TMP": str(tmp_b), "TEMP": str(tmp_b), "PYTHONDONTWRITEBYTECODE": "1"}
+                probe = subprocess.run([PYTHON, "-c", probe_script, str(ROOT / "scripts"), str(home)], env=env_b, text=True, capture_output=True, timeout=5)
+                self.assertEqual(probe.returncode, 0, probe.stderr)
+                self.assertEqual(probe.stdout.strip(), "DEFERRED", "a second writer in a different TMPDIR must not also acquire the lock")
+            finally:
+                holder.wait(timeout=5)
+                holder.stdout.close()
 
 
 if __name__ == "__main__":

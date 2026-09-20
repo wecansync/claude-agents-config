@@ -174,7 +174,7 @@
     },
     {
       "path": "bin/claude-fleet-setup",
-      "sha256": "587730e46ee624a519f850988c9a35ae960500cc920e96ee00997a5e8554b190",
+      "sha256": "8990e6078ac62940211f1a149d34690233bcd86471318e33142047252f0cef9f",
       "mode": "0o755"
     },
     {
@@ -184,7 +184,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "db2f7972d1aa9bf890e028397cda9d217688c2d737380a2fb557afa9b226944c",
+      "sha256": "f1fd419927b51888877cf1fe9a42aa4460df9bba8257d8bea33ef9f2ba5879b4",
       "mode": "0o755"
     },
     {
@@ -234,12 +234,12 @@
     },
     {
       "path": "scripts/generate-claude-agents.mjs",
-      "sha256": "84298dbfd6f508b41af9d9f7ed4ecf1b75c57167252716f1f8cf85a47fef78f4",
+      "sha256": "7d3a8239e3eb1b9b479f8052705cdb77ffbfe59d5ceadc2cad32ceaf9426efb9",
       "mode": "0o755"
     },
     {
       "path": "scripts/provider_catalog.py",
-      "sha256": "a6d0d74219a8352db99913e9e142ce5725de5b8419cbdb4dcd4b26ee22671c4c",
+      "sha256": "c83c5b571906df1b8828e7d0e328d1bc24ca95e08f78ab7544041896da56aeac",
       "mode": "0o755"
     },
     {
@@ -259,12 +259,12 @@
     },
     {
       "path": "scripts/sync-omniroute-models.mjs",
-      "sha256": "9045d69ce0e2938c065c710ad559190a80e97bfe8fb767b82f12500605d9fee2",
+      "sha256": "2f443a43ae02376ad78940f9ffd883a43bb79d1a1c5e6afe64cd295d66aad6eb",
       "mode": "0o755"
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "418f280646c0e137330f1c6be405cfc6dcd8231048c7d49cf6abd7e644189952",
+      "sha256": "2a90330d5590e038dec713923fd1ee9a36a4b4a997ddda2fad06491c6456fa16",
       "mode": "0o755"
     },
     {

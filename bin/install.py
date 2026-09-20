@@ -673,8 +673,13 @@ def hook_marker(kind: str) -> str:
 
 @contextmanager
 def target_lock(home: Path):
-    """Serialize every managed writer with the shared portable lock."""
-    fd, lock_path = acquire_shared_lock(home, timeout=None)
+    """Serialize every managed writer with the shared portable lock.
+
+    Only the installer creates the lock's parent (``home/.claude``): it may
+    be racing to create that directory for the very first time, after its
+    own preflight has already rejected a symlinked home or bundle.
+    """
+    fd, lock_path = acquire_shared_lock(home, timeout=None, create_parent=True)
     if fd is None:
         fail(f"cannot acquire target lock: {lock_path}")
     try:
@@ -1468,14 +1473,59 @@ def managed_specs(
     if existing_policy_path.is_file():
         try:
             source_policy = json.loads(policy_data.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            fail(f"bundled provider policy is not valid JSON ({exc})")
+        try:
             existing_policy = json.loads(existing_policy_path.read_text(encoding="utf-8"))
-            if isinstance(source_policy, dict) and isinstance(existing_policy, dict):
-                for key in ("approvedFamilies", "discoveryApproved", "decisionsFormat"):
-                    if key in existing_policy:
-                        source_policy[key] = copy.deepcopy(existing_policy[key])
-                policy_data = json_bytes(source_policy)
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            pass
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            # An installed policy that cannot be read or parsed may hold a
+            # user's explicit family-approval decisions; silently falling
+            # back to the shipped all-approved defaults here would resurrect
+            # every revoked family. Abort before any target is touched
+            # (this runs before create_backup/stage_and_commit) and leave
+            # the damaged file exactly as found for the operator to inspect.
+            fail(f"existing provider policy at {existing_policy_path} is unreadable or not valid JSON ({exc}); resolve or restore it before installing")
+        if not isinstance(existing_policy, dict):
+            fail(f"existing provider policy at {existing_policy_path} is not a JSON object; resolve or restore it before installing")
+        # An explicit approvedFamilies allowlist is the authoritative record
+        # of the user's decisions (see family_approved() in
+        # provider_catalog.py). If it is present but malformed -- null, not
+        # a list, containing a non-string element, or naming a family the
+        # policy does not even define -- its meaning is ambiguous, and it
+        # must never be silently discarded or defaulted to "approve
+        # everything": that would be a fail-open on a security-relevant
+        # allowlist. Abort instead.
+        if "approvedFamilies" in existing_policy:
+            approved_families = existing_policy["approvedFamilies"]
+            if not isinstance(approved_families, list) or any(not isinstance(value, str) for value in approved_families):
+                fail(f"existing provider policy at {existing_policy_path} has an invalid approvedFamilies list; resolve or restore it before installing")
+            known_names = {
+                family.get("name")
+                for family in existing_policy.get("families", [])
+                if isinstance(family, dict) and isinstance(family.get("name"), str)
+            }
+            unknown = sorted(set(approved_families) - known_names)
+            if unknown:
+                fail(f"existing provider policy at {existing_policy_path} approves unknown family/families {unknown}; resolve or restore it before installing")
+        if isinstance(source_policy, dict):
+            for key in ("approvedFamilies", "discoveryApproved", "decisionsFormat"):
+                if key in existing_policy:
+                    source_policy[key] = copy.deepcopy(existing_policy[key])
+            # The shipped families array always ships with "approved":
+            # true, so once explicit decisions exist, an update must not
+            # merely preserve the top-level approvedFamilies list while
+            # silently restoring the shipped per-family flag: that stale
+            # flag is exactly what family_approved() falls back to before
+            # any decision is recorded, and would otherwise contradict
+            # (and, via any future fallback path, re-enable) a family the
+            # user explicitly revoked.
+            approved_families = source_policy.get("approvedFamilies")
+            if isinstance(approved_families, list):
+                approved_set = {value for value in approved_families if isinstance(value, str)}
+                for family in source_policy.get("families", []):
+                    if isinstance(family, dict) and isinstance(family.get("name"), str):
+                        family["approved"] = family["name"] in approved_set
+            policy_data = json_bytes(source_policy)
     add(fleet / "provider-policy.json", policy_data, 0o644, "config:provider-policy.json")
     add(fleet / "config.json", fleet_bytes, 0o644, "config:delegate-fleet.json")
     add(fleet / "generate-claude-agents.mjs", source_bytes(bundle, "scripts/generate-claude-agents.mjs"), 0o755, "config:generate-claude-agents.mjs")

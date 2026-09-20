@@ -103,22 +103,56 @@ function canonicalHome() {
   try { return fs.realpathSync.native(home); } catch { return path.resolve(home); }
 }
 
+// Scoped physically under the resolved home rather than the system temp
+// directory: os.tmpdir() honors TMPDIR/TMP/TEMP, which two writers targeting
+// the very same home can have set differently, so a tmp-relative path
+// serializes nothing. This matches generate-claude-agents.mjs and
+// provider_catalog.lock_path (Python) exactly, so all three writers land on
+// one file per resolved home without agreeing on an environment variable.
+const LOCK_STALE_MS = 60_000;
+
 function sharedLockPath() {
-  const digest = crypto.createHash("sha256").update(canonicalHome()).digest("hex");
-  return path.join(os.tmpdir(), `claude-agents-config-${digest}.lock`);
+  return path.join(canonicalHome(), ".claude", ".claude-agents-config.lock");
+}
+
+function processAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0 || process.platform === "win32") return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
+
+function lockOwnerPid(lockPath) {
+  try {
+    const content = fs.readFileSync(lockPath, "utf8");
+    const pid = parseInt(content.split(":", 1)[0].trim(), 10);
+    return Number.isInteger(pid) ? pid : -1;
+  } catch {
+    return -1;
+  }
 }
 
 function acquireSharedLock() {
   const lockPath = sharedLockPath();
+  // This hook never creates home/.claude: only the installer's apply path
+  // does, so a missing directory here means "cannot lock" and the caller
+  // must defer rather than fabricate the directory for an uninstalled home.
+  if (!fs.existsSync(path.dirname(lockPath)) || !fs.statSync(path.dirname(lockPath)).isDirectory()) return undefined;
+  const identity = `${process.pid}:${crypto.randomBytes(8).toString("hex")}`;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const fd = fs.openSync(lockPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
-      fs.writeSync(fd, String(process.pid));
-      return { fd, lockPath };
+      if (fs.lstatSync(lockPath, { throwIfNoEntry: false })?.isSymbolicLink()) return undefined;
+      const fd = fs.openSync(lockPath, fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
+      fs.writeSync(fd, identity);
+      return { fd, lockPath, identity };
     } catch (error) {
       if (error?.code !== "EEXIST" || attempt > 0) return undefined;
       try {
-        if (Date.now() - fs.statSync(lockPath).mtimeMs < 60_000) return undefined;
+        const stale = Date.now() - fs.statSync(lockPath).mtimeMs > LOCK_STALE_MS;
+        if (!stale || processAlive(lockOwnerPid(lockPath))) return undefined;
         fs.unlinkSync(lockPath);
       } catch { return undefined; }
     }
@@ -129,7 +163,10 @@ function acquireSharedLock() {
 function releaseSharedLock(lock) {
   if (!lock) return;
   try { fs.closeSync(lock.fd); } catch {}
-  try { fs.unlinkSync(lock.lockPath); } catch {}
+  try {
+    if (fs.lstatSync(lock.lockPath, { throwIfNoEntry: false })?.isSymbolicLink()) return;
+    if (fs.readFileSync(lock.lockPath, "utf8") === lock.identity) fs.unlinkSync(lock.lockPath);
+  } catch {}
 }
 
 function fetchCatalog(settings) {

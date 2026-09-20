@@ -8,14 +8,13 @@ this file in ``--normalize`` mode so its presentation path uses the same rules.
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import sys
-import tempfile
 
 sys.dont_write_bytecode = True
 import time
@@ -25,7 +24,6 @@ import urllib.request
 
 CACHE_FORMAT = "claude-agents-config.provider-cache.v1"
 POLICY_FORMAT = "provider-policy.v1"
-DECISIONS_FORMAT = "provider-policy-decisions.v1"
 PROVIDER_NAME = "omniroute"
 DEFAULT_CACHE_TTL = 6 * 60 * 60
 MAX_FALLBACK_CANDIDATES = 3
@@ -54,30 +52,6 @@ def load_policy(path: Path) -> dict:
     if not isinstance(value.get("families"), list):
         raise CatalogError("provider policy has no family list")
     return value
-
-
-def policy_with_decisions(policy: dict, decisions: object) -> dict:
-    """Apply explicit machine-readable interview decisions without prompting."""
-    result = copy.deepcopy(policy)
-    if not isinstance(decisions, dict) or decisions.get("format") not in {None, DECISIONS_FORMAT}:
-        return result
-    approved = decisions.get("approvedFamilies")
-    approved_set = {value for value in approved if isinstance(value, str)} if isinstance(approved, list) else set()
-    for family in result.get("families", []):
-        if not isinstance(family, dict) or not isinstance(family.get("name"), str):
-            continue
-        if family["name"] in approved_set:
-            family["approved"] = True
-    selected = decisions.get("fallbacks")
-    if isinstance(selected, dict):
-        result["fallbacks"] = {
-            key: [value for value in values if isinstance(value, str)][:MAX_FALLBACK_CANDIDATES]
-            for key, values in selected.items()
-            if isinstance(key, str) and isinstance(values, list)
-        }
-    if decisions.get("allowDiscovery") is True:
-        result["discoveryApproved"] = True
-    return result
 
 
 def policy_aliases(policy: dict) -> dict[str, str]:
@@ -372,10 +346,21 @@ def model_family(model: object, policy: dict) -> str | None:
 
 
 def family_approved(model: object, policy: dict) -> bool:
+    # An explicit approvedFamilies list (recorded by claude-fleet-setup, even
+    # when empty) is authoritative and must never be OR'd with the shipped
+    # per-family "approved" defaults: those defaults ship as true for every
+    # family, so falling back to them here would silently re-approve a
+    # family the user explicitly revoked. The per-family "approved" flag is
+    # consulted only before any explicit decision has ever been recorded.
     family_name = model_family(model, policy)
     approved_families = policy.get("approvedFamilies")
-    if isinstance(approved_families, list) and family_name in approved_families:
-        return True
+    if "approvedFamilies" in policy:
+        return (
+            isinstance(approved_families, list)
+            and all(isinstance(name, str) for name in approved_families)
+            and family_name is not None
+            and family_name in approved_families
+        )
     return any(
         isinstance(family, dict) and family.get("name") == family_name and family.get("approved") is True
         for family in policy.get("families", [])
@@ -400,51 +385,161 @@ def eligible_candidates(config: object, available: dict[str, dict], policy: dict
     return eligible, pending
 
 
+LOCK_STALE_SECONDS = 60
+
+
 def lock_path(home: Path) -> Path:
-    """Path shared by installer, Node hooks, context updates, reconcile, and sync."""
+    """Path shared by installer, Node hooks, context updates, reconcile, and sync.
+
+    The lock lives under the resolved home itself rather than the system temp
+    directory. ``tempfile.gettempdir()`` / Node's ``os.tmpdir()`` honor
+    ``TMPDIR``/``TMP``/``TEMP``, which two writers targeting the very same
+    home can have set differently (distinct sandboxes, distinct shells); that
+    let two "different" lock files serialize nothing. A location scoped
+    inside home needs no per-home hash or environment agreement: every writer
+    that resolves the same home lands on the same file. This function never
+    creates anything; it is a pure path computation so it stays safe to call
+    for diagnostics or dry-run reporting.
+    """
     try:
-        canonical = str(home.resolve(strict=True))
+        resolved = home.resolve(strict=True)
     except OSError:
-        canonical = str(home.resolve(strict=False))
-    key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    return Path(tempfile.gettempdir()) / f"claude-agents-config-{key}.lock"
+        resolved = home.resolve(strict=False)
+    return resolved / ".claude" / ".claude-agents-config.lock"
 
 
-def acquire_lock(home: Path, timeout: float | None = 4.0):
+def _ensure_no_symlink_parent(path: Path) -> None:
+    """Refuse to create a lock through a symlinked ancestor directory."""
+    current = path.parent
+    while not current.exists() and current != current.parent:
+        current = current.parent
+    while True:
+        if current.is_symlink():
+            raise OSError(f"refusing to lock through symlinked directory: {current}")
+        if current == current.parent:
+            return
+        current = current.parent
+
+
+def _process_alive(pid: int) -> bool:
+    """Conservative liveness check: unknown or unparseable pids count as alive.
+
+    A false "alive" merely leaves a genuinely stale lock in place a little
+    longer (bounded by an operator or a later run once the pid is gone); a
+    false "dead" would let a second writer through, mutations races that this
+    lock exists to prevent. Windows lacks POSIX signal-0 semantics, so it is
+    treated as always alive; orphaned locks there require operator cleanup.
+    """
+    if pid <= 0:
+        return True
+    if os.name == "nt":
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _lock_owner_pid(path: Path) -> int:
+    try:
+        content = path.read_text(encoding="ascii", errors="strict")
+    except (OSError, UnicodeError):
+        return -1
+    try:
+        return int(content.split(":", 1)[0].strip())
+    except ValueError:
+        return -1
+
+
+def acquire_lock(home: Path, timeout: float | None = 4.0, create_parent: bool = False):
     """Acquire the portable O_EXCL writer lock.
 
     A bounded timeout is used by hooks so a contended startup remains usable;
-    ``None`` blocks for installer operations. Stale recovery is conservative.
+    ``None`` blocks for installer operations. ``create_parent`` must only be
+    set by the installer's apply path (after its own symlink preflight),
+    which may be racing to create ``home/.claude`` for the very first time;
+    every other caller (hooks, context updates, reconcile, setup) treats a
+    missing home or a missing ``.claude`` directory as "cannot lock right
+    now" and defers rather than fabricating the directory, so a not-yet or
+    no-longer installed home never gets written into by a background writer.
+    Eviction of a contended lock requires both an age past
+    ``LOCK_STALE_SECONDS`` and a dead owning pid, so a live long-running
+    installer is never evicted merely for running past the age bound.
     """
     path = lock_path(home)
+    if create_parent:
+        try:
+            _ensure_no_symlink_parent(path)
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except OSError:
+            return None, path
+    elif not path.parent.is_dir():
+        return None, path
+    identity = f"{os.getpid()}:{secrets.token_hex(8)}".encode("ascii")
     deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
     while True:
         try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            os.write(fd, str(os.getpid()).encode("ascii"))
+            if path.is_symlink():
+                return None, path
+        except OSError:
+            return None, path
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+            os.write(fd, identity)
             return fd, path
         except FileExistsError:
             try:
-                if time.time() - path.stat().st_mtime > 60:
-                    path.unlink()
-                    continue
+                if not path.is_symlink():
+                    stale_age = time.time() - path.stat().st_mtime > LOCK_STALE_SECONDS
+                    if stale_age and not _process_alive(_lock_owner_pid(path)):
+                        path.unlink()
+                        continue
             except OSError:
                 pass
             if deadline is not None and time.monotonic() >= deadline:
                 return None, path
             time.sleep(0.05)
+        except OSError:
+            return None, path
 
 
 def release_lock(fd: int | None, path: Path) -> None:
-    if fd is not None:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+    """Release a lock acquired by this process, deleting only if still ours.
+
+    A lock reclaimed as stale and recreated by another writer while this
+    process held the fd open must never be deleted here: the fd's own
+    content (read back through the same descriptor, which still points at
+    the original inode even if the directory entry was replaced) is compared
+    against whatever currently sits at ``path`` before unlinking anything.
+    """
+    if fd is None:
+        return
+    owned_identity = None
     try:
-        path.unlink()
+        os.lseek(fd, 0, os.SEEK_SET)
+        owned_identity = os.read(fd, 128)
     except OSError:
         pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    if not owned_identity:
+        return
+    try:
+        if path.is_symlink():
+            return
+        current = path.read_bytes()
+    except OSError:
+        return
+    if current == owned_identity:
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 def _main() -> int:
