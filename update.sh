@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+ACTION="--apply"
 for arg in "$@"; do
-  if [[ "$arg" == "--dry-run" ]]; then
-    exec "$SCRIPT_DIR/install.sh" "$@"
+  if [[ "$arg" == "--dry-run" || "$arg" == "--check" ]]; then
+    ACTION=""
   fi
 done
-exec "$SCRIPT_DIR/install.sh" --apply "$@"
+if [[ "$ACTION" == "" ]]; then
+  exec "$SCRIPT_DIR/install.sh" "$@"
+fi
+exec "$SCRIPT_DIR/install.sh" "$ACTION" "$@"

@@ -1,112 +1,198 @@
 #!/usr/bin/env python3
-"""Keep CLAUDE_CODE_MAX_CONTEXT_TOKENS aligned with the selected gateway model.
+"""Synchronize a verified model context budget without racing other writers.
 
-Runs as a PreModelSwitch, PostModelSwitch, or SessionStart hook. Claude Code
-applies CLAUDE_CODE_MAX_CONTEXT_TOKENS to every gateway model ID it cannot
-resolve, so one static value is wrong for every model whose real context window
-differs. The omniroute discovery cache records each model's context_length;
-this hook copies the selected model's real limit into the settings env so the
-next launch budgets the session at that model's actual window. A PreModelSwitch
-run that changes the value prints a systemMessage telling the user to restart
-Claude Code, because the override is only read at startup. Fail-open: any error
-exits 0 and the session proceeds with the previous value.
+The provider cache is accepted only when its endpoint, account scope, schema,
+and freshness match the current gateway settings.  The resulting budget is a
+conservative 90 percent of the advertised context, capped at the installer
+budget; a provider suffix or display label never inflates capacity.  Fail-open
+is intentional for hook use: malformed payloads, stale/offline discovery, lock
+contention, or malformed settings leave the existing file unchanged.
 """
+from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from provider_catalog import (  # noqa: E402
+    acquire_lock,
+    available_rows,
+    cache_rows,
+    load_policy,
+    release_lock,
+)
+
+MIN_CONTEXT = 100_000
+MAX_CONTEXT = 800_000
+HEADROOM_NUMERATOR = 9
+HEADROOM_DENOMINATOR = 10
+
+
+def arg_path(argv: list[str], name: str, default: Path) -> Path:
+    try:
+        index = argv.index(name)
+        if index + 1 < len(argv):
+            return Path(argv[index + 1]).expanduser().resolve()
+    except (ValueError, OSError, RuntimeError):
+        pass
+    return default
+
+
+def safe_context(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    if number < MIN_CONTEXT:
+        return None
+    return min(MAX_CONTEXT, max(MIN_CONTEXT, number * HEADROOM_NUMERATOR // HEADROOM_DENOMINATOR))
+
+
+def compact_control(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if MIN_CONTEXT <= number <= 1_000_000 else None
+
+
+def update_context(payload: object, home: Path, config_home: Path) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    model = payload.get("to_model") or payload.get("model")
+    if not isinstance(model, str) or not model.strip():
+        return None
+    event = payload.get("hook_event_name")
+    settings_path = home / ".claude" / "settings.json"
+    cache_path = home / ".claude" / "cache" / "omniroute-models-cache.json"
+    policy_path = config_home / "delegate-skills" / "provider-policy.json"
+    try:
+        policy = load_policy(policy_path)
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if not isinstance(settings, dict):
+        return None
+    if model.lower().startswith("claude-"):
+        return None
+    env = settings.get("env")
+    if not isinstance(env, dict):
+        return None
+    endpoint = env.get("ANTHROPIC_BASE_URL")
+    token = env.get("ANTHROPIC_AUTH_TOKEN")
+    if not isinstance(endpoint, str) or not isinstance(token, str) or not endpoint or not token:
+        return None
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        rows = cache_rows(cached, endpoint, token)
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if rows is None:
+        return None
+    catalog = available_rows(rows, policy)
+    model_info = catalog.get(model.strip())
+    if not isinstance(model_info, dict):
+        # The switch payload may contain a provider spelling that normalizes to
+        # the runtime ID stored in the catalog; resolve it through the same
+        # catalog boundary rather than stripping arbitrary namespaces here.
+        model_info = next((row for runtime_id, row in catalog.items() if runtime_id == model.strip()), None)
+    if not isinstance(model_info, dict):
+        return None
+    budget = safe_context(model_info.get("context_length"))
+    if budget is None:
+        return None
+    value = str(budget)
+
+    fd, lock_path = acquire_lock(home, timeout=0.75)
+    if fd is None:
+        return None
+    temp = settings_path.with_name(settings_path.name + ".tmp." + str(os.getpid()) + "." + secrets.token_hex(6))
+    changed = False
+    compact_budget = None
+    try:
+        # Re-read under the shared lock so a concurrent installer/discovery
+        # writer cannot have its unrelated settings edits overwritten. Compare
+        # the *full* desired state (context tokens and both compaction
+        # controls) here rather than short-circuiting on the context value
+        # alone: a prior writer may have left CLAUDE_CODE_MAX_CONTEXT_TOKENS
+        # correct while autoCompactWindow/CLAUDE_CODE_AUTO_COMPACT_WINDOW are
+        # still stale, and that pair must still be repaired.
+        try:
+            latest = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError):
+            return None
+        if not isinstance(latest, dict):
+            return None
+        latest_env = latest.get("env")
+        if not isinstance(latest_env, dict):
+            return None
+        paired = [compact_control(latest.get("autoCompactWindow")), compact_control(latest_env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW"))]
+        existing = [item for item in paired if item is not None]
+        compact_budget = min([budget, *existing]) if existing else budget
+        changed = (
+            latest_env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS") != value
+            or paired[0] != compact_budget
+            or paired[1] != compact_budget
+        )
+        if not changed:
+            return None
+        latest_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = value
+        latest["autoCompactWindow"] = compact_budget
+        latest_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(compact_budget)
+        data = (json.dumps(latest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        fd_temp = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            view = memoryview(data)
+            while view:
+                written = os.write(fd_temp, view)
+                if written <= 0:
+                    raise OSError("short settings write")
+                view = view[written:]
+            os.fsync(fd_temp)
+        finally:
+            os.close(fd_temp)
+        os.chmod(temp, 0o600)
+        os.replace(temp, settings_path)
+    except OSError:
+        try:
+            temp.unlink()
+        except OSError:
+            pass
+        return None
+    finally:
+        release_lock(fd, lock_path)
+
+    if event in {"PreModelSwitch", "PostModelSwitch"}:
+        return {
+            "systemMessage": (
+                f"Verified context and paired compaction budget for {model.strip()} set to {compact_budget} tokens in settings.json. "
+                "Restart Claude Code to apply these startup-only settings."
+            )
+        }
+    return None
 
 
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
-        return 0
-    if not isinstance(payload, dict):
-        return 0
-    event = payload.get("hook_event_name")
-    model = payload.get("to_model") or payload.get("model")
-    if not isinstance(model, str) or not model:
-        return 0
-    base = model.split("[", 1)[0].strip()
-    if not base or base.lower().startswith("claude-"):
-        # Claude Code resolves recognized claude-* IDs itself and the override
-        # variable does not apply to them, so leave the setting alone.
-        return 0
-
-    home = Path(__file__).resolve().parent.parent
-    argv = sys.argv[1:]
-    if "--home" in argv:
-        index = argv.index("--home")
-        if index + 1 < len(argv):
-            home = Path(argv[index + 1]).expanduser().resolve()
-    cache_path = home / ".claude" / "cache" / "omniroute-models-cache.json"
-    settings_path = home / ".claude" / "settings.json"
-
-    try:
-        cache = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, UnicodeError):
-        return 0
-    if not isinstance(cache, list):
-        return 0
-    context_length = None
-    for row in cache:
-        if isinstance(row, dict) and row.get("id") == base:
-            raw = row.get("context_length", row.get("max_input_tokens"))
-            if isinstance(raw, int) and raw > 0:
-                context_length = raw
-            break
-    if context_length is None:
-        return 0
-
-    try:
-        settings = json.loads(settings_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, UnicodeError):
-        return 0
-    if not isinstance(settings, dict):
-        return 0
-    env = settings.get("env")
-    if not isinstance(env, dict):
-        env = {}
-        settings["env"] = env
-    value = str(context_length)
-    if env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS") == value:
-        return 0
-    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = value
-
-    temp = settings_path.with_name(settings_path.name + ".tmp." + str(os.getpid()))
-    wrote = False
-    try:
-        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            data = (json.dumps(settings, indent=2) + "\n").encode("utf-8")
-            offset = 0
-            while offset < len(data):
-                offset += os.write(fd, data[offset:])
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        os.chmod(temp, 0o600)
-        os.replace(temp, settings_path)
-        wrote = True
-    except OSError:
-        try:
-            os.unlink(temp)
-        except OSError:
-            pass
-    if wrote and event == "PreModelSwitch":
-        # Claude Code reads the override at startup, so the corrected budget
-        # only applies to the next launch. PreModelSwitch systemMessage output
-        # reaches the user regardless of the switch decision.
-        print(json.dumps({
-            "systemMessage": (
-                f"Context window for {base} set to {value} in settings.json. "
-                "Restart Claude Code to apply it to this session."
-            )
-        }))
+        argv = sys.argv[1:]
+        script_home = Path(__file__).resolve().parent.parent
+        home = arg_path(argv, "--home", script_home)
+        config_home = arg_path(argv, "--config-home", home / ".config")
+        output = update_context(payload, home, config_home)
+        if output:
+            print(json.dumps(output, ensure_ascii=False))
+    except (OSError, UnicodeError, ValueError, TypeError):
+        pass
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

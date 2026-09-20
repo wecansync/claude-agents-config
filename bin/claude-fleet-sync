@@ -37,5 +37,5 @@ fi
 forwarded=()
 if [[ "$has_home" != true ]]; then forwarded+=(--home "$HOME_OVERRIDE"); fi
 if [[ "$has_config" != true ]]; then forwarded+=(--config-home "$CONFIG_ROOT"); fi
-forwarded+=("${args[@]}")
+forwarded+=(--lock-held "${args[@]}")
 exec node "$GENERATOR" "${forwarded[@]}"

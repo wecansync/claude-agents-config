@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Explicit provider/fleet setup interview and noninteractive policy command.
+
+This command may prompt on a TTY. SessionStart hooks must never invoke it;
+they report pending decisions and continue with the last approved state.
+"""
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+_HERE = Path(__file__).resolve().parent
+SCRIPTS = _HERE if (_HERE / "provider_catalog.py").is_file() else _HERE.parent.parent / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+from provider_catalog import CatalogError, load_policy  # noqa: E402
+
+
+def read_json(path: Path, default: object = None) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return default
+
+
+def atomic_json(path: Path, value: object, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    temp = Path(raw)
+    try:
+        data = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        os.write(fd, data)
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.chmod(temp, mode)
+        os.replace(temp, path)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        temp.unlink(missing_ok=True)
+
+
+def ask_yes_no(prompt: str, default: bool = False) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    answer = input(f"{prompt} [{suffix}] ").strip().lower()
+    if not answer:
+        return default
+    return answer in {"y", "yes"}
+
+
+def resolved_home(args: argparse.Namespace) -> Path:
+    return Path(args.home).expanduser().resolve() if args.home else Path.home().resolve()
+
+
+def policy_path(args: argparse.Namespace) -> Path:
+    if args.policy:
+        return Path(args.policy).expanduser().resolve()
+    home = resolved_home(args)
+    config = Path(args.config_home).expanduser().resolve() if args.config_home else Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")).resolve()
+    return config / "delegate-skills" / "provider-policy.json"
+
+
+def parse_decisions(value: str | None) -> dict:
+    if not value:
+        return {}
+    path = Path(value).expanduser().resolve()
+    data = read_json(path)
+    if not isinstance(data, dict):
+        raise SystemExit(f"decision file is not a JSON object: {path}")
+    return data
+
+
+def interview(policy: dict) -> dict:
+    if not sys.stdin.isatty() or not sys.stderr.isatty():
+        raise SystemExit("setup interview requires a TTY; pass --decisions FILE for noninteractive use")
+    print("Fleet setup interview. New provider families, discovery, and permission choices require explicit approval.")
+    approved = []
+    for family in policy.get("families", []):
+        if not isinstance(family, dict) or not isinstance(family.get("name"), str):
+            continue
+        if family.get("approved") is True or ask_yes_no(f"Approve automatic reconciliation for family {family['name']}?", False):
+            approved.append(family["name"])
+    allow_discovery = ask_yes_no("Allow gateway model discovery at SessionStart?", bool(policy.get("discoveryApproved")))
+    print("Optional broad permissions/plugins remain disabled by default; configure them separately after review.")
+    return {"format": "provider-policy-decisions.v1", "approvedFamilies": approved, "allowDiscovery": allow_discovery}
+
+
+def proposal_path(home: Path) -> Path:
+    """The fleet model proposal always lives under the resolved --home, never
+    derived from the policy file's location. An external --config-home,
+    XDG_CONFIG_HOME, or a fully custom --policy path must not change where
+    the proposal decision is read from or written to."""
+    return home / ".claude" / "fleet-model-proposal.json"
+
+
+def resolve_proposal(home: Path, decisions: dict) -> None:
+    proposal_file = proposal_path(home)
+    proposal = read_json(proposal_file)
+    if not isinstance(proposal, dict) or not proposal.get("models_hash"):
+        raise SystemExit("no pending fleet model proposal is available")
+    if decisions.get("proposalHash") != proposal.get("models_hash"):
+        raise SystemExit("proposalHash must match the current pending proposal")
+    action = decisions.get("proposalDecision")
+    if action not in {"approve", "reject", "supersede"}:
+        raise SystemExit("proposalDecision must be approve, reject, or supersede")
+    proposal["decision"] = action
+    proposal["decision_at"] = __import__("time").time()
+    proposal["superseded_by"] = decisions.get("supersededBy") if action == "supersede" else None
+    atomic_json(proposal_file, proposal, 0o600)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Review provider-aware fleet policy")
+    parser.add_argument("--home")
+    parser.add_argument("--prefix")
+    parser.add_argument("--config-home")
+    parser.add_argument("--policy")
+    parser.add_argument("--decisions", help="JSON decision file for noninteractive setup")
+    parser.add_argument("--show", action="store_true", help="print effective policy without changing it")
+    args = parser.parse_args()
+    home = resolved_home(args)
+    path = policy_path(args)
+    try:
+        policy = load_policy(path)
+    except CatalogError as exc:
+        raise SystemExit(str(exc))
+    decisions = parse_decisions(args.decisions)
+    if decisions.get("proposalDecision"):
+        resolve_proposal(home, decisions)
+        print(f"Recorded proposal decision in {proposal_path(home)}")
+        return 0
+    if not args.show and not decisions:
+        decisions = interview(policy)
+    if decisions:
+        if decisions.get("format") not in {None, "provider-policy-decisions.v1"}:
+            raise SystemExit("unsupported decision file format")
+        approved = decisions.get("approvedFamilies")
+        if not isinstance(approved, list) or any(not isinstance(value, str) for value in approved):
+            raise SystemExit("approvedFamilies must be a list of strings")
+        for value in approved:
+            if not any(isinstance(family, dict) and family.get("name") == value for family in policy.get("families", [])):
+                raise SystemExit(f"unknown family requires review before approval: {value}")
+        policy["approvedFamilies"] = sorted(set(approved))
+        policy["decisionsFormat"] = "provider-policy-decisions.v1"
+        approved_set = set(approved)
+        for family in policy.get("families", []):
+            if isinstance(family, dict) and isinstance(family.get("name"), str):
+                family["approved"] = family["name"] in approved_set
+        policy["discoveryApproved"] = decisions.get("allowDiscovery") is True
+        atomic_json(path, policy, 0o644)
+        print(f"Saved explicit fleet policy decisions to {path}")
+    else:
+        print(json.dumps(policy, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

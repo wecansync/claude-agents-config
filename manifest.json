@@ -9,7 +9,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "2162880e31dac13d78aef1fe4ba4b89ddbb5d1eec96ab0fecb861211470c0aea",
+      "sha256": "6a9ba1550c7e6c739bfe99d11a98ea7f4b58d8dddca4dc2ee436cfea9b7d3920",
       "mode": "0o644"
     },
     {
@@ -169,17 +169,22 @@
     },
     {
       "path": "bin/claude-agents-doctor",
-      "sha256": "66a880fe365715c77486e927e5be523ff015583fd0fbf26f4ad7563fb143902f",
+      "sha256": "d664e01aa33520cae8bc89cb987bd7756a9e6c8f7f87b68bc78188aa144df312",
+      "mode": "0o755"
+    },
+    {
+      "path": "bin/claude-fleet-setup",
+      "sha256": "587730e46ee624a519f850988c9a35ae960500cc920e96ee00997a5e8554b190",
       "mode": "0o755"
     },
     {
       "path": "bin/claude-fleet-sync",
-      "sha256": "f5e37b1bc17fbabb3c47bda4e352161b8f5ab0565854d64cfbd6bfb745bdad9c",
+      "sha256": "6fe09988befd7a84994b01959a1964dd55b5b5816c373f1a192482f49eabf639",
       "mode": "0o755"
     },
     {
       "path": "bin/install.py",
-      "sha256": "7cfd0b3cb48487cd1f248d778430cbc49c933b6b8265cf4126813b244ae29310",
+      "sha256": "db2f7972d1aa9bf890e028397cda9d217688c2d737380a2fb557afa9b226944c",
       "mode": "0o755"
     },
     {
@@ -193,8 +198,13 @@
       "mode": "0o644"
     },
     {
+      "path": "config/provider-policy.json",
+      "sha256": "4713cd5a59cf74e16cbc3af1eb885014e1bc314fbe938d4d4cef3b09ed9bd495",
+      "mode": "0o644"
+    },
+    {
       "path": "config/settings.template.json",
-      "sha256": "4ed2e4f78e0bdd1684eaa1c559052a0f79694cc4ce046b6153a8c6aec6af2497",
+      "sha256": "4db62f0328963d96398ef76637b1e2ef3dd3bd50e2eae70c25dbb93430889408",
       "mode": "0o644"
     },
     {
@@ -214,62 +224,77 @@
     },
     {
       "path": "scripts/fleet-model-drift.py",
-      "sha256": "61c172322afe3a4be07ed0978b2c822aa80f9af649f72cf2d83bcb6a05bdf5ed",
+      "sha256": "20baa1eb8e165b84cb0ee30ca87f4d9b02593d775892debee3d373a0515ec22a",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/fleet-reconcile.py",
+      "sha256": "b7c52e602c287a40b02d4d28e7608593c73971ee3f5d7821a530400a623f4502",
       "mode": "0o755"
     },
     {
       "path": "scripts/generate-claude-agents.mjs",
-      "sha256": "aeb2e3cf44671ad66d2bab07d6b1590deb090098e9dc06d2fd6d4cf21bf285be",
+      "sha256": "84298dbfd6f508b41af9d9f7ed4ecf1b75c57167252716f1f8cf85a47fef78f4",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/provider_catalog.py",
+      "sha256": "a6d0d74219a8352db99913e9e142ce5725de5b8419cbdb4dcd4b26ee22671c4c",
       "mode": "0o755"
     },
     {
       "path": "scripts/route-to-fleet.py",
-      "sha256": "69fd1e37c4ba56c0642207fa21701ac10a4224e0fee320379b777deea1861724",
-      "mode": "0o755"
-    },
-    {
-      "path": "scripts/sync-model-context.py",
-      "sha256": "3e5e50c68436d8f635e06688bdde66c25486cef43b71933d4fb0298f2e26807d",
+      "sha256": "955662ae04161fa9872590128864ca2e3a3a7d99106331971aaa8952df5e0a75",
       "mode": "0o755"
     },
     {
       "path": "scripts/subagent-statusline.py",
-      "sha256": "8e6afe26b0a90cf369bfd632d1598e62c52d8ba0c12c81d31c05d22cbe6c94ec",
+      "sha256": "75d7647bd8a690b6597ccb3f255508b73ce56d5940aaabe7787abf9f128f27d7",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/sync-model-context.py",
+      "sha256": "c176c7028956a735bf3c4ddc0ade2d2fbaf5ea960c91923a0554b403d0272465",
       "mode": "0o755"
     },
     {
       "path": "scripts/sync-omniroute-models.mjs",
-      "sha256": "5cfa398b663dcc6109ab51b8185ffacc8f9843b2cc10b78a99187a6d2ab87f60",
+      "sha256": "9045d69ce0e2938c065c710ad559190a80e97bfe8fb767b82f12500605d9fee2",
+      "mode": "0o755"
+    },
+    {
+      "path": "tests/test_provider_repair.py",
+      "sha256": "418f280646c0e137330f1c6be405cfc6dcd8231048c7d49cf6abd7e644189952",
       "mode": "0o755"
     },
     {
       "path": "uninstall.cmd",
-      "sha256": "88b75b1ea19e33f9e7c3277712276b952b5fd875f0c16f9d6a7b8808bf476aee",
+      "sha256": "431e92c0af0b9d20e1046acee7ea74535728d7b757203e207a2e221ddd3546df",
       "mode": "0o644"
     },
     {
       "path": "uninstall.ps1",
-      "sha256": "ec99b05510cb3858bfb122cacd4f13c42d9a3d4cb31de3a900f1dc6ea676dfc6",
+      "sha256": "a19c1bc182daebe70a088f9c8f62433aa03c911599f5233b99b34c0a7bbb4c39",
       "mode": "0o644"
     },
     {
       "path": "uninstall.sh",
-      "sha256": "6dca29222afb3463496ac012b1002051c4225dd7ba189b92f7aec97e3bc9de53",
+      "sha256": "9fe940266ab414f310189fdb917c766fcda89389a1688272e4b0a4d8b45ada6f",
       "mode": "0o755"
     },
     {
       "path": "update.cmd",
-      "sha256": "29b07bdbf94af07de5468631d4bc2f0917566ca78c4e974f44c610cc9b963762",
+      "sha256": "ad6dce0ca246fbf158718dbcf55f9c8835c4f4dbe2851f0c0a81037395bbfc57",
       "mode": "0o644"
     },
     {
       "path": "update.ps1",
-      "sha256": "b5869166c8fb47aebaa2fe27c51678aeac7e443ff563bebb2adb19910b82a916",
+      "sha256": "06297c34f8eb44f0281844a606d30a7556a8cd10170a842143360f2625e61867",
       "mode": "0o644"
     },
     {
       "path": "update.sh",
-      "sha256": "e9d0e5d1a783b5ccb66658f23a840271cac22abe044dca28429eeea46a7395e8",
+      "sha256": "e0b01bc88615719def575af655170051677bc540d0b2d6629ccea1946c76f4cf",
       "mode": "0o755"
     }
   ]
