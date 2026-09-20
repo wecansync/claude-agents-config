@@ -16,6 +16,13 @@ import secrets
 import sys
 from pathlib import Path
 
+# Set before importing provider_catalog: CPython writes a module's .pyc
+# during import, before the module body (and its own identical guard) can
+# run. Without this, importing it here creates a __pycache__ directory next
+# to the managed scripts -- which the installer's own bundle-inventory
+# preflight then rejects as an unlisted path, and which leaves stray
+# generated files in an installed home.
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from provider_catalog import (  # noqa: E402
     acquire_lock,
