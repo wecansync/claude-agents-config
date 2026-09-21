@@ -269,6 +269,7 @@ def fetch_catalog(endpoint: str, token: str, timeout: float = 2.5) -> tuple[list
             "authorization": "Bearer " + token,
             "anthropic-version": "2023-06-01",
             "accept": "application/json",
+            "user-agent": "claude-agents-config/1.0.0",
         })
         remaining = deadline - time.monotonic()
         if remaining <= 0:
