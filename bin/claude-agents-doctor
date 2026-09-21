@@ -384,11 +384,12 @@ def check_installed_records(home: Path, config_root: Path, bin_dir: Path, errors
         if not path.is_file():
             fail(errors, f"installed managed file is missing: {path}")
             continue
-        # settings.json is intentionally mutable: users may edit it and the
-        # optional discovery hook may refresh its picker at SessionStart. Its
-        # JSON/profile/compaction/gateway invariants are checked below instead
-        # of treating expected settings changes as tampering.
-        if ident != "home:.claude/settings.json" and digest != sha256(path):
+        # settings.json and provider-policy.json are intentionally mutable:
+        # users may edit settings or run claude-fleet-setup to approve families,
+        # and the discovery hook may refresh the model picker at SessionStart.
+        # Their schema and invariants are checked below instead of treating
+        # expected user configuration changes as tampering.
+        if ident not in {"home:.claude/settings.json", "config:provider-policy.json"} and digest != sha256(path):
             fail(errors, f"installed managed checksum mismatch: {path}")
         if os.name != "nt":
             expected_mode = {"0o755": 0o755, "0o644": 0o644, "0o600": 0o600}.get(mode)
@@ -468,6 +469,12 @@ def check_target(home: Path, config_root: Path, bin_dir: Path, errors: list[str]
         if effective_profile == "direct-anthropic" and not gateway_configured and (not isinstance(env, dict) or env.get("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY") != "0"):
             fail(errors, "direct profile must disable gateway model discovery")
         validate_agents(home, config_root, fleet, settings, errors, effective_profile)
+    policy_path = config_root / "delegate-skills" / "provider-policy.json"
+    if policy_path.is_file():
+        policy = read_json(policy_path, errors, "installed provider policy")
+        if policy is not None:
+            if policy.get("version") != "provider-policy.v1" or policy.get("provider") != "omniroute" or not isinstance(policy.get("families"), list):
+                fail(errors, f"installed provider policy is invalid: {policy_path}")
     expected = [
         home / ".claude" / "route-to-fleet.py",
         home / ".claude" / "subagent-statusline.py",

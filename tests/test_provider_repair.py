@@ -33,12 +33,14 @@ class FakeProvider(http.server.BaseHTTPRequestHandler):
     mode = "ok"
     page = 0
     requests = 0
+    last_headers = None
 
     def setup(self):
         super().setup()
         type(self).requests += 1
 
     def do_GET(self):  # noqa: N802
+        type(self).last_headers = self.headers
         if self.path.startswith("/v1/models"):
             if self.mode == "unauthorized":
                 self.send_response(401)
@@ -171,6 +173,7 @@ class ProviderRepairTests(unittest.TestCase):
             self.assertTrue(complete)
             self.assertIsNone(error)
             self.assertEqual(rows[0]["id"], "codex-luna")
+            self.assertEqual(FakeProvider.last_headers.get("user-agent"), "claude-agents-config/1.0.0")
             FakeProvider.mode = "unauthorized"
             rows, complete, error = fetch(endpoint, "fake-token")
             self.assertFalse(complete)
@@ -206,6 +209,8 @@ class ProviderRepairTests(unittest.TestCase):
             setup = subprocess.run([str(home / ".local/bin/claude-fleet-setup"), "--decisions", str(decisions)], cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(setup.returncode, 0, setup.stderr)
             self.assertFalse("fake-token" in setup.stdout or "fake-token" in setup.stderr)
+            doctor_after_setup = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(doctor_after_setup.returncode, 0, doctor_after_setup.stderr)
             uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(uninstall.returncode, 0, uninstall.stderr)
 
