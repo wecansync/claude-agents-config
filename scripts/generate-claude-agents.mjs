@@ -415,6 +415,9 @@ function buildInstalledVerification(desiredByFilename, fleetHash) {
   const byPath = new Map(desiredByFilename);
   const updateRecords = (records) => records.map((record) => {
     if (!record || typeof record.path !== "string") return record;
+    if (record.id === "config:delegate-fleet.json" || realpathOrResolve(record.path) === realpathOrResolve(fleetPath)) {
+      return { ...record, sha256: fleetHash };
+    }
     const filename = relative(agentsDir, record.path);
     if (filename && !filename.startsWith("..") && !filename.includes("/") && !filename.includes("\\")) {
       const content = byPath.get(filename);

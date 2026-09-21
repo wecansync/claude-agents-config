@@ -1104,6 +1104,38 @@ class ProviderRepairTests(unittest.TestCase):
             self.assertFalse((home / ".claude/__pycache__").exists(), "claude-fleet-setup left a __pycache__ in the user's home")
 
 
+    def test_fleet_sync_updates_manifest_fleet_hash_and_doctor_passes(self):
+        if shutil.which("node") is None:
+            self.skipTest("Node.js is required for fleet-sync generator")
+        with tempfile.TemporaryDirectory(prefix="fleet sync test ") as raw:
+            root = Path(raw)
+            home = root / "home"
+            config = root / "config"
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config), "PYTHONDONTWRITEBYTECODE": "1"}
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr)
+
+            # Modify a lane in the installed config.json
+            fleet_path = config / "delegate-skills/config.json"
+            fleet_data = json.loads(fleet_path.read_text())
+            fleet_data["lanes"]["implement"]["model"] = "claude-sonnet-5[1m]"
+            fleet_path.write_text(json.dumps(fleet_data, indent=2) + "\n")
+            new_fleet_hash = hashlib.sha256(fleet_path.read_bytes()).hexdigest()
+
+            # Run installed claude-fleet-sync
+            sync = subprocess.run([str(home / ".local/bin/claude-fleet-sync")], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(sync.returncode, 0, sync.stderr)
+
+            # Verify claude-agents-doctor --check passes
+            doctor = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(doctor.returncode, 0, doctor.stderr)
+
+            # Verify manifest.managed has the updated sha256 for config:delegate-fleet.json
+            manifest = json.loads((home / ".claude/.claude-agents-config-manifest.json").read_text())
+            self.assertEqual(manifest["fleetSha256"], new_fleet_hash)
+            fleet_record = next(r for r in manifest["managed"] if r["id"] == "config:delegate-fleet.json")
+            self.assertEqual(fleet_record["sha256"], new_fleet_hash)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
