@@ -733,6 +733,94 @@ class ProviderRepairTests(unittest.TestCase):
             self.assertEqual(second["status"], "unchanged", second)
             self.assertFalse(marker.exists())
 
+    def test_reconcile_settings_prunes_stale_provider_models_while_preserving_first_party_and_custom(self):
+        namespace = {}
+        sys.path.insert(0, str(ROOT / "scripts"))
+        exec(compile((ROOT / "scripts/fleet-reconcile.py").read_text(), "fleet-reconcile.py", "exec"), namespace)
+        policy = json.loads((ROOT / "config/provider-policy.json").read_text())
+        settings = {
+            "model": "agy-gemini-flash[1m]",
+            "modelPicker": {
+                "options": [
+                    {"model": "claude-opus-5[1m]", "label": "Opus 5", "description": "Gateway Claude Opus"},
+                    {"model": "deepseek-openrouter[1m]", "label": "DeepSeek", "description": "Gateway model (1000K gateway context)"},
+                    {"model": "codex-astra[1m]", "label": "Codex Astra", "description": "Gateway model (872K gateway context)"},
+                    {"model": "my-custom-model", "label": "Custom Local", "description": "User local model"},
+                ],
+                "replaceBuiltInOptions": True,
+            },
+        }
+        picker = {
+            "options": [
+                {"model": "agy-gemini-flash[1m]", "label": "Gemini Flash", "description": "Gateway model (1000K gateway context)"},
+            ],
+            "replaceBuiltInOptions": True,
+        }
+        fleet = {
+            "version": "delegate-fleet.v1",
+            "lanes": {
+                "tests": {"implementer": "claude", "model": "agy-gemini-flash[1m]"},
+            },
+        }
+        reconciled = namespace["reconcile_settings"](settings, picker, fleet, policy)
+        models = [row["model"] for row in reconciled["modelPicker"]["options"]]
+        self.assertIn("agy-gemini-flash[1m]", models, "live catalog model must be in picker")
+        self.assertIn("my-custom-model", models, "custom non-gateway user rows must be preserved")
+        self.assertNotIn("deepseek-openrouter[1m]", models, "removed gateway model must be pruned")
+        self.assertNotIn("codex-astra[1m]", models, "removed gateway model must be pruned")
+        self.assertNotIn("claude-opus-5[1m]", models, "removed gateway model must be pruned")
+
+    def test_resolve_fleet_prunes_removed_candidates_from_lane_fallbacks(self):
+        namespace = {}
+        sys.path.insert(0, str(ROOT / "scripts"))
+        exec(compile((ROOT / "scripts/fleet-reconcile.py").read_text(), "fleet-reconcile.py", "exec"), namespace)
+        policy = json.loads((ROOT / "config/provider-policy.json").read_text())
+        fleet = {
+            "version": "delegate-fleet.v1",
+            "lanes": {
+                "review-06-astra": {
+                    "implementer": "claude",
+                    "model": "codex-astra[1m]",
+                    "fallbacks": ["claude-opus-5[1m]"],
+                },
+            },
+        }
+        # Provider returns agy-gemini-flash and claude-opus-5; codex-astra was removed
+        rows = [
+            {"id": "agy-gemini-flash", "context_length": 1000000},
+            {"id": "claude-opus-5", "context_length": 1000000},
+        ]
+        resolved, picker, pending, catalog = namespace["resolve_fleet"](fleet, {}, rows, policy)
+        lane = resolved["lanes"]["review-06-astra"]
+        self.assertEqual(lane["model"], "claude-opus-5[1m]")
+        self.assertNotIn("fallbacks", lane, "stale codex-astra must not remain as a fallback")
+
+    def test_resolve_fleet_dynamically_assigns_live_candidate_when_all_lane_models_removed(self):
+        namespace = {}
+        sys.path.insert(0, str(ROOT / "scripts"))
+        exec(compile((ROOT / "scripts/fleet-reconcile.py").read_text(), "fleet-reconcile.py", "exec"), namespace)
+        policy = json.loads((ROOT / "config/provider-policy.json").read_text())
+        fleet = {
+            "version": "delegate-fleet.v1",
+            "lanes": {
+                "plan": {
+                    "implementer": "claude",
+                    "model": "claude-opus-5[1m]",
+                    "effort": "xhigh",
+                    "readOnly": True,
+                },
+            },
+        }
+        # Provider only has agy-claude-opus and agy-gemini-flash; claude-opus-5 was removed
+        rows = [
+            {"id": "agy-claude-opus", "context_length": 1000000, "capabilities": {"thinking": True}},
+            {"id": "agy-gemini-flash", "context_length": 1000000},
+        ]
+        resolved, picker, pending, catalog = namespace["resolve_fleet"](fleet, {}, rows, policy)
+        self.assertEqual(len(pending), 0, f"dynamic fallback must resolve lane without pending errors: {pending}")
+        lane = resolved["lanes"]["plan"]
+        self.assertEqual(lane["model"], "agy-claude-opus[1m]", "plan should match agy-claude-opus by token/capability")
+
     def test_omniroute_sync_surfaces_bounded_reconcile_child_failure(self):
         if shutil.which("node") is None:
             self.skipTest("Node.js is required for the omniroute sync hook")

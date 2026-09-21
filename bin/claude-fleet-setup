@@ -22,7 +22,7 @@ import tempfile
 # generated files in an installed home.
 sys.dont_write_bytecode = True
 _HERE = Path(__file__).resolve().parent
-SCRIPTS = _HERE if (_HERE / "provider_catalog.py").is_file() else _HERE.parent.parent / "scripts"
+SCRIPTS = _HERE if (_HERE / "provider_catalog.py").is_file() else _HERE.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 from provider_catalog import CatalogError, acquire_lock, load_policy, release_lock  # noqa: E402
 
@@ -168,6 +168,76 @@ def apply_family_decisions(path: Path, decisions: dict, approved: list[str]) -> 
     atomic_json(path, latest_policy, 0o644)
 
 
+def run_setup_reconciliation_and_sync(home: Path, config_home: Path, policy_file: Path) -> None:
+    settings_file = home / ".claude" / "settings.json"
+    settings = read_json(settings_file, {})
+    if not isinstance(settings, dict):
+        return
+
+    # Try live fetch if credentials exist
+    env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+    endpoint = env.get("ANTHROPIC_BASE_URL")
+    token = env.get("ANTHROPIC_AUTH_TOKEN")
+    catalog_cache = home / ".claude" / "cache" / "omniroute-models-cache.json"
+
+    if isinstance(endpoint, str) and isinstance(token, str) and endpoint and token:
+        try:
+            from provider_catalog import cache_payload, fetch_catalog
+            rows, complete, _ = fetch_catalog(endpoint, token, timeout=5.0)
+            if complete and isinstance(rows, list):
+                payload = cache_payload(rows, endpoint, token)
+                atomic_json(catalog_cache, payload, 0o600)
+        except Exception:
+            pass
+
+    reconcile_script = SCRIPTS / "fleet-reconcile.py"
+    if not reconcile_script.is_file():
+        reconcile_script = home / ".claude" / "fleet-reconcile.py"
+
+    if not reconcile_script.is_file() or not catalog_cache.is_file():
+        return
+
+    import subprocess
+    cmd = [
+        sys.executable,
+        str(reconcile_script),
+        "--home", str(home),
+        "--config-home", str(config_home),
+        "--policy", str(policy_file),
+        "--catalog", str(catalog_cache),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode == 0 and proc.stdout:
+            try:
+                res = json.loads(proc.stdout)
+                if res.get("summary"):
+                    print(res["summary"])
+            except Exception:
+                pass
+    except OSError:
+        pass
+
+    # Synchronize agents
+    fleet_sync = home / ".local" / "bin" / "claude-fleet-sync"
+    if not fleet_sync.is_file():
+        fleet_sync = SCRIPTS / "generate-claude-agents.mjs"
+        if not fleet_sync.is_file():
+            fleet_sync = home / ".claude" / "generate-claude-agents.mjs"
+
+    if fleet_sync.is_file():
+        try:
+            if fleet_sync.suffix == ".mjs":
+                sync_cmd = ["node", str(fleet_sync), "--home", str(home), "--config-home", str(config_home), "--quiet"]
+            else:
+                sync_cmd = [str(fleet_sync), "--quiet"]
+            proc_sync = subprocess.run(sync_cmd, capture_output=True, text=True, check=False)
+            if proc_sync.returncode == 0:
+                print("Synchronized fleet agents with approved provider models.")
+        except OSError:
+            pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Review provider-aware fleet policy")
     parser.add_argument("--home")
@@ -198,6 +268,8 @@ def main() -> int:
         finally:
             release_lock(fd, lock)
         print(f"Recorded proposal decision in {proposal_path(home)}")
+        config_home = Path(args.config_home).expanduser().resolve() if args.config_home else Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")).resolve()
+        run_setup_reconciliation_and_sync(home, config_home, path)
         return 0
     if not args.show and not decisions:
         # The interactive interview must never run while holding the shared
@@ -218,6 +290,8 @@ def main() -> int:
         finally:
             release_lock(fd, lock)
         print(f"Saved explicit fleet policy decisions to {path}")
+        config_home = Path(args.config_home).expanduser().resolve() if args.config_home else Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")).resolve()
+        run_setup_reconciliation_and_sync(home, config_home, path)
     else:
         print(json.dumps(policy, ensure_ascii=False, indent=2))
     return 0

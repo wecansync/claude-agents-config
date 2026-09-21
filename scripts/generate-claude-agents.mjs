@@ -590,12 +590,12 @@ function descriptionFor(lane, model, role, config) {
   return `Alternate ${role} lane on ${model}. Use when the user names this lane or model, or when the primary ${role} lane must be avoided for quota, independence, or repeated failure.`;
 }
 
-function renderAgent(lane, config, sourceHash) {
+function renderAgent(lane, config, sourceHash, picker) {
   const role = laneRole(lane, config);
   const spec = roleConfig[role];
   if (!spec) fail(`no agent role mapping for lane ${lane}`);
   const agentName = `fleet-${lane}`;
-  const fallbacks = candidatesFor(config).slice(1, 4);
+  const fallbacks = candidatesFor(config).slice(1, 4).filter((model) => !picker || picker.has(model));
   const fallbackLine = fallbacks.length ? `fallbackModel: ${yamlString(fallbacks.join(","))}\n` : "";
   return `---\nname: ${agentName}\ndescription: ${yamlString(descriptionFor(lane, config.model, role, config))}\nmodel: ${yamlString(config.model)}\n${fallbackLine}effort: ${config.effort || "high"}\ntools: ${spec.tools}\nbackground: true\nomitClaudeMd: true\ncolor: ${spec.color}\nmaxTurns: ${spec.maxTurns}\n---\n\n<!-- ${marker}; source-sha256: ${sourceHash} -->\n\n# Fleet lane: ${lane}\n\nYou are the native Claude Code subagent for global fleet lane \`${lane}\`. The main agent owns decomposition, integration, final gates, and outward-facing actions. You own only the bounded assignment in your invocation.\n\n${spec.prompt}\n\nThe main agent must put every applicable project instruction, gate, and handoff requirement in the brief because this generated agent omits CLAUDE.md to keep context bounded and avoid delegated handoff writes. Project memory search may be unavailable in custom-agent sessions; use it when permitted and continue from the brief and repository evidence when it is not. Before stopping, save only durable project knowledge and write the local session summary required by the agent-brain lifecycle. If the brief lacks a decision required to continue safely, stop and report the gap instead of expanding scope.\n`;
 }
@@ -645,7 +645,7 @@ const sourceHash = createHash("sha256").update(fleetRaw).digest("hex").slice(0, 
 const fleetHash = createHash("sha256").update(fleetRaw).digest("hex");
 const desired = new Map();
 for (const [lane, config] of Object.entries(fleet.lanes)) {
-  desired.set(`fleet-${lane}.md`, renderAgent(lane, { ...config, model: resolvedModels.get(lane) }, sourceHash));
+  desired.set(`fleet-${lane}.md`, renderAgent(lane, { ...config, model: resolvedModels.get(lane) }, sourceHash, picker));
 }
 
 if (!checkOnly) mkdirSync(agentsDir, { recursive: true });
