@@ -36,6 +36,7 @@ from provider_catalog import (
     eligible_candidates,
     family_approved,
     load_policy,
+    model_family,
     release_lock,
 )
 
@@ -45,6 +46,7 @@ HEADROOM_NUMERATOR = 9
 HEADROOM_DENOMINATOR = 10
 TRANSACTION_MARKER = ".fleet-reconcile-pending.json"
 TRANSACTION_FORMAT = "claude-agents-config.reconcile-transaction.v1"
+GATEWAY_MODEL_PREFIXES = ("agy-", "claude-", "codex-", "cursor-", "omniroute-", "openclaw-", "deepseek-")
 
 
 def read_json(path: Path, default: object = None) -> object:
@@ -331,6 +333,96 @@ def _row_for_picker(model: str, row: dict) -> dict:
     return {"model": model, "label": str(advertised), "description": str(description)[:240]}
 
 
+def rank_live_candidates(
+    lane: str,
+    config: dict,
+    current: str | None,
+    approved_live: list[str],
+    catalog: dict[str, dict],
+    policy: dict,
+) -> list[str]:
+    if not approved_live:
+        return []
+    curr_lower = (current or "").lower()
+    lane_lower = lane.lower()
+    curr_fam = model_family(current, policy) if current else None
+    fallback_fams: list[str] = []
+    if curr_fam:
+        for f in policy.get("families", []):
+            if isinstance(f, dict) and f.get("name") == curr_fam:
+                fb = f.get("fallbackFamilies")
+                if isinstance(fb, list):
+                    fallback_fams = [x for x in fb if isinstance(x, str)]
+                break
+
+    tokens = [
+        "opus", "sonnet", "haiku", "gemini", "flash", "pro",
+        "codex", "sol", "luna", "astra", "terra", "grok",
+        "free", "auto", "atria", "openclaw"
+    ]
+    effort = str(config.get("effort", "medium")).lower()
+    is_ro = config.get("readOnly") is True
+
+    scored: list[tuple[int, str]] = []
+    for cand in approved_live:
+        score = 0
+        cand_lower = cand.lower()
+        cand_fam = model_family(cand, policy)
+
+        for tok in tokens:
+            if tok in curr_lower or tok in lane_lower:
+                if tok in cand_lower:
+                    score += 500
+
+        if curr_fam and cand_fam == curr_fam:
+            score += 150
+        elif cand_fam in fallback_fams:
+            score += 100
+
+        row_info = catalog.get(cand, {})
+        ctx = row_info.get("context_length") or 0
+        caps = row_info.get("capabilities") if isinstance(row_info.get("capabilities"), dict) else {}
+        thinking = bool(caps.get("thinking") or caps.get("reasoning") or caps.get("supportsThinking"))
+
+        if effort in ("xhigh", "max") or is_ro:
+            if thinking:
+                score += 80
+            if ctx >= 800000:
+                score += 50
+            if any(k in cand_lower for k in ("opus", "sonnet", "pro", "sol")):
+                score += 60
+        elif effort == "high":
+            if thinking:
+                score += 40
+            if ctx >= 800000:
+                score += 40
+            if any(k in cand_lower for k in ("sonnet", "flash", "codex", "luna")):
+                score += 50
+        else:
+            if ctx >= 200000:
+                score += 30
+
+        if current and current.endswith("[1m]") and cand.endswith("[1m]"):
+            score += 20
+
+        scored.append((score, cand))
+
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [cand for _, cand in scored]
+
+
+def select_live_fallback(
+    lane: str,
+    config: dict,
+    current: str | None,
+    approved_live: list[str],
+    catalog: dict[str, dict],
+    policy: dict,
+) -> str | None:
+    ranked = rank_live_candidates(lane, config, current, approved_live, catalog, policy)
+    return ranked[0] if ranked else None
+
+
 def resolve_fleet(
     fleet: dict,
     settings: dict,
@@ -345,6 +437,7 @@ def resolve_fleet(
     catalog = available_rows(rows, policy)
     pending: list[str] = []
     changes: dict[str, dict] = {}
+    approved_live = [m for m in catalog if family_approved(m, policy)]
     for lane, config in result.get("lanes", {}).items():
         if not isinstance(config, dict):
             pending.append(f"{lane}: malformed lane configuration")
@@ -360,13 +453,23 @@ def resolve_fleet(
             continue
         eligible, _ = eligible_candidates(config, catalog, policy)
         if not eligible:
-            pending.append(f"{lane}: no live approved candidate")
-            continue
-        selected = eligible[0]
+            selected = select_live_fallback(lane, config, current, approved_live, catalog, policy)
+            if not selected:
+                pending.append(f"{lane}: no live approved candidate")
+                continue
+        else:
+            selected = eligible[0]
+
         if selected != current:
             changes[lane] = {"from": current, "to": selected}
             config["model"] = selected
-        fallback_values = [model for model in candidates if model != selected and family_approved(model, policy)]
+
+        fallback_values = [
+            model for model in candidates
+            if model != selected
+            and family_approved(model, policy)
+            and model in catalog
+        ]
         fallback_values = fallback_values[: MAX_FALLBACK_CANDIDATES - 1]
         if fallback_values:
             config["fallbacks"] = fallback_values
@@ -375,34 +478,86 @@ def resolve_fleet(
     picker: dict[str, dict] = {}
     for model, row in catalog.items():
         picker[model] = _row_for_picker(model, row)
-    # Retain unavailable required rows as explicit fallback presentation, but
-    # never call those rows available for selection.
-    for config in result.get("lanes", {}).values():
-        for model in candidate_list(config)[:MAX_FALLBACK_CANDIDATES]:
-            picker.setdefault(model, {"model": model, "label": model, "description": "Required by delegate fleet"})
+    # Only catalog models go in the picker — stale lane fallbacks (models the
+    # provider no longer returns) must not be resurrected as picker entries.
     result["_reconcile"] = {"changes": changes, "catalog_models": sorted(catalog)}
     return result, {"options": list(picker.values()), "replaceBuiltInOptions": True}, list(dict.fromkeys(pending)), catalog
 
 
-def reconcile_settings(settings: dict, picker: dict) -> dict:
+def reconcile_settings(
+    settings: dict,
+    picker: dict,
+    fleet: dict | None = None,
+    policy: dict | None = None,
+) -> dict:
     result = copy.deepcopy(settings)
     current = result.get("modelPicker") if isinstance(result.get("modelPicker"), dict) else {}
     existing = current.get("options") if isinstance(current.get("options"), list) else []
     incoming = picker.get("options") if isinstance(picker.get("options"), list) else []
     incoming_by_model = {row.get("model"): row for row in incoming if isinstance(row, dict) and isinstance(row.get("model"), str)}
+
     options = []
     seen: set[str] = set()
     for row in existing:
-        model = row.get("model") if isinstance(row, dict) else None
-        if isinstance(model, str) and model in incoming_by_model:
+        if not isinstance(row, dict):
+            continue
+        model = row.get("model")
+        if not isinstance(model, str) or not model:
+            continue
+        if model in incoming_by_model:
             options.append(copy.deepcopy(incoming_by_model[model]))
             seen.add(model)
-        elif isinstance(row, dict):
-            options.append(copy.deepcopy(row))
+        else:
+            desc = str(row.get("description", "")).lower()
+            is_gateway = (
+                "gateway context" in desc
+                or "gateway model" in desc
+                or any(model.startswith(p) for p in GATEWAY_MODEL_PREFIXES)
+                or (policy is not None and model_family(model, policy) is not None)
+            )
+            if not is_gateway:
+                options.append(copy.deepcopy(row))
+                seen.add(model)
     for model, row in incoming_by_model.items():
         if model not in seen:
             options.append(copy.deepcopy(row))
+            seen.add(model)
     result["modelPicker"] = {**current, "options": options, "replaceBuiltInOptions": True}
+
+    # If the user's active model was a gateway model removed from provider, fall back to live model
+    active_model = result.get("model")
+    if isinstance(active_model, str) and active_model and active_model not in incoming_by_model:
+        desc = str(next((r.get("description", "") for r in existing if isinstance(r, dict) and r.get("model") == active_model), "")).lower()
+        active_is_gateway = (
+            "gateway context" in desc
+            or "gateway model" in desc
+            or any(active_model.startswith(p) for p in GATEWAY_MODEL_PREFIXES)
+            or (policy is not None and model_family(active_model, policy) is not None)
+        )
+        if active_is_gateway and incoming:
+            fallback_active = incoming[0].get("model")
+            for inc in incoming:
+                m_name = str(inc.get("model", "")).lower()
+                if "sonnet" in m_name or "flash" in m_name or "opus" in m_name:
+                    fallback_active = inc.get("model")
+                    break
+            if isinstance(fallback_active, str) and fallback_active:
+                result["model"] = fallback_active
+
+    # Check ANTHROPIC_DEFAULT_OPUS_MODEL / ANTHROPIC_DEFAULT_SONNET_MODEL in env
+    env = result.get("env")
+    if isinstance(env, dict) and incoming_by_model:
+        opus_model = env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+        if isinstance(opus_model, str) and opus_model not in incoming_by_model:
+            alt_opus = next((m for m in incoming_by_model if "opus" in m.lower()), None)
+            if alt_opus:
+                env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = alt_opus
+        sonnet_model = env.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+        if isinstance(sonnet_model, str) and sonnet_model not in incoming_by_model:
+            alt_sonnet = next((m for m in incoming_by_model if "sonnet" in m.lower()), None)
+            if alt_sonnet:
+                env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = alt_sonnet
+
     return result
 
 
@@ -459,7 +614,7 @@ def reconcile_home(home: Path, config_home: Path, policy_path: Path, rows: list[
             return {"status": "deferred", "pending": [str(exc)]}
         lane_changes = resolved.get("_reconcile", {}).get("changes", {}) if isinstance(resolved.get("_reconcile"), dict) else {}
         resolved.pop("_reconcile", None)
-        new_settings = reconcile_settings(settings, picker)
+        new_settings = reconcile_settings(settings, picker, resolved, policy)
         new_settings, context_notice, context_budget = reconcile_context(new_settings, catalog)
         changed = resolved != fleet or new_settings != settings
         if changed:
@@ -484,11 +639,18 @@ def reconcile_home(home: Path, config_home: Path, policy_path: Path, rows: list[
 def summary(result: dict) -> str:
     status = result.get("status", "deferred")
     pending = result.get("pending") if isinstance(result.get("pending"), list) else []
+    lane_changes = result.get("lane_changes") if isinstance(result.get("lane_changes"), dict) else {}
+    parts = []
+    if lane_changes:
+        changes_str = ", ".join(f"{lane} ({change['from']} -> {change['to']})" for lane, change in sorted(lane_changes.items()))
+        parts.append(f"adjusted {len(lane_changes)} lane(s): {changes_str}")
     if pending:
         shown = ", ".join(str(item) for item in pending[:5])
         if len(pending) > 5:
             shown += f", and {len(pending) - 5} more"
-        return f"Fleet reconciliation {status}; pending decisions: {shown}. Run claude-fleet-setup to review or record an explicit provider/proposal decision; startup will not approve it automatically."
+        parts.append(f"pending decisions: {shown}. Run claude-fleet-setup to review or record an explicit provider/proposal decision; startup will not approve it automatically.")
+    if parts:
+        return f"Fleet reconciliation {status}; " + "; ".join(parts)
     return f"Fleet reconciliation {status}; approved provider models are in sync."
 
 

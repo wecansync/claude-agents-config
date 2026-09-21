@@ -174,7 +174,7 @@
     },
     {
       "path": "bin/claude-fleet-setup",
-      "sha256": "48be698b89533f6c189325cb7700338e19b3db4756a0c5d219f24cf649a8be0c",
+      "sha256": "a732e33a61c38f1ffe4140ef9733bbb84b09211e09bc0931b412dfcdb2e5dc2b",
       "mode": "0o755"
     },
     {
@@ -229,12 +229,12 @@
     },
     {
       "path": "scripts/fleet-reconcile.py",
-      "sha256": "660e8963ff692453bfe8a36f40455777159c1248b7a466928ec5e13731fce8af",
+      "sha256": "00144b2c9feb77395299459815ac097a33e4bdf24807f4165e240401bb94c242",
       "mode": "0o755"
     },
     {
       "path": "scripts/generate-claude-agents.mjs",
-      "sha256": "c458fbe0d22a52359186c67bf610d6e7e56932a61b03e5874fee127a4af7219e",
+      "sha256": "dbf05fea92cb34dc6fd0ea3535f00584d09fbcef95e92a04e4f0f56351ae6b97",
       "mode": "0o755"
     },
     {
@@ -259,12 +259,12 @@
     },
     {
       "path": "scripts/sync-omniroute-models.mjs",
-      "sha256": "2f443a43ae02376ad78940f9ffd883a43bb79d1a1c5e6afe64cd295d66aad6eb",
+      "sha256": "d56d2414eb989c829c5473227ad1367bfd54b689bcb7f606d74f2683846fa4e6",
       "mode": "0o755"
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "953cfdc70df25475f464e97a6bd8be4fc1cb6abd14fa846eedb6d2cdd7ec3c29",
+      "sha256": "dd1b652bed63bbec07aea70f75382f431dedf609f706beaa51df507d2936f693",
       "mode": "0o755"
     },
     {

@@ -239,11 +239,58 @@ function runReconcile() {
   }
 }
 
-function response(driftNotice, reconcileResult, extraMessage) {
+function findGeneratorScript() {
+  const installed = path.join(configHome, "delegate-skills", "generate-claude-agents.mjs");
+  if (fs.existsSync(installed)) return installed;
+  const local = path.join(path.dirname(path.resolve(process.argv[1])), "generate-claude-agents.mjs");
+  if (fs.existsSync(local)) return local;
+  return null;
+}
+
+function checkAgentDrift() {
+  const script = findGeneratorScript();
+  if (!script) return false;
+  try {
+    const result = spawnSync(process.execPath, [
+      script,
+      "--home", home,
+      "--config-home", configHome,
+      "--check",
+      "--quiet",
+    ], { timeout: 5000, encoding: "utf8" });
+    return result.status !== 0;
+  } catch {
+    return false;
+  }
+}
+
+function runAgentSync() {
+  const script = findGeneratorScript();
+  if (!script) return null;
+  try {
+    const result = spawnSync(process.execPath, [
+      script,
+      "--home", home,
+      "--config-home", configHome,
+      "--lock-held",
+      "--quiet",
+    ], { timeout: 15000, encoding: "utf8" });
+    if (result.error) return { error: `sync error (${result.error.message})` };
+    if (typeof result.status === "number" && result.status !== 0) {
+      return { error: `sync exited with status ${result.status}` };
+    }
+    return { success: true };
+  } catch (error) {
+    return { error: `sync error (${error?.message || "unknown"})` };
+  }
+}
+
+function response(driftNotice, reconcileResult, extraMessage, syncResult) {
   const messages = [];
   if (extraMessage) messages.push(extraMessage);
   if (reconcileResult?.error) messages.push(`Fleet reconciliation failed and was skipped: ${reconcileResult.error}.`);
   if (reconcileResult?.summary) messages.push(reconcileResult.summary);
+  if (syncResult?.error) messages.push(`Fleet agent synchronization failed: ${syncResult.error}.`);
   if (reconcileResult?.systemMessage) messages.push(reconcileResult.systemMessage);
   const output = {};
   if (messages.length) output.systemMessage = messages.join(" ");
@@ -281,7 +328,14 @@ async function run() {
     }
     const driftNotice = discovery && Array.isArray(discovery.rows) ? runDriftDetector() : null;
     const reconcileResult = runReconcile();
-    return response(driftNotice, reconcileResult, extraMessage);
+    let syncResult = null;
+    if (reconcileResult && !reconcileResult.error) {
+      const fleetChanged = reconcileResult.status === "applied" || reconcileResult.changes?.fleet || reconcileResult.changes?.settings;
+      if (fleetChanged || checkAgentDrift()) {
+        syncResult = runAgentSync();
+      }
+    }
+    return response(driftNotice, reconcileResult, extraMessage, syncResult);
   } finally {
     releaseSharedLock(lock);
   }
