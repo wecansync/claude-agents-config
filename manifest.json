@@ -234,7 +234,7 @@
     },
     {
       "path": "scripts/generate-claude-agents.mjs",
-      "sha256": "7d3a8239e3eb1b9b479f8052705cdb77ffbfe59d5ceadc2cad32ceaf9426efb9",
+      "sha256": "c458fbe0d22a52359186c67bf610d6e7e56932a61b03e5874fee127a4af7219e",
       "mode": "0o755"
     },
     {
@@ -264,7 +264,7 @@
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "dfa7b6f995a8f79a6f34367d4947e53db0d0d410dbb02ed6c1c8e4d961b13781",
+      "sha256": "953cfdc70df25475f464e97a6bd8be4fc1cb6abd14fa846eedb6d2cdd7ec3c29",
       "mode": "0o755"
     },
     {
