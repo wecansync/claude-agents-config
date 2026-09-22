@@ -194,12 +194,12 @@
     },
     {
       "path": "config/delegate-fleet.json",
-      "sha256": "67616dd115604704ffc95338d40efe1bd0477931e5a29f8f9977b08e2067d57a",
+      "sha256": "9f51f2179718997c0d8ed01c8c102d5fe9dc656de59919ec1880b494fea88b03",
       "mode": "0o644"
     },
     {
       "path": "config/provider-policy.json",
-      "sha256": "c565e4ea507d6be9ab70d8a4c40781c288b35deb095a5a908c2bd2179504106a",
+      "sha256": "4af656012959b452c3e26e318c047148c652cfba0699585287d5354b362b9a53",
       "mode": "0o644"
     },
     {
@@ -229,7 +229,7 @@
     },
     {
       "path": "scripts/fleet-reconcile.py",
-      "sha256": "5040a8dc59da1d499de0faa73f08b83bfbf66c042c2936911c1c15601ed48e98",
+      "sha256": "08971ccdd8739b1f0f08c97a5d46f871fccf2c719accda62c8919412de16442d",
       "mode": "0o755"
     },
     {
@@ -264,7 +264,7 @@
     },
     {
       "path": "skills/fleet-setup/SKILL.md",
-      "sha256": "7065a0f18a84755fd7c9ab9ce6738c78b1268bf4757f540990a3dc88019888a7",
+      "sha256": "a1da4205bfddf3588186fa077cee196a9d2e00c4d7cb85034b1ea89326de2f30",
       "mode": "0o644"
     },
     {

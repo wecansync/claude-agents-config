@@ -46,7 +46,7 @@ HEADROOM_NUMERATOR = 9
 HEADROOM_DENOMINATOR = 10
 TRANSACTION_MARKER = ".fleet-reconcile-pending.json"
 TRANSACTION_FORMAT = "claude-agents-config.reconcile-transaction.v1"
-GATEWAY_MODEL_PREFIXES = ("agy-", "claude-", "codex-", "cursor-", "omniroute-", "openclaw-", "deepseek-")
+GATEWAY_MODEL_PREFIXES = ("agy-", "claude-", "codex-", "cursor-", "omniroute-", "openclaw-", "deepseek-", "qwen-")
 
 CANONICAL_LANE_PREFERRED: dict[str, list[str]] = {
     "plan": ["claude-opus-5[1m]", "codex-sol[1m]", "agy-claude-opus[1m]"],
@@ -57,7 +57,7 @@ CANONICAL_LANE_PREFERRED: dict[str, list[str]] = {
     "implement-04-free-1m": ["omniroute-free-1m-ctx[1m]", "omniroute-free-256k-ctx"],
     "implement-05-agy-sonnet": ["agy-claude-sonnet[1m]", "claude-sonnet-5[1m]"],
     "implement-06-free-256k": ["omniroute-free-256k-ctx", "omniroute-free-1m-ctx[1m]"],
-    "implement-07-auto-128k": ["custom-auto", "omniroute-free-256k-ctx"],
+    "implement-07-auto-128k": ["custom-auto", "qwen-3.8-128k-ctx", "omniroute-free-256k-ctx"],
     "implement-08-atria-experimental": ["Atria", "claude-sonnet-5[1m]"],
     "implement-09-codex-5-5": ["codex-5.5", "claude-sonnet-5[1m]"],
     "implement-10-sonnet": ["claude-sonnet-5[1m]", "agy-gemini-flash[1m]"],
@@ -75,10 +75,10 @@ CANONICAL_LANE_PREFERRED: dict[str, list[str]] = {
     "ui": ["agy-claude-opus[1m]", "claude-sonnet-5[1m]"],
     "tests": ["agy-gemini-flash[1m]", "claude-sonnet-5[1m]"],
     "docs": ["agy-claude-sonnet[1m]", "claude-sonnet-5[1m]"],
-    "explore-narrow": ["claude-haiku", "cursor-auto"],
+    "explore-narrow": ["claude-haiku", "cursor-auto", "qwen-3.8-128k-ctx"],
     "research-codebase": ["agy-gemini-pro[1m]", "claude-sonnet-5[1m]"],
     "research-web": ["agy-gemini-pro[1m]", "claude-sonnet-5[1m]"],
-    "triage-static": ["cursor-auto", "claude-haiku"],
+    "triage-static": ["cursor-auto", "qwen-3.8-128k-ctx", "claude-haiku"],
 }
 
 
