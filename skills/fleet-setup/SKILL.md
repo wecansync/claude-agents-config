@@ -1,116 +1,147 @@
 ---
 name: fleet-setup
-description: Analyze live models, audit agents/skills/plugins for token bloat, optimize config, interview core roles, or suggest new agents.
+description: Comprehensive interactive wizard: scan models & settings, repair stale models, validate hooks, curate agents/skills, and optimize the 30-lane fleet.
 ---
 
-# Fleet Setup & Context Optimization
+# Fleet Setup & System Optimization Wizard
 
 You are running the **/fleet-setup** skill.
 
 ## Core Directives
-1. **Output must be very small**: Output ONLY concise diagnostic status (3-5 lines), clear recommendations, and an interactive prompt via `AskUserQuestion`. Never dump large tables, raw JSON, long logs, or verbose markdown.
-2. **Context & Token Economy**: Extra non-fleet agents, redundant skills, and bloated plugins inject massive prompt overhead into every session. Audit them and suggest pruning.
-3. **Full Model Utilization**: The fleet must contain and benefit from all available gateway models across its 30 lanes, matching task shapes to context lengths and strengths.
-4. **Interactive Decision Before Acting**: Always present recommendations and ask before mutating files or pruning configurations.
-5. **Immediate Execution & Verification**: Apply choices, synchronize agents via `claude-fleet-sync`, and verify with `claude-fleet-sync --check`.
+1. **Interactive Multi-Step Wizard**: Use `AskUserQuestion` to collect user preferences and confirm recommendations before making any changes.
+2. **Compact & Clean Output**: Print only a concise diagnostic summary (4-6 lines) and structured question prompts. Never dump raw JSON or sprawling tables.
+3. **Smart Agent Curation (Do NOT Archive Everything)**: Separate valuable engineering tools (Database Optimizer, MCP Builder, Security Auditor, Accessibility Auditor, Data Remediation) from specialized domains (Game Dev, 3D, regional ops). Recommend keeping engineering tools active while archiving unneeded niche domains to reclaim prompt cache tokens.
+4. **Deterministic Health & Stale Model Repair**: Identify and repair any model in `settings.json` or `env` that no longer exists in the provider gateway (e.g. `advisorModel: codex-sol-max[1m]`).
+5. **Deterministic Verification Gates**: Conclude by synchronizing agents via `claude-fleet-sync` and verifying with `claude-fleet-sync --check` and `claude-agents-doctor --check`.
+
+---
 
 ## Execution Flow
 
-### Step 1: Deep System & Context Audit (Silent)
-Perform the following diagnostics silently before printing output:
-1. **Live Provider Models**:
-   - Read `~/.claude/cache/omniroute-models-cache.json` (or inspect `/v1/models` via gateway endpoint in `~/.claude/settings.json`).
-   - Extract model IDs, descriptions, and context lengths (e.g. 1M vs 128K vs 256K).
-2. **Fleet Configuration**:
-   - Read `~/.claude/fleet.json` (fallback: `~/.config/delegate-skills/config.json`).
-   - Identify lanes on fallback models that can be promoted to optimal live models.
-   - Verify 100% gateway model utilization across all 30 lanes.
-3. **Context & Token Overhead Audit**:
-   - **Agents (`~/.claude/agents/`)**: Count total agents vs. managed `fleet-*.md` agents. Non-fleet agents inject full names and descriptions into the session prompt on every turn, consuming prompt tokens and degrading cache.
-   - **Skills (`~/.claude/skills/`)**: Identify user-defined skills and detect stale or unused ones.
-   - **Plugins / MCP**: Check `~/.claude/settings.json` for active plugins or MCP servers adding tool schema overhead.
-   - **Compaction & Limits**: Verify `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in `~/.claude/settings.json` is configured appropriately for active context sizes (e.g. `800000` for 1M context models).
+### Phase 1: Silent Diagnostic Audit
+Run `claude-fleet-setup --audit --json` silently using `Bash`. Parse the JSON to inspect:
+1. **Live Provider Models**: Total count, context lengths (1M vs 128K/256K), and active models.
+2. **Settings.json Health**:
+   - Check `advisorModel` and `model` against live catalog.
+   - Check `env` model keys (`ANTHROPIC_DEFAULT_*_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`).
+   - Check compaction window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW` / `autoCompactWindow` vs `800000`).
+3. **Hooks Integrity**: Verify all 11 hook commands and statusline scripts point to existing, executable binaries on disk.
+4. **Installed Agents**:
+   - 30 managed `fleet-*.md` lanes.
+   - Non-fleet agents grouped into:
+     - `engineering` (15 tools: Database Optimizer, MCP Builder, Security, Accessibility, Data Remediation, etc.)
+     - `game_dev` (25 agents: Unity, Unreal, Godot, Roblox, Blender, XR)
+     - `niche_ops` (2 agents: WeChat, Feishu)
+     - `other` (6 agents: UX, Jira, Terminal, Voice AI, etc.)
+5. **Installed Skills**: Active count by category (`core`, `delegates`, `engineering`, `other`).
+6. **Fleet Coverage**: Percentage of live gateway models mapped into the 30 fleet lanes.
 
-### Step 2: Minimal Diagnostic Summary & Prompt
-Print a compact, high-signal summary (max 5-6 lines):
-- **Gateway Catalog**: e.g., "13 live models detected (1M context: Opus 5, Sonnet 5, Codex Luna, Codex Sol, Gemini Pro/Flash; 128K: Qwen 3.8)."
-- **Fleet Status**: e.g., "30 lanes active. 100% model coverage achievable."
-- **Context Overhead**: e.g., "Detected X non-fleet agents and Y custom skills injecting ~Z tokens into every session start."
-- **Recommended Action**: e.g., "Recommended: Auto-optimize fleet model assignments and prune unused context bloat."
+---
 
-Prompt the user immediately using `AskUserQuestion`:
-- `header`: "Fleet Action"
-- `question`: "Select an action for fleet setup and context optimization:"
+### Phase 2: Diagnostic Status & Interactive Wizard
+
+Print a compact, high-signal diagnostic status (4-6 lines):
+```markdown
+### Fleet & System Audit
+- **Gateway Models**: 13 online (1M context: Opus 5, Sonnet 5, Gemini Flash/Pro, Codex 5.5, Free 1M; 128K: Qwen 3.8).
+- **Settings Health**: Stale model detected (`advisorModel: codex-sol-max[1m]`); Compaction at 235,929 (recommend 800,000 for 1M context).
+- **Hooks Integrity**: 11/11 commands verified (all executables and script targets present on disk).
+- **Installed Agents**: 30 Fleet lanes active; 15 Engineering tools (Database Optimizer, MCP Builder, Security, Accessibility, etc.); 25 Game Dev/3D agents; 2 Niche ops.
+- **Fleet Coverage**: 30 lanes active · 100% gateway model coverage achievable.
+```
+
+Follow with the interactive wizard steps using `AskUserQuestion`:
+
+#### Wizard Step 1: Settings Health & Stale Model Repair
+If stale models are detected in `advisorModel`, `model`, or `env`, prompt the user:
+- `header`: "Settings"
+- `question`: "Stale model `codex-sol-max[1m]` detected in `advisorModel`. Which live model should replace it?"
 - `options`:
-  - `label`: "Apply Full Optimization (Recommended)"
-    `description`: "Reconcile all 30 lanes to optimal live models, sync agents, and ensure optimal compaction config."
+  - `label`: "Replace with claude-opus-5[1m] (Recommended)"
+    `description`: "Live 1M context Opus 5 for deep architectural guidance and advice."
+  - `label`: "Replace with codex-5.5"
+    `description`: "Live 272K context GPT-5.5 for high-precision reasoning."
+  - `label`: "Replace with agy-claude-opus[1m]"
+    `description`: "Live 1M context Opus 4.6 via Antigravity gateway."
+  - `label`: "Keep Unchanged"
+    `description`: "Leave existing settings.json configuration untouched."
+
+*(Note: Claude will also align `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and `autoCompactWindow` to 800,000 tokens for 1M context efficiency).*
+
+#### Wizard Step 2: Fleet 30-Lane Architecture & Reconciliation
+Prompt the user regarding fleet lane model assignments:
+- `header`: "Fleet Mode"
+- `question`: "How would you like to configure the 30-lane delegate fleet?"
+- `options`:
+  - `label`: "Auto-Reconcile 100% Coverage (Recommended)"
+    `description`: "Map all 13 live models into the 30 lanes matching task shapes and context sizes."
   - `label`: "Interview Core Roles"
-    `description`: "Interactively choose preferred models for the 5 core archetypes based on live models and context."
-  - `label`: "Audit & Prune Token Bloat"
-    `description`: "Review and remove or archive non-fleet agents/skills/plugins that inject unnecessary context."
-  - `label`: "Suggest / New Agent"
-    `description`: "Define and generate a new custom delegate agent with bounded tools."
-  - `label`: "Keep Current Configuration"
-    `description`: "Leave all current assignments, agents, and settings untouched."
+    `description`: "Interactively choose preferred models for the 5 core archetypes."
+  - `label`: "Keep Current Fleet Assignments"
+    `description`: "Preserve existing ~/.claude/fleet.json lane assignments."
 
-### Step 3: Handle Selected Action
-
-#### A. Apply Full Optimization:
-1. Run `claude-fleet-setup --reconcile`.
-2. Ensure `~/.claude/settings.json` has optimal compaction (`CLAUDE_CODE_AUTO_COMPACT_WINDOW` = `800000`).
-3. Run `claude-fleet-sync --check`.
-4. Output 2 lines:
-   - "Fleet reconciled to live provider models with 100% model coverage."
-   - "All 30 delegate agents synchronized and verified."
-
-#### B. Interview Core Roles:
-Ask the user sequentially using `AskUserQuestion` populated with the live models, showing model name, context length, and role fit:
+**If the user selects "Interview Core Roles"**, prompt through the 5 archetypes:
 1. **Main Orchestrator / Planner** (`fleet-plan`, `fleet-plan-alt`):
-   - Options: `claude-opus-5[1m]` (Recommended, 1M context deep reasoning), `codex-sol[1m]` (1M architecture), `agy-claude-opus[1m]`
+   - `claude-opus-5[1m] (Recommended)` (1M context deep reasoning), `agy-claude-opus[1m]`, `agy-gemini-pro[1m]`
 2. **Lead Implementer** (`fleet-implement`):
-   - Options: `codex-luna[1m]` (Recommended, 1M precision coding), `claude-sonnet-5[1m]` (1M coding), `agy-gemini-flash[1m]` (Fast 1M)
+   - `claude-sonnet-5[1m] (Recommended)` (1M coding), `agy-gemini-flash[1m]`, `agy-claude-sonnet[1m]`
 3. **Code Reviewer** (`fleet-review`):
-   - Options: `codex-sol[1m]` (Recommended, 1M defect analysis), `claude-opus-5[1m]`, `codex-astra[1m]`
+   - `claude-opus-5[1m] (Recommended)` (1M defect analysis), `codex-5.5`, `claude-sonnet-5[1m]`
 4. **Decision Maker & Triage** (`fleet-triage-static`):
-   - Options: `qwen-3.8-128k-ctx` (Recommended, fast 128K triage), `claude-haiku`, `custom-auto`
+   - `qwen-3.8-128k-ctx (Recommended)` (Fast 128K triage), `claude-haiku`, `custom-auto`
 5. **Researcher** (`fleet-research-codebase`, `fleet-research-web`):
-   - Options: `agy-gemini-pro[1m]` (Recommended, 1M web & broad repo analysis), `claude-sonnet-5[1m]`
+   - `agy-gemini-pro[1m] (Recommended)` (1M broad sweep), `claude-sonnet-5[1m]`
 
-After selections:
-- Update `~/.claude/fleet.json` and mirror `~/.config/delegate-skills/config.json`.
-- Run `claude-fleet-sync`.
-- Run `claude-fleet-sync --check`.
-- Output: "Core roles updated, fleet synchronized, and verified."
+#### Wizard Step 3: Categorized Agent Curation (Do NOT Archive Everything)
+Explain that 15 Engineering tools provide immense utility for web, backend, database, and system development (Database Optimizer, MCP Builder, Security Auditor, Accessibility Auditor, Data Remediation, etc.). However, 25 Game Dev/3D agents (Unity, Unreal, Godot, Roblox, Blender) and 2 Niche ops (WeChat, Feishu) consume ~11,000 prompt tokens per turn if not working in those domains.
 
-#### C. Audit & Prune Token Bloat:
-1. List non-fleet agents in `~/.claude/agents/` (excluding `fleet-*.md`).
-2. Calculate estimated prompt token overhead.
-3. Prompt via `AskUserQuestion`:
-   - "Archive All Non-Fleet Agents": Move unused third-party agents to `~/.claude/agents-archived/` so they stop polluting session context.
-   - "Selectively Prune": Choose specific agents to delete or archive.
-   - "Keep All": Preserve existing agent files.
-4. After user confirmation, execute the action and output:
-   - "Context pruned: removed X extra agents from session prompt overhead."
+Prompt the user:
+- `header`: "Agent Curation"
+- `question`: "How should installed non-fleet agents be curated?"
+- `options`:
+  - `label`: "Keep Engineering & Archive Game/Niche (Recommended)"
+    `description`: "Keep all 15 dev tools + 30 fleet lanes active; archive 27 game/niche agents to reclaim ~11K prompt tokens."
+  - `label`: "Keep All 48 Agents Active"
+    `description`: "Preserve all installed agents in session prompt without archiving."
+  - `label`: "Archive Only Game Dev (25 agents)"
+    `description`: "Move Unity, Unreal, Godot, Roblox, Blender, and XR agents to archive; keep everything else."
+  - `label`: "Archive All Non-Fleet Agents"
+    `description`: "Move all 48 non-fleet agents to archive, leaving only the 30 managed fleet lanes."
 
-#### D. Suggest / New Agent:
-1. Prompt for:
-   - Agent Name (e.g. `fleet-db-optimizer`, `fleet-api-tester`)
-   - Role Brief & Scope (Read-only vs Writable)
-   - Preferred live model (from gateway catalog)
-2. Create `~/.claude/agents/<agent-name>.md` with minimal, bounded frontmatter:
-   ```yaml
-   ---
-   name: <agent-name>
-   description: <description>
-   model: <model>
-   effort: high
-   tools: <bounded-tools>
-   omitClaudeMd: true
-   ---
-   ```
-3. Register the lane in `~/.claude/fleet.json` and run `claude-fleet-sync`.
-4. Output: "New agent <agent-name> registered and ready for delegation."
+#### Wizard Step 4: Skills & Extension Strategy
+Prompt the user regarding skills and custom agents:
+- `header`: "Skills & Agents"
+- `question`: "Would you like to adjust skills or generate a new custom delegate agent?"
+- `options`:
+  - `label`: "Apply All Approved Optimizations (Recommended)"
+    `description`: "Execute the approved settings, fleet reconciliation, and agent curation choices."
+  - `label`: "Archive Legacy Delegate Skills"
+    `description`: "Archive 14 legacy *-delegate wrappers from before native fleet subagents."
+  - `label`: "Suggest / Generate New Custom Agent"
+    `description`: "Define and generate a new custom delegate agent with bounded tools."
 
-#### E. Keep Current Configuration:
-Output: "Configuration preserved unchanged."
+**If "Suggest / Generate New Custom Agent" is selected**:
+Prompt for agent name, role brief, and preferred model from the live catalog, then generate `~/.claude/agents/<agent-name>.md` with bounded tools and register it in `~/.claude/fleet.json`.
 
+---
+
+### Phase 3: Execution, Verification & Clean Summary
+
+Execute the approved operations:
+1. **Fix Settings**: Run `claude-fleet-setup --fix-settings --advisor <chosen_model>` (if repair was approved).
+2. **Fleet Reconciliation**: Run `claude-fleet-setup --reconcile` (or write core role selections to `~/.claude/fleet.json`).
+3. **Agent Curation**: Run `claude-fleet-setup --archive-agents <chosen_categories>` (e.g. `game_dev,niche_ops`).
+4. **Skills Archiving**: Run `claude-fleet-setup --archive-skills delegates` (if chosen).
+5. **Synchronization**: Run `claude-fleet-sync`.
+6. **Deterministic Verification Gates**:
+   - Run `claude-fleet-sync --check`
+   - Run `claude-agents-doctor --check`
+
+Output a crisp 3-4 line summary of actions taken and confirm all verification gates passed cleanly:
+```markdown
+### Fleet Setup Complete
+- **Settings**: Repaired stale `advisorModel` to `claude-opus-5[1m]` and optimized compaction window to 800,000.
+- **Fleet Lanes**: 30 lanes synchronized with 100% gateway model coverage.
+- **Agent Curation**: Retained 15 high-value engineering tools; archived 27 specialized agents, saving ~11,000 prompt tokens/turn.
+- **Verification**: `claude-fleet-sync --check` and `claude-agents-doctor --check` verified 100% healthy.
+```

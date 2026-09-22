@@ -3,8 +3,11 @@
 # Global System & Delegation Manual
 
 ## 1. Fleet Commands & Configuration Management
-- `/fleet-setup` — Interactive fleet setup & context optimization: inspect live provider models, audit agents/skills/plugins for token bloat, interview core roles, suggest custom agents, and reconcile fleet lanes.
-- `claude-fleet-setup --reconcile` — One-shot CLI reconciliation: fetch live provider models, run bidirectional lane reconciliation, and synchronize agents without prompting.
+- `/fleet-setup` — Interactive wizard: scan models & settings, repair stale models, validate hooks, curate agents/skills, and optimize the 30-lane fleet.
+- `claude-fleet-setup --audit` — Scan settings.json, models, hooks, agents, and skills for health and bloat.
+- `claude-fleet-setup --fix-settings` — Repair stale models in settings.json and optimize compaction window.
+- `claude-fleet-setup --reconcile` — One-shot CLI reconciliation: fetch live provider models, run bidirectional lane reconciliation, and synchronize agents.
+- `claude-fleet-setup --archive-agents <categories>` — Selectively archive agents (e.g. `game_dev,niche_ops`) to preserve prompt cache.
 - `claude-fleet-setup --show` — Inspect current policy, approved families, and fleet status.
 - `claude-fleet-sync` — Regenerate agent definition files (`~/.claude/agents/fleet-*.md`) from canonical configuration.
 - `claude-fleet-sync --check` — Verify that all 30 delegate agents match `config.json`.

@@ -1374,5 +1374,195 @@ class ProviderRepairTests(unittest.TestCase):
             self.assertTrue(proposal.get("auto_approved"))
 
 
+class FleetSetupComprehensiveTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.mkdtemp(prefix="fleet-setup-comp-")
+        self.home = Path(self.temp_dir)
+        self.claude_dir = self.home / ".claude"
+        self.claude_dir.mkdir(parents=True)
+        self.cache_dir = self.claude_dir / "cache"
+        self.cache_dir.mkdir(parents=True)
+        self.agents_dir = self.claude_dir / "agents"
+        self.agents_dir.mkdir(parents=True)
+        self.skills_dir = self.claude_dir / "skills"
+        self.skills_dir.mkdir(parents=True)
+        self.config_dir = self.home / ".config" / "delegate-skills"
+        self.config_dir.mkdir(parents=True)
+
+        self.catalog_data = {
+            "format": "claude-agents-config.provider-cache.v1",
+            "provider": "omniroute",
+            "models": [
+                {"id": "claude-opus-5", "display_name": "Opus 5", "context_length": 1000000},
+                {"id": "claude-sonnet-5", "display_name": "Sonnet 5", "context_length": 1000000},
+                {"id": "claude-haiku", "display_name": "Haiku", "context_length": 200000},
+                {"id": "agy-gemini-flash", "display_name": "Gemini Flash", "context_length": 1000000},
+                {"id": "codex-5.5", "display_name": "Codex 5.5", "context_length": 272000},
+            ]
+        }
+        (self.cache_dir / "omniroute-models-cache.json").write_text(json.dumps(self.catalog_data, indent=2))
+
+        self.settings_data = {
+            "model": "agy-gemini-flash[1m]",
+            "advisorModel": "codex-sol-max[1m]",
+            "autoCompactWindow": 235929,
+            "env": {
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "235929",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "dead-opus-model",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5[1m]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku"
+            },
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "hooks": [
+                            {"type": "command", "command": f"{sys.executable} -c 'pass' # comment"}
+                        ]
+                    }
+                ]
+            }
+        }
+        (self.claude_dir / "settings.json").write_text(json.dumps(self.settings_data, indent=2))
+
+        self.policy_data = {
+            "format": "provider-policy.v1",
+            "approvedFamilies": ["anthropic", "google", "openai"]
+        }
+        (self.config_dir / "provider-policy.json").write_text(json.dumps(self.policy_data, indent=2))
+
+        self.fleet_data = {
+            "format": "claude-agents-config.fleet.v1",
+            "lanes": {
+                "fleet-plan": {"model": "claude-opus-5[1m]"},
+                "fleet-implement": {"model": "claude-sonnet-5[1m]"},
+                "fleet-tests": {"model": "agy-gemini-flash[1m]"},
+            }
+        }
+        (self.claude_dir / "fleet.json").write_text(json.dumps(self.fleet_data, indent=2))
+
+        (self.agents_dir / "fleet-plan.md").write_text("# fleet plan agent\n")
+        (self.agents_dir / "fleet-implement.md").write_text("# fleet implement agent\n")
+        (self.agents_dir / "engineering-database-optimizer.md").write_text("# db optimizer\n")
+        (self.agents_dir / "testing-accessibility-auditor.md").write_text("# a11y auditor\n")
+        (self.agents_dir / "unity-architect.md").write_text("# unity architect\n")
+        (self.agents_dir / "unreal-systems-engineer.md").write_text("# unreal engineer\n")
+        (self.agents_dir / "engineering-wechat-mini-program-developer.md").write_text("# wechat dev\n")
+        (self.agents_dir / "design-ux-architect.md").write_text("# ux architect\n")
+
+        (self.skills_dir / "fleet-setup").mkdir()
+        (self.skills_dir / "code-review").mkdir()
+        (self.skills_dir / "cline-delegate").mkdir()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def run_fleet_setup(self, *args: str) -> subprocess.CompletedProcess:
+        cmd = [sys.executable, str(ROOT / "bin" / "claude-fleet-setup"), "--home", str(self.home), *args]
+        return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+    def test_audit_json_output(self) -> None:
+        proc = self.run_fleet_setup("--audit", "--json")
+        self.assertEqual(proc.returncode, 0, f"Error: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        self.assertEqual(data.get("format"), "claude-fleet-audit.v1")
+        self.assertEqual(data["live_models"]["total"], 5)
+
+        stale = data["settings"]["stale_models"]
+        self.assertIn("advisorModel", stale)
+        self.assertEqual(stale["advisorModel"]["current"], "codex-sol-max[1m]")
+        self.assertIn("env.ANTHROPIC_DEFAULT_OPUS_MODEL", stale)
+        self.assertEqual(stale["env.ANTHROPIC_DEFAULT_OPUS_MODEL"]["current"], "dead-opus-model")
+
+        self.assertFalse(data["settings"]["compaction"]["optimal"])
+        self.assertEqual(data["settings"]["compaction"]["current"], "235929")
+
+        self.assertTrue(data["hooks"]["all_valid"])
+
+        agents_audit = data["agents"]
+        self.assertEqual(agents_audit["fleet_active_lanes"], 2)
+        self.assertEqual(agents_audit["non_fleet_active_count"], 6)
+        cats = agents_audit["non_fleet_by_category"]
+        self.assertEqual(len(cats["engineering"]), 2)
+        self.assertEqual(len(cats["game_dev"]), 2)
+        self.assertEqual(len(cats["niche_ops"]), 1)
+        self.assertEqual(len(cats["other"]), 1)
+
+    def test_audit_text_summary(self) -> None:
+        proc = self.run_fleet_setup("--audit")
+        self.assertEqual(proc.returncode, 0, f"Error: {proc.stderr}")
+        self.assertIn("Claude Fleet & Context Audit", proc.stdout)
+        self.assertIn("codex-sol-max[1m]", proc.stdout)
+        self.assertIn("Engineering & QA tools: 2 active", proc.stdout)
+        self.assertIn("Game Dev & 3D: 2 active", proc.stdout)
+
+    def test_fix_settings_auto(self) -> None:
+        proc = self.run_fleet_setup("--fix-settings")
+        self.assertEqual(proc.returncode, 0, f"Error: {proc.stderr}")
+        self.assertIn("advisorModel: replaced stale 'codex-sol-max[1m]' with live 'claude-opus-5[1m]'", proc.stdout)
+        self.assertIn("env.ANTHROPIC_DEFAULT_OPUS_MODEL: replaced stale 'dead-opus-model' with live 'claude-opus-5[1m]'", proc.stdout)
+        self.assertIn("235929 -> 800000", proc.stdout)
+
+        updated = json.loads((self.claude_dir / "settings.json").read_text())
+        self.assertEqual(updated["advisorModel"], "claude-opus-5[1m]")
+        self.assertEqual(updated["autoCompactWindow"], 800000)
+        self.assertEqual(updated["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "800000")
+        self.assertEqual(updated["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"], "claude-opus-5[1m]")
+
+    def test_fix_settings_advisor_override(self) -> None:
+        proc = self.run_fleet_setup("--fix-settings", "--advisor", "codex-5.5")
+        self.assertEqual(proc.returncode, 0, f"Error: {proc.stderr}")
+        updated = json.loads((self.claude_dir / "settings.json").read_text())
+        self.assertEqual(updated["advisorModel"], "codex-5.5")
+
+    def test_archive_and_restore_agents_by_category(self) -> None:
+        proc = self.run_fleet_setup("--archive-agents", "game_dev,niche_ops")
+        self.assertEqual(proc.returncode, 0, f"Error: {proc.stderr}")
+        self.assertIn("Archived 3 agents", proc.stdout)
+
+        archived = sorted([f.name for f in (self.claude_dir / "agents-archived").glob("*.md")])
+        self.assertEqual(archived, [
+            "engineering-wechat-mini-program-developer.md",
+            "unity-architect.md",
+            "unreal-systems-engineer.md"
+        ])
+
+        active = sorted([f.name for f in self.agents_dir.glob("*.md")])
+        self.assertEqual(active, [
+            "design-ux-architect.md",
+            "engineering-database-optimizer.md",
+            "fleet-implement.md",
+            "fleet-plan.md",
+            "testing-accessibility-auditor.md"
+        ])
+
+        proc_restore = self.run_fleet_setup("--restore-agents", "game_dev")
+        self.assertEqual(proc_restore.returncode, 0, f"Error: {proc_restore.stderr}")
+        self.assertIn("Restored 2 agents", proc_restore.stdout)
+
+        active_after = sorted([f.name for f in self.agents_dir.glob("*.md")])
+        self.assertIn("unity-architect.md", active_after)
+        self.assertIn("unreal-systems-engineer.md", active_after)
+        self.assertNotIn("engineering-wechat-mini-program-developer.md", active_after)
+
+    def test_archive_agents_all_preserves_fleet(self) -> None:
+        proc = self.run_fleet_setup("--archive-agents", "all")
+        self.assertEqual(proc.returncode, 0, f"Error: {proc.stderr}")
+
+        active = sorted([f.name for f in self.agents_dir.glob("*.md")])
+        self.assertEqual(active, ["fleet-implement.md", "fleet-plan.md"])
+
+    def test_archive_and_restore_skills(self) -> None:
+        proc = self.run_fleet_setup("--archive-skills", "delegates")
+        self.assertEqual(proc.returncode, 0, f"Error: {proc.stderr}")
+        self.assertIn("Archived 1 skills", proc.stdout)
+
+        archived = [s.name for s in (self.claude_dir / "skills-archived").iterdir()]
+        self.assertEqual(archived, ["cline-delegate"])
+
+        active = sorted([s.name for s in self.skills_dir.iterdir()])
+        self.assertEqual(active, ["code-review", "fleet-setup"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
