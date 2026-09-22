@@ -189,7 +189,7 @@
     },
     {
       "path": "config/CLAUDE.md",
-      "sha256": "c2b1a132e27a00279fd4ed7858e6483332e4af61ae900c08cde217cb56f1dd26",
+      "sha256": "ed5b83e95785f6d260e4041fdb1cab238b593310bb38c81dbabf1a28abf944ca",
       "mode": "0o644"
     },
     {
@@ -259,7 +259,7 @@
     },
     {
       "path": "scripts/sync-omniroute-models.mjs",
-      "sha256": "08dd560b9991b89e42147aefa66424994dc94b5ef0b71688b9a467e1191f4d4a",
+      "sha256": "3c021c114a029ba1b04ea09a24d9cfa2e7a269e07e2f846e5e9286ea33b0387c",
       "mode": "0o755"
     },
     {
