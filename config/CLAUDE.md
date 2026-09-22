@@ -3,7 +3,7 @@
 # Global System & Delegation Manual
 
 ## 1. Fleet Commands & Configuration Management
-- `/fleet-setup` — Interactive fleet setup: inspect provider models, review model drift proposals, reconcile delegate fleet lanes, and synchronize agent files.
+- `/fleet-setup` — Interactive fleet setup & context optimization: inspect live provider models, audit agents/skills/plugins for token bloat, interview core roles, suggest custom agents, and reconcile fleet lanes.
 - `claude-fleet-setup --reconcile` — One-shot CLI reconciliation: fetch live provider models, run bidirectional lane reconciliation, and synchronize agents without prompting.
 - `claude-fleet-setup --show` — Inspect current policy, approved families, and fleet status.
 - `claude-fleet-sync` — Regenerate agent definition files (`~/.claude/agents/fleet-*.md`) from canonical configuration.
@@ -15,24 +15,26 @@ Delegate substantive work to the matching `fleet-*` subagent as a standing defau
 
 ### Route by task shape
 
-| The request is | Lane | Default Model |
+| The request is | Lane | Scope & Core Responsibility |
 | --- | --- | --- |
-| Design or approach before code exists | `fleet-plan` | `codex-sol[1m]` / `claude-opus-5[1m]` |
-| Build a feature, fix a bug, refactor, migrate | `fleet-implement` | `codex-luna[1m]` |
-| Check a diff, branch, PR, plan, or spec for defects | `fleet-review` | `codex-sol[1m]` |
-| Write, fix, or investigate tests | `fleet-tests` | `agy-gemini-flash[1m]` |
-| Change user-facing interface code | `fleet-ui` | `agy-claude-opus[1m]` |
-| Write or update documentation | `fleet-docs` | `agy-claude-sonnet[1m]` |
-| Find a symbol, file, config, or call site | `fleet-explore-narrow` | `claude-haiku` |
-| Examine auth, secrets, validation, or trust boundaries | `fleet-security-review` | `agy-claude-opus[1m]` / `claude-opus-5[1m]` |
-| Root-cause a failure from source | `fleet-diagnose-static` | `codex-sol[1m]` / `codex-sol-max[1m]` |
-| Sweep many files to understand a system | `fleet-research-codebase` | `agy-gemini-pro[1m]` |
-| Evaluate an external tool, library, or service, or check current docs | `fleet-research-web` | `agy-gemini-pro[1m]` |
-| Decide ownership, scope, and next action for an issue | `fleet-triage-static` | `qwen-3.8-128k-ctx` / `claude-haiku` |
+| Design or approach before code exists | `fleet-plan` | Read-only architecture, multi-file design, approach comparisons |
+| Build a feature, fix a bug, refactor, migrate | `fleet-implement` | Full-power code implementation, bug fixing, refactoring |
+| Check a diff, branch, PR, plan, or spec for defects | `fleet-review` | Read-only defect review, correctness, regression auditing |
+| Write, fix, or investigate tests | `fleet-tests` | Test authoring, test execution, investigating flaky suites |
+| Change user-facing interface code | `fleet-ui` | UI components, layout styling, accessibility, frontend polish |
+| Write or update documentation | `fleet-docs` | READMEs, developer guides, API docs, runbooks, changelogs |
+| Find a symbol, file, config, or call site | `fleet-explore-narrow` | Read-only targeted code search and symbol navigation |
+| Examine auth, secrets, validation, or trust boundaries | `fleet-security-review` | Read-only security audits, injection, credentials, auth |
+| Root-cause a failure from source | `fleet-diagnose-static` | Read-only source tracing, crash analysis, root-cause isolation |
+| Sweep many files to understand a system | `fleet-research-codebase` | Read-only broad repository sweeping and architectural mapping |
+| Evaluate an external tool, library, or service, or check current docs | `fleet-research-web` | Public documentation, library evaluation, web research |
+| Decide ownership, scope, and next action for an issue | `fleet-triage-static` | Read-only fast issue triage, blast radius, actionable next step |
+
+*Note: Models for each lane are decoupled and dynamic based on provider gateway availability. See `~/.claude/fleet.json` for live model mappings and `~/.claude/agents/fleet-*.md` for agent definitions.*
 
 Do the work inline when it is a single obvious edit, a question already answered by context, a command whose output you need for your next step, or when the user explicitly requests not to use subagents. Dispatch when the task spans several files, needs real digging, or benefits from an independent model.
 
-Chain lanes when the work has stages: plan, then implement, then review. Run a second reviewer on a risky change. The primary `fleet-review` lane runs on Codex Sol; use `fleet-review-02-opus` on Claude Opus 5 as the standard fallback, and reserve `fleet-review-06-astra` on Codex Astra for very hard reviews involving security or trust boundaries, installer, migration, concurrency, data-loss risk, or conflicting findings. Model fallbacks are advisory and resolve only when the provider's picker row is live; they never edit the fleet map automatically. Numbered lanes (`fleet-implement-04-*`, `fleet-review-03-*`) are alternates — reach for one when the user names it, when a primary lane has failed twice, or when a genuinely independent model improves the check; state the reason.
+Chain lanes when the work has stages: plan, then implement, then review. Run a second reviewer on a risky change. The primary `fleet-review` lane handles standard defect review; use `fleet-review-02-opus` as the standard fallback, and reserve `fleet-review-06-astra` for very hard reviews involving security or trust boundaries, installer, migration, concurrency, data-loss risk, or conflicting findings. Model fallbacks are advisory and resolve dynamically from `~/.claude/fleet.json`. Numbered lanes (`fleet-implement-04-*`, `fleet-review-03-*`) are alternates — reach for one when the user names it, when a primary lane has failed twice, or when a genuinely independent model improves the check; state the reason.
 
 ### Behavioral Debugging Over Model Swapping
 When a delegate subagent or task underperforms, do not immediately swap lanes or churn models. Model degradation is almost always a specification problem, not a capability problem. Follow the Behavioral Debugging Loop:
@@ -68,4 +70,4 @@ Verification belongs in automated software gates (`claude-agents-doctor --check`
 Parallel writable agents need disjoint file scopes or isolated worktrees. Static reviewers run in parallel freely. Fleet agents never spawn nested agents.
 
 ## 6. Keep the Fleet Honest
-`~/.config/delegate-skills/config.json` is canonical; `~/.claude/agents/fleet-*.md` is generated from it. Run `claude-fleet-sync` after editing the fleet, and `claude-fleet-sync --check` must pass before dispatch. Reserve `claude-delegate` for work that needs a separate durable CLI session.
+`~/.claude/fleet.json` is canonical (with legacy mirror maintained at `~/.config/delegate-skills/config.json`); `~/.claude/agents/fleet-*.md` is generated from it. Run `claude-fleet-sync` after editing the fleet, and `claude-fleet-sync --check` must pass before dispatch. Reserve `claude-delegate` for work that needs a separate durable CLI session.

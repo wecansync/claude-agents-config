@@ -169,7 +169,7 @@
     },
     {
       "path": "bin/claude-agents-doctor",
-      "sha256": "b0c7f9516ad37deddb010208b9495874514d995a49957d6915df6e5e8738728e",
+      "sha256": "7b3fd8ed5e627dd5d4b087d18d4c5744b5b3770a58d3d655336f707527790cc2",
       "mode": "0o755"
     },
     {
@@ -184,12 +184,12 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "225d10edede6ba7044666d9f10430a5ea774a5671c1449607b8974f27a6b90fd",
+      "sha256": "0a2669ed4a79db02927c01ee783c4a859d1bc3cde7f741d2a3c5c906633ae1f0",
       "mode": "0o755"
     },
     {
       "path": "config/CLAUDE.md",
-      "sha256": "517b75e4d3b91a010ce911279daeefe496b83715834aee315e95ab83b8491a69",
+      "sha256": "10deb13ff8837cd161c821828c74a7de28bf09009dbd0c8420c6dcd188163993",
       "mode": "0o644"
     },
     {
@@ -224,17 +224,17 @@
     },
     {
       "path": "scripts/fleet-model-drift.py",
-      "sha256": "30180096145a9dbbf42a77547a124966030578d3f72709dc1128564c6a5c8cca",
+      "sha256": "9dfa2a23448b6306f0d9440ae393712af7b6be7fa672704dee9ac503594f6675",
       "mode": "0o755"
     },
     {
       "path": "scripts/fleet-reconcile.py",
-      "sha256": "08971ccdd8739b1f0f08c97a5d46f871fccf2c719accda62c8919412de16442d",
+      "sha256": "ad4aae14a649d1418a996674124e82f00b680aa9e9ef42e425edd95163b3e571",
       "mode": "0o755"
     },
     {
       "path": "scripts/generate-claude-agents.mjs",
-      "sha256": "dbf05fea92cb34dc6fd0ea3535f00584d09fbcef95e92a04e4f0f56351ae6b97",
+      "sha256": "ceb04d530cae3fcc3f034532d3d1cc97a4470d01fd7915ce8dfc9bb69eb242e0",
       "mode": "0o755"
     },
     {
@@ -264,7 +264,7 @@
     },
     {
       "path": "skills/fleet-setup/SKILL.md",
-      "sha256": "a1da4205bfddf3588186fa077cee196a9d2e00c4d7cb85034b1ea89326de2f30",
+      "sha256": "bb4bf516b9342bba6173f903a82b1d3354968627c1f969cbd4bf5cf290ea66f0",
       "mode": "0o644"
     },
     {

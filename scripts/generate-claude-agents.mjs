@@ -56,7 +56,20 @@ function realpathOrResolve(path) {
   }
 }
 
-const fleetPath = join(configHome, "delegate-skills", "config.json");
+const claudeFleetPath = join(home, ".claude", "fleet.json");
+const legacyFleetPath = join(configHome, "delegate-skills", "config.json");
+let fleetPath = legacyFleetPath;
+if (existsSync(claudeFleetPath) && existsSync(legacyFleetPath)) {
+  try {
+    const claudeStat = statSync(claudeFleetPath);
+    const legacyStat = statSync(legacyFleetPath);
+    fleetPath = (legacyStat.mtimeMs > claudeStat.mtimeMs) ? legacyFleetPath : claudeFleetPath;
+  } catch {
+    fleetPath = claudeFleetPath;
+  }
+} else if (existsSync(claudeFleetPath)) {
+  fleetPath = claudeFleetPath;
+}
 const settingsPath = join(home, ".claude", "settings.json");
 const agentsDir = join(home, ".claude", "agents");
 const installMetadataPath = join(home, ".claude", ".claude-agents-config-install.json");
@@ -415,7 +428,13 @@ function buildInstalledVerification(desiredByFilename, fleetHash) {
   const byPath = new Map(desiredByFilename);
   const updateRecords = (records) => records.map((record) => {
     if (!record || typeof record.path !== "string") return record;
-    if (record.id === "config:delegate-fleet.json" || realpathOrResolve(record.path) === realpathOrResolve(fleetPath)) {
+    if (
+      record.id === "config:delegate-fleet.json" ||
+      record.id === "home:.claude/fleet.json" ||
+      realpathOrResolve(record.path) === realpathOrResolve(fleetPath) ||
+      realpathOrResolve(record.path) === realpathOrResolve(claudeFleetPath) ||
+      realpathOrResolve(record.path) === realpathOrResolve(legacyFleetPath)
+    ) {
       return { ...record, sha256: fleetHash };
     }
     const filename = relative(agentsDir, record.path);
@@ -438,10 +457,21 @@ function buildInstalledVerification(desiredByFilename, fleetHash) {
     managed: updateRecords(metadata.managed),
     verificationSha256: createHash("sha256").update(nextManifestBytes).digest("hex"),
   };
-  return new Map([
+  const targets = new Map([
     [installManifestPath, nextManifestBytes],
     [installMetadataPath, Buffer.from(JSON.stringify(nextMetadata, null, 2) + "\n", "utf8")],
   ]);
+  if (existsSync(claudeFleetPath) && existsSync(legacyFleetPath)) {
+    const mirrorPath = (fleetPath === claudeFleetPath) ? legacyFleetPath : claudeFleetPath;
+    try {
+      if (readFileSync(mirrorPath, "utf8") !== fleetRaw) {
+        targets.set(mirrorPath, Buffer.from(fleetRaw, "utf8"));
+      }
+    } catch {
+      // Ignore if mirror cannot be read
+    }
+  }
+  return targets;
 }
 
 function laneRole(lane, config) {
