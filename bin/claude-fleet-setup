@@ -246,10 +246,15 @@ def main() -> int:
     parser.add_argument("--policy")
     parser.add_argument("--decisions", help="JSON decision file for noninteractive setup")
     parser.add_argument("--show", action="store_true", help="print effective policy without changing it")
+    parser.add_argument("--reconcile", action="store_true", help="reconcile fleet against live provider models and sync agents")
     parser.add_argument("--lock-timeout", type=float, default=4.0, help=argparse.SUPPRESS)
     args = parser.parse_args()
     home = resolved_home(args)
     path = policy_path(args)
+    if args.reconcile:
+        config_home = Path(args.config_home).expanduser().resolve() if args.config_home else Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")).resolve()
+        run_setup_reconciliation_and_sync(home, config_home, path)
+        return 0
     try:
         policy = load_policy(path)
     except CatalogError as exc:

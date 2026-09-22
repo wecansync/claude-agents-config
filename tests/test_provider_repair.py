@@ -1224,6 +1224,155 @@ class ProviderRepairTests(unittest.TestCase):
             fleet_record = next(r for r in manifest["managed"] if r["id"] == "config:delegate-fleet.json")
             self.assertEqual(fleet_record["sha256"], new_fleet_hash)
 
+    def test_resolve_fleet_bidirectional_auto_promotion_cycle(self):
+        namespace = {}
+        sys.path.insert(0, str(ROOT / "scripts"))
+        exec(compile((ROOT / "scripts/fleet-reconcile.py").read_text(), "fleet-reconcile.py", "exec"), namespace)
+        policy = json.loads((ROOT / "config/provider-policy.json").read_text())
+        fleet = {
+            "version": "delegate-fleet.v1",
+            "lanes": {
+                "implement": {
+                    "implementer": "claude",
+                    "model": "codex-luna[1m]",
+                    "effort": "xhigh",
+                    "timeout": "2h",
+                    "preferred": ["codex-luna[1m]", "claude-sonnet-5[1m]", "agy-gemini-flash[1m]"],
+                    "fallbacks": ["claude-sonnet-5[1m]", "agy-gemini-flash[1m]"],
+                },
+            },
+        }
+
+        # Step 1: codex-luna is dropped from provider -> lane auto-downgrades to claude-sonnet-5
+        rows_degraded = [
+            {"id": "claude-sonnet-5", "context_length": 1000000},
+            {"id": "agy-gemini-flash", "context_length": 1000000},
+        ]
+        resolved, picker, pending, catalog = namespace["resolve_fleet"](fleet, {}, rows_degraded, policy)
+        lane = resolved["lanes"]["implement"]
+        self.assertEqual(lane["model"], "claude-sonnet-5[1m]")
+        self.assertEqual(lane["fallbacks"], ["agy-gemini-flash[1m]"])
+        self.assertEqual(lane["preferred"], ["codex-luna[1m]", "claude-sonnet-5[1m]", "agy-gemini-flash[1m]"], "preferred hierarchy must be retained across dropouts")
+        changes = resolved.get("_reconcile", {}).get("changes", {})
+        self.assertEqual(changes.get("implement"), {"from": "codex-luna[1m]", "to": "claude-sonnet-5[1m]"})
+
+        # Step 2: codex-luna is restored to provider -> lane auto-promotes back to codex-luna
+        rows_restored = [
+            {"id": "codex-luna", "context_length": 872000},
+            {"id": "claude-sonnet-5", "context_length": 1000000},
+            {"id": "agy-gemini-flash", "context_length": 1000000},
+        ]
+        promoted, picker2, pending2, catalog2 = namespace["resolve_fleet"](resolved, {}, rows_restored, policy)
+        lane_promoted = promoted["lanes"]["implement"]
+        self.assertEqual(lane_promoted["model"], "codex-luna[1m]", "lane must auto-promote to preferred model")
+        self.assertEqual(lane_promoted["fallbacks"], ["claude-sonnet-5[1m]", "agy-gemini-flash[1m]"])
+        self.assertEqual(lane_promoted["preferred"], ["codex-luna[1m]", "claude-sonnet-5[1m]", "agy-gemini-flash[1m]"])
+        changes2 = promoted.get("_reconcile", {}).get("changes", {})
+        self.assertEqual(changes2.get("implement"), {"from": "claude-sonnet-5[1m]", "to": "codex-luna[1m]"})
+
+    def test_reconcile_home_seeds_canonical_preferred_hierarchy(self):
+        namespace = {}
+        sys.path.insert(0, str(ROOT / "scripts"))
+        exec(compile((ROOT / "scripts/fleet-reconcile.py").read_text(), "fleet-reconcile.py", "exec"), namespace)
+        policy_path = ROOT / "config/provider-policy.json"
+        with tempfile.TemporaryDirectory(prefix="fleet-seed-test-") as temp_dir:
+            temp_root = Path(temp_dir)
+            home = temp_root / "home"
+            config_home = temp_root / "config"
+            (home / ".claude").mkdir(parents=True, mode=0o700)
+            (config_home / "delegate-skills").mkdir(parents=True, mode=0o755)
+
+            # Degraded fleet without 'preferred' field
+            stale_fleet = {
+                "version": "delegate-fleet.v1",
+                "lanes": {
+                    "implement": {
+                        "implementer": "claude",
+                        "model": "claude-sonnet-5[1m]",
+                        "effort": "xhigh",
+                        "fallbacks": ["agy-gemini-flash[1m]"],
+                    },
+                    "review": {
+                        "implementer": "claude",
+                        "model": "codex-5.5",
+                        "effort": "xhigh",
+                        "readOnly": True,
+                    },
+                },
+            }
+            (config_home / "delegate-skills" / "config.json").write_text(json.dumps(stale_fleet, indent=2))
+            (home / ".claude" / "settings.json").write_text(json.dumps({"model": "claude-sonnet-5[1m]", "env": {}}, indent=2))
+
+            rows = [
+                {"id": "codex-luna", "context_length": 872000},
+                {"id": "codex-sol", "context_length": 872000},
+                {"id": "claude-sonnet-5", "context_length": 1000000},
+                {"id": "agy-gemini-flash", "context_length": 1000000},
+                {"id": "codex-5.5", "context_length": 272000},
+            ]
+            result = namespace["reconcile_home"](home, config_home, policy_path, rows, catalog_valid=True)
+            self.assertEqual(result["status"], "applied")
+            reconciled_fleet = json.loads((config_home / "delegate-skills" / "config.json").read_text())
+            # implement must have promoted to codex-luna and retained preferred
+            self.assertEqual(reconciled_fleet["lanes"]["implement"]["model"], "codex-luna[1m]")
+            self.assertIn("preferred", reconciled_fleet["lanes"]["implement"])
+            # review must have promoted to codex-sol and retained preferred
+            self.assertEqual(reconciled_fleet["lanes"]["review"]["model"], "codex-sol[1m]")
+            self.assertIn("preferred", reconciled_fleet["lanes"]["review"])
+
+    def test_fleet_model_drift_auto_approves_when_policy_enabled(self):
+        with tempfile.TemporaryDirectory(prefix="fleet-drift-test-") as temp_dir:
+            temp_root = Path(temp_dir)
+            home = temp_root / "home"
+            config_home = temp_root / "config"
+            (home / ".claude" / "cache").mkdir(parents=True, mode=0o700)
+            (config_home / "delegate-skills").mkdir(parents=True, mode=0o755)
+
+            policy = json.loads((ROOT / "config/provider-policy.json").read_text())
+            policy["autoApproveProposals"] = True
+            (config_home / "delegate-skills" / "provider-policy.json").write_text(json.dumps(policy, indent=2))
+
+            fleet = {
+                "version": "delegate-fleet.v1",
+                "lanes": {
+                    "implement": {
+                        "implementer": "claude",
+                        "model": "codex-luna[1m]",
+                    },
+                },
+            }
+            (config_home / "delegate-skills" / "config.json").write_text(json.dumps(fleet, indent=2))
+            (home / ".claude" / "settings.json").write_text(json.dumps({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://omniroute.example.com",
+                    "ANTHROPIC_AUTH_TOKEN": "secret-test-token",
+                }
+            }, indent=2))
+
+            cache = {
+                "format": "claude-agents-config.provider-cache.v1",
+                "provider": "omniroute",
+                "endpoint": "https://omniroute.example.com",
+                "account": hashlib.sha256(b"secret-test-token").hexdigest()[:24],
+                "fetched_at": int(time.time()),
+                "models": [
+                    {"id": "codex-luna", "context_length": 872000},
+                    {"id": "codex-sol", "context_length": 872000},
+                ],
+            }
+            (home / ".claude" / "cache" / "omniroute-models-cache.json").write_text(json.dumps(cache, indent=2))
+
+            env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+            drift_script = ROOT / "scripts/fleet-model-drift.py"
+            proc = subprocess.run(
+                [sys.executable, str(drift_script), "--home", str(home), "--config-home", str(config_home)],
+                capture_output=True, text=True, env=env, check=False
+            )
+            self.assertEqual(proc.returncode, 0)
+            proposal = json.loads((home / ".claude" / "fleet-model-proposal.json").read_text())
+            self.assertEqual(proposal["decision"], "approved")
+            self.assertTrue(proposal.get("auto_approved"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

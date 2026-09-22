@@ -5,6 +5,7 @@
   "oneMContextThreshold": 872000,
   "contextSuffix": "[1m]",
   "discoveryApproved": false,
+  "autoApproveProposals": true,
   "namespaceAliases": [
     "wecansync"
   ],

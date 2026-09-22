@@ -371,16 +371,26 @@ def family_approved(model: object, policy: dict) -> bool:
 def candidate_list(config: object) -> list[str]:
     if not isinstance(config, dict):
         return []
-    values = [config.get("model")]
+    values: list[str] = []
+    preferred = config.get("preferred")
+    if isinstance(preferred, list):
+        for val in preferred:
+            if isinstance(val, str) and val.strip():
+                values.append(val.strip())
+    primary = config.get("model")
+    if isinstance(primary, str) and primary.strip() and primary.strip() not in values:
+        values.append(primary.strip())
     fallbacks = config.get("fallbacks")
     if isinstance(fallbacks, list):
-        values.extend(fallbacks)
-    return list(dict.fromkeys(value.strip() for value in values if isinstance(value, str) and value.strip()))
+        for fb in fallbacks:
+            if isinstance(fb, str) and fb.strip() and fb.strip() not in values:
+                values.append(fb.strip())
+    return list(dict.fromkeys(values))
 
 
 def eligible_candidates(config: object, available: dict[str, dict], policy: dict) -> tuple[list[str], list[str]]:
     """Return live approved candidates and candidates needing a decision."""
-    candidates = candidate_list(config)[:MAX_FALLBACK_CANDIDATES]
+    candidates = candidate_list(config)
     eligible = [model for model in candidates if family_approved(model, policy) and model in available]
     pending = [model for model in candidates if not family_approved(model, policy)]
     return eligible, pending

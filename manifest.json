@@ -174,7 +174,7 @@
     },
     {
       "path": "bin/claude-fleet-setup",
-      "sha256": "a732e33a61c38f1ffe4140ef9733bbb84b09211e09bc0931b412dfcdb2e5dc2b",
+      "sha256": "f6c9ac5636035c8e596424a4d0f38a857a02b20401f6513b25edd048c225f57f",
       "mode": "0o755"
     },
     {
@@ -194,12 +194,12 @@
     },
     {
       "path": "config/delegate-fleet.json",
-      "sha256": "7ee112f54a45fa3e7ea143c734afe77d04e5e61ef185d170dbe329066037addb",
+      "sha256": "67616dd115604704ffc95338d40efe1bd0477931e5a29f8f9977b08e2067d57a",
       "mode": "0o644"
     },
     {
       "path": "config/provider-policy.json",
-      "sha256": "4713cd5a59cf74e16cbc3af1eb885014e1bc314fbe938d4d4cef3b09ed9bd495",
+      "sha256": "c565e4ea507d6be9ab70d8a4c40781c288b35deb095a5a908c2bd2179504106a",
       "mode": "0o644"
     },
     {
@@ -224,12 +224,12 @@
     },
     {
       "path": "scripts/fleet-model-drift.py",
-      "sha256": "20baa1eb8e165b84cb0ee30ca87f4d9b02593d775892debee3d373a0515ec22a",
+      "sha256": "30180096145a9dbbf42a77547a124966030578d3f72709dc1128564c6a5c8cca",
       "mode": "0o755"
     },
     {
       "path": "scripts/fleet-reconcile.py",
-      "sha256": "00144b2c9feb77395299459815ac097a33e4bdf24807f4165e240401bb94c242",
+      "sha256": "5040a8dc59da1d499de0faa73f08b83bfbf66c042c2936911c1c15601ed48e98",
       "mode": "0o755"
     },
     {
@@ -239,7 +239,7 @@
     },
     {
       "path": "scripts/provider_catalog.py",
-      "sha256": "e8f73d110606b3a85d4abfdb5ded88f9c4c1bb50473ef2197dbebae86f091a79",
+      "sha256": "983ff4efc31e62996c362d23205b26a907f606c51a6bbe6173bd7c460a1e0b96",
       "mode": "0o755"
     },
     {
@@ -259,12 +259,12 @@
     },
     {
       "path": "scripts/sync-omniroute-models.mjs",
-      "sha256": "d56d2414eb989c829c5473227ad1367bfd54b689bcb7f606d74f2683846fa4e6",
+      "sha256": "08dd560b9991b89e42147aefa66424994dc94b5ef0b71688b9a467e1191f4d4a",
       "mode": "0o755"
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "dd1b652bed63bbec07aea70f75382f431dedf609f706beaa51df507d2936f693",
+      "sha256": "835bfbc7080fd751055cdf99ac4409dceabb12716b4c9263076125e99889af04",
       "mode": "0o755"
     },
     {

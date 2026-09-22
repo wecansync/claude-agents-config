@@ -120,10 +120,15 @@ def _main() -> int:
     previous = read_json(proposal_path)
     notice_state_path = home / ".claude" / "fleet-model-notice.json"
     notice_state = read_json(notice_state_path)
+    auto_approved = policy.get("autoApproveProposals") is True
+    decision = "approved" if auto_approved else (
+        previous.get("decision", "pending") if isinstance(previous, dict) and previous.get("models_hash") == models_hash else "pending"
+    )
     proposal = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "models_hash": models_hash,
-        "decision": previous.get("decision", "pending") if isinstance(previous, dict) and previous.get("models_hash") == models_hash else "pending",
+        "decision": decision,
+        "auto_approved": auto_approved,
         "fleet_config": str(config_home / "delegate-skills" / "config.json"),
         "missing_lane_models": missing,
         "fallback_resolutions": fallback_resolutions,
@@ -146,12 +151,18 @@ def _main() -> int:
     notice_hash = notice_state.get("models_hash") if isinstance(notice_state, dict) else None
     should_notice = bool(parts) and notice_hash != models_hash
     if should_notice:
-        decision_hint = "Run claude-fleet-setup with proposalHash and proposalDecision=approve/reject/supersede; no remapping is applied automatically."
-        notice = (
-            "Fleet model drift detected. Review "
-            f"{proposal_path}; {decision_hint} "
-            "Then run claude-fleet-sync and restart Claude Code. " + "; ".join(parts) + "."
-        )
+        if auto_approved:
+            notice = (
+                "Fleet models auto-reconciled; proposals auto-approved per policy. "
+                + "; ".join(parts) + "."
+            )
+        else:
+            decision_hint = "Run claude-fleet-setup with proposalHash and proposalDecision=approve/reject/supersede; no remapping is applied automatically."
+            notice = (
+                "Fleet model drift detected. Review "
+                f"{proposal_path}; {decision_hint} "
+                "Then run claude-fleet-sync and restart Claude Code. " + "; ".join(parts) + "."
+            )
         sys.stdout.write(notice + "\n")
         sys.stdout.flush()
         notice_payload = {"models_hash": models_hash, "notified_at": time.time()}

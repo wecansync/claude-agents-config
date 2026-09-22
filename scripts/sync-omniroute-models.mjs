@@ -326,7 +326,6 @@ async function run() {
     } else if (!discovery || !Array.isArray(discovery.rows)) {
       extraMessage = "Provider discovery is unavailable or stale; existing fleet and picker were preserved.";
     }
-    const driftNotice = discovery && Array.isArray(discovery.rows) ? runDriftDetector() : null;
     const reconcileResult = runReconcile();
     let syncResult = null;
     if (reconcileResult && !reconcileResult.error) {
@@ -335,6 +334,7 @@ async function run() {
         syncResult = runAgentSync();
       }
     }
+    const driftNotice = discovery && Array.isArray(discovery.rows) ? runDriftDetector() : null;
     return response(driftNotice, reconcileResult, extraMessage, syncResult);
   } finally {
     releaseSharedLock(lock);

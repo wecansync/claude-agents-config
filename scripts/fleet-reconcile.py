@@ -48,6 +48,39 @@ TRANSACTION_MARKER = ".fleet-reconcile-pending.json"
 TRANSACTION_FORMAT = "claude-agents-config.reconcile-transaction.v1"
 GATEWAY_MODEL_PREFIXES = ("agy-", "claude-", "codex-", "cursor-", "omniroute-", "openclaw-", "deepseek-")
 
+CANONICAL_LANE_PREFERRED: dict[str, list[str]] = {
+    "plan": ["claude-opus-5[1m]", "codex-sol[1m]", "agy-claude-opus[1m]"],
+    "plan-alt": ["codex-sol[1m]", "claude-opus-5[1m]", "agy-claude-opus[1m]"],
+    "implement": ["codex-luna[1m]", "claude-sonnet-5[1m]", "agy-gemini-flash[1m]"],
+    "implement-02-gemini-flash": ["agy-gemini-flash[1m]", "claude-sonnet-5[1m]"],
+    "implement-03-agy-opus": ["agy-claude-opus[1m]", "claude-sonnet-5[1m]"],
+    "implement-04-free-1m": ["omniroute-free-1m-ctx[1m]", "omniroute-free-256k-ctx"],
+    "implement-05-agy-sonnet": ["agy-claude-sonnet[1m]", "claude-sonnet-5[1m]"],
+    "implement-06-free-256k": ["omniroute-free-256k-ctx", "omniroute-free-1m-ctx[1m]"],
+    "implement-07-auto-128k": ["custom-auto", "omniroute-free-256k-ctx"],
+    "implement-08-atria-experimental": ["Atria", "claude-sonnet-5[1m]"],
+    "implement-09-codex-5-5": ["codex-5.5", "claude-sonnet-5[1m]"],
+    "implement-10-sonnet": ["claude-sonnet-5[1m]", "agy-gemini-flash[1m]"],
+    "implement-11-terra": ["codex-terra[1m]", "claude-sonnet-5[1m]"],
+    "implement-12-openclaw-free": ["openclaw-free", "omniroute-free-1m-ctx[1m]", "omniroute-free-256k-ctx"],
+    "implement-13-grok-no-cache": ["cursor-grok", "claude-sonnet-5[1m]"],
+    "review": ["codex-sol[1m]", "claude-opus-5[1m]", "agy-claude-opus[1m]"],
+    "review-02-opus": ["claude-opus-5[1m]", "codex-sol[1m]", "agy-claude-opus[1m]"],
+    "review-03-terra": ["codex-terra[1m]", "claude-opus-5[1m]", "codex-sol[1m]"],
+    "review-04-gemini": ["agy-gemini-pro[1m]", "claude-opus-5[1m]"],
+    "review-05-grok": ["cursor-grok", "claude-opus-5[1m]"],
+    "review-06-astra": ["codex-astra[1m]", "codex-sol[1m]", "claude-opus-5[1m]"],
+    "diagnose-static": ["codex-sol-max[1m]", "codex-sol[1m]", "claude-opus-5[1m]"],
+    "security-review": ["claude-opus-5[1m]", "agy-claude-opus[1m]", "codex-sol-max[1m]"],
+    "ui": ["agy-claude-opus[1m]", "claude-sonnet-5[1m]"],
+    "tests": ["agy-gemini-flash[1m]", "claude-sonnet-5[1m]"],
+    "docs": ["agy-claude-sonnet[1m]", "claude-sonnet-5[1m]"],
+    "explore-narrow": ["claude-haiku", "cursor-auto"],
+    "research-codebase": ["agy-gemini-pro[1m]", "claude-sonnet-5[1m]"],
+    "research-web": ["agy-gemini-pro[1m]", "claude-sonnet-5[1m]"],
+    "triage-static": ["cursor-auto", "claude-haiku"],
+}
+
 
 def read_json(path: Path, default: object = None) -> object:
     try:
@@ -442,7 +475,7 @@ def resolve_fleet(
         if not isinstance(config, dict):
             pending.append(f"{lane}: malformed lane configuration")
             continue
-        candidates = candidate_list(config)[:MAX_FALLBACK_CANDIDATES]
+        candidates = candidate_list(config)
         for model in candidates:
             if not family_approved(model, policy) and not allow_new_families:
                 pending.append(f"{lane}: unapproved model family {model}")
@@ -609,6 +642,16 @@ def reconcile_home(home: Path, config_home: Path, policy_path: Path, rows: list[
             policy = load_policy(policy_path)
             if not catalog_valid:
                 return {"status": "offline", "pending": ["provider catalog is stale, unavailable, or incomplete; existing fleet was preserved"], "lanes": len(fleet.get("lanes", {}))}
+            lanes = fleet.get("lanes")
+            if isinstance(lanes, dict):
+                for lane_name, lane_cfg in lanes.items():
+                    if isinstance(lane_cfg, dict) and "preferred" not in lane_cfg:
+                        if lane_name in CANONICAL_LANE_PREFERRED:
+                            lane_cfg["preferred"] = list(CANONICAL_LANE_PREFERRED[lane_name])
+                        else:
+                            cur = lane_cfg.get("model")
+                            fbs = lane_cfg.get("fallbacks") if isinstance(lane_cfg.get("fallbacks"), list) else []
+                            lane_cfg["preferred"] = [x for x in ([cur] + fbs) if isinstance(x, str) and x]
             resolved, picker, pending, catalog = resolve_fleet(fleet, settings, rows, policy)
         except CatalogError as exc:
             return {"status": "deferred", "pending": [str(exc)]}
