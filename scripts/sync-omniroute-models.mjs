@@ -292,6 +292,8 @@ function response(driftNotice, reconcileResult, extraMessage, syncResult) {
   if (reconcileResult?.summary) messages.push(reconcileResult.summary);
   if (syncResult?.error) messages.push(`Fleet agent synchronization failed: ${syncResult.error}.`);
   if (reconcileResult?.systemMessage) messages.push(reconcileResult.systemMessage);
+  const guide = "Commands: /model (switch model) | /fast (fast Opus) | /compact | /<skill-name> | ! <cmd> (interactive shell) | Tools: claude-fleet-setup --reconcile | claude-fleet-sync | claude-agents-doctor --check.";
+  messages.push(guide);
   const output = {};
   if (messages.length) output.systemMessage = messages.join(" ");
   if (driftNotice) {
