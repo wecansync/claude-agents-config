@@ -61,6 +61,12 @@
       "fallbackFamilies": ["claude"]
     },
     {
+      "name": "qwen",
+      "prefixes": ["qwen-"],
+      "approved": true,
+      "fallbackFamilies": ["claude"]
+    },
+    {
       "name": "named-custom",
       "exact": ["custom-auto", "Atria"],
       "approved": true,

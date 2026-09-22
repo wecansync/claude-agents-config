@@ -115,10 +115,12 @@
       "effort": "medium",
       "timeout": "2h",
       "fallbacks": [
+        "qwen-3.8-128k-ctx",
         "omniroute-free-256k-ctx"
       ],
       "preferred": [
         "custom-auto",
+        "qwen-3.8-128k-ctx",
         "omniroute-free-256k-ctx"
       ]
     },
@@ -358,11 +360,13 @@
       "effort": "medium",
       "readOnly": true,
       "fallbacks": [
-        "cursor-auto"
+        "cursor-auto",
+        "qwen-3.8-128k-ctx"
       ],
       "preferred": [
         "claude-haiku",
-        "cursor-auto"
+        "cursor-auto",
+        "qwen-3.8-128k-ctx"
       ]
     },
     "research-codebase": {
@@ -397,10 +401,12 @@
       "effort": "high",
       "readOnly": true,
       "fallbacks": [
+        "qwen-3.8-128k-ctx",
         "claude-haiku"
       ],
       "preferred": [
         "cursor-auto",
+        "qwen-3.8-128k-ctx",
         "claude-haiku"
       ]
     }

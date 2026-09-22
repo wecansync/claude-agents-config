@@ -1,74 +1,54 @@
 ---
 name: fleet-setup
-description: Set up, reconcile, and synchronize the delegate fleet based on provider models and proposals.
+description: Analyze current fleet against available provider models, show decisions, and prompt user with clear recommendations.
 ---
 
 # Fleet Setup & Reconciliation
 
-You are running the **fleet-setup** skill. Use this skill to inspect gateway provider models, review model drift proposals, reconcile delegate fleet lanes, and synchronize subagent definitions.
+You are running the **/fleet-setup** skill.
 
-## When to Run This Skill
-- A pending model proposal exists (`~/.claude/fleet-model-proposal.json`).
-- Provider gateway models changed (models added, removed, or restored).
-- The user requests to configure, review, or reconcile the 30 delegate fleet lanes.
-- You need to verify agent synchronization or test provider connectivity.
+## Core Directives
+1. **Output must be very small**: Output ONLY the key decisions, recommendation, and a quick question via `AskUserQuestion`. Never print large tables, raw JSON, long logs, or verbose markdown.
+2. **Strict & Actionable**: Tell the user exactly what will change so they know what to decide.
+3. **Full Model Utilization**: The fleet must contain and benefit from all available gateway models across its 30 lanes.
+4. **Interactive Decision**: Prompt the user with concrete options using `AskUserQuestion` before making changes.
+5. **Immediate Execution**: Apply the user's decision, verify with `claude-fleet-sync --check`, and return a 1-2 line confirmation.
 
-## Workflow
+## Execution Flow
 
-### 1. Inspect Current Fleet & Proposals
-Run the fleet inspection commands and read current state:
-1. Check fleet status:
-   ```bash
-   claude-fleet-setup --status
-   ```
-2. Read the pending proposal if present (`~/.claude/fleet-model-proposal.json`):
-   - Check if new models were discovered from the gateway.
-   - Check if any models were removed or restored.
-   - Check proposed lane adjustments (e.g. promoting `implement` to `codex-luna[1m]` or `review` to `codex-sol[1m]`).
-3. Check current fleet configuration in `~/.config/delegate-skills/config.json`.
+### Step 1: Analyze Fleet & Live Models (Silent)
+1. Read live provider models from `~/.claude/cache/omniroute-models-cache.json` (or run `claude-fleet-setup --status`).
+2. Read current fleet from `~/.config/delegate-skills/config.json`.
+3. Compare:
+   - Identify lanes currently on fallback models where higher-performing preferred models are live.
+   - Check if any live gateway models are unused by any lane.
+   - Check if any removed models need pruning.
 
-### 2. Present Summary & Review Options
-Present a clear, formatted comparison table to the user:
-- **Available Models**: Models currently live on the gateway.
-- **Lane Changes**:
-  - `Lane`: Name of the delegate fleet lane (e.g., `implement`, `plan`, `review`).
-  - `Current Model`: Active model currently assigned.
-  - `Target / Preferred Model`: Canonical preferred model or proposed upgrade/fallback.
-  - `Status`: Auto-promoted, downgraded, or pending approval.
-- **Pending Decisions**: Any unapproved model families or removed candidate models.
+### Step 2: Minimal Decision Summary & Prompt
+Print a concise summary (max 4-5 lines):
+- **Status**: e.g., "Current fleet: 30 lanes active. Gateway catalog: X live models."
+- **Key Decisions**:
+  - Promotions: Which primary lanes will upgrade to preferred models (e.g. `implement` -> `codex-luna[1m]`, `review` -> `codex-sol[1m]`).
+  - Model coverage: All live models are mapped across primary and alternate lanes.
+- **Recommendation**: State clear recommendation (e.g., "Recommended: Apply updates to maximize model performance and coverage.").
 
-If the user has specific preferences (e.g. assigning a particular model to a lane or approving a family), adjust the plan accordingly.
+Immediately invoke `AskUserQuestion`:
+- `header`: "Fleet Action"
+- `question`: "Update fleet to recommended configuration or keep current?"
+- `options`:
+  - `label`: "Apply Updates (Recommended)"
+    `description`: "Promote lanes to live preferred models and sync all 30 subagents."
+  - `label`: "Keep Current Fleet"
+    `description`: "Leave all current model assignments unchanged."
+  - `label`: "Customize Specific Lane"
+    `description`: "Manually adjust a specific lane assignment."
 
-### 3. Apply Reconciliation & Synchronize Agents
-Execute the reconciliation:
-1. Run live reconciliation:
-   ```bash
-   claude-fleet-setup --reconcile
-   ```
-   This will:
-   - Fetch the latest live models from the provider gateway.
-   - Evaluate persistent `preferred` hierarchies across all 30 lanes.
-   - Auto-promote returning preferred models and downgrade removed models.
-   - Prune stale models from `modelPicker` while preserving first-party/custom models.
-   - Synchronize all 30 agent definition files (`~/.claude/agents/fleet-*.md`).
-
-2. Verify agent synchronization:
-   ```bash
-   claude-fleet-sync --check
-   ```
-
-3. Verify fleet health:
-   ```bash
-   claude-agents-doctor --check
-   ```
-
-### 4. Report Final Status
-Summarize the resulting active model assignments for primary workflows:
-- `fleet-plan`: Planning & Architecture
-- `fleet-implement`: Feature Implementation & Bug Fixing
-- `fleet-review`: Code Review & Defect Auditing
-- `fleet-tests`: Test Creation & Investigation
-- `fleet-ui`: Interface & Layout
-- `fleet-security-review`: Security & Authentication Review
-
-Confirm that all 30 subagent definitions are updated, in sync, and ready for use.
+### Step 3: Execute Choice
+- **Apply Updates**:
+  1. Run `claude-fleet-setup --reconcile`.
+  2. Run `claude-fleet-sync --check`.
+  3. Output: "Fleet updated and synchronized: all 30 agents are ready."
+- **Keep Current Fleet**:
+  Output: "Fleet preserved unchanged."
+- **Customize Specific Lane**:
+  Ask which lane to edit, update `~/.config/delegate-skills/config.json`, run `claude-fleet-sync`, and confirm.
