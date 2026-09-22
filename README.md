@@ -28,19 +28,22 @@ construction tests, not a native Windows run.
 
 ## One-command installation
 
-The installer never changes a machine without an explicit action. Preview first:
+To install on a new device, simply clone and run `./install.sh`:
 
 ```bash
-./install.sh --dry-run --home /tmp/claude-test --prefix /tmp/claude-test
+git clone https://github.com/wecansync/claude-agents-config.git
+cd claude-agents-config
+./install.sh
 ```
 
-Apply to a normal user account without a gateway. This selects the explicit
-`direct-anthropic` profile: all 30 lanes use only first-party Claude model IDs,
-gateway-only automatic routing is not installed, and model discovery remains
-disabled. This mode is usable with a normal Anthropic login:
+The installer runs preflight integrity checks, sets up all 30 delegate fleet agents (`~/.claude/agents/fleet-*.md`), creates backups, and verifies system health:
+- If your environment already exports `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, it automatically configures the provider gateway profile.
+- Without gateway credentials, it automatically configures the `direct-anthropic` profile for use with standard Claude login.
+
+To preview changes without writing, pass `--dry-run`:
 
 ```bash
-./install.sh --apply
+./install.sh --dry-run
 ```
 
 For Linux/macOS, `XDG_CONFIG_HOME` is honored; use `--config-home DIR` when an

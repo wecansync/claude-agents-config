@@ -5,7 +5,7 @@
 ## 1. Fleet Commands & Configuration Management
 - `/fleet-setup` — Interactive fleet setup: inspect provider models, review model drift proposals, reconcile delegate fleet lanes, and synchronize agent files.
 - `claude-fleet-setup --reconcile` — One-shot CLI reconciliation: fetch live provider models, run bidirectional lane reconciliation, and synchronize agents without prompting.
-- `claude-fleet-setup --status` — Inspect current policy, pending proposals, and fleet status.
+- `claude-fleet-setup --show` — Inspect current policy, approved families, and fleet status.
 - `claude-fleet-sync` — Regenerate agent definition files (`~/.claude/agents/fleet-*.md`) from canonical configuration.
 - `claude-fleet-sync --check` — Verify that all 30 delegate agents match `config.json`.
 - `claude-agents-doctor --check` — Verify configuration health, permissions, and manifest integrity.
@@ -28,11 +28,18 @@ Delegate substantive work to the matching `fleet-*` subagent as a standing defau
 | Root-cause a failure from source | `fleet-diagnose-static` | `codex-sol[1m]` / `codex-sol-max[1m]` |
 | Sweep many files to understand a system | `fleet-research-codebase` | `agy-gemini-pro[1m]` |
 | Evaluate an external tool, library, or service, or check current docs | `fleet-research-web` | `agy-gemini-pro[1m]` |
-| Decide ownership, scope, and next action for an issue | `fleet-triage-static` | `cursor-auto` / `claude-haiku` |
+| Decide ownership, scope, and next action for an issue | `fleet-triage-static` | `qwen-3.8-128k-ctx` / `claude-haiku` |
 
 Do the work inline when it is a single obvious edit, a question already answered by context, a command whose output you need for your next step, or when the user explicitly requests not to use subagents. Dispatch when the task spans several files, needs real digging, or benefits from an independent model.
 
 Chain lanes when the work has stages: plan, then implement, then review. Run a second reviewer on a risky change. The primary `fleet-review` lane runs on Codex Sol; use `fleet-review-02-opus` on Claude Opus 5 as the standard fallback, and reserve `fleet-review-06-astra` on Codex Astra for very hard reviews involving security or trust boundaries, installer, migration, concurrency, data-loss risk, or conflicting findings. Model fallbacks are advisory and resolve only when the provider's picker row is live; they never edit the fleet map automatically. Numbered lanes (`fleet-implement-04-*`, `fleet-review-03-*`) are alternates — reach for one when the user names it, when a primary lane has failed twice, or when a genuinely independent model improves the check; state the reason.
+
+### Behavioral Debugging Over Model Swapping
+When a delegate subagent or task underperforms, do not immediately swap lanes or churn models. Model degradation is almost always a specification problem, not a capability problem. Follow the Behavioral Debugging Loop:
+1. **Observe & Classify**: Identify the concrete failure pattern and classify the defect mode.
+2. **Tighten Brief**: Refine the brief with minimal, falsifiable behavioral rules and exact constraints.
+3. **Software Verification**: Verify via deterministic software gates (tests, doctor checks, schema validators) rather than model self-attestation.
+Reserve lane or model switches strictly for verified structural capability gaps (context exhaustion, missing tool capabilities, incompatible protocols) or explicit user requests.
 
 ## 3. User Interaction & Operational Requirements
 - **Interactive Shell Execution**: If an action requires user interaction, authentication, or environment-specific terminal input (e.g., `gcloud auth login`, `gh auth login`, or interactive CLIs), suggest typing `! <command>` in the prompt so its output lands directly in the conversation.
@@ -55,6 +62,8 @@ Chain lanes when the work has stages: plan, then implement, then review. Run a s
 You own decomposition, briefs, integration, independent verification, commits, pushes, pull requests, releases, deployments, and every other outward-facing action.
 
 Each brief states the goal, scope, exclusions, applicable project instructions, verification commands, and report contract. Fleet agents omit CLAUDE.md to keep their context bounded, so the brief is their entire instruction boundary. They report touched files, commands with exit codes, measured outcomes, and unresolved risks — treat every report as a claim until you inspect the tree and rerun the checks yourself.
+
+Verification belongs in automated software gates (`claude-agents-doctor --check`, `claude-fleet-sync --check`, unit tests, lint passes, compiler exit codes), never human vigilance or model self-attestation.
 
 Parallel writable agents need disjoint file scopes or isolated worktrees. Static reviewers run in parallel freely. Fleet agents never spawn nested agents.
 

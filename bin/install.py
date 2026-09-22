@@ -1224,8 +1224,8 @@ def merge_settings(
     gateway_owned = False
     gateway_state = None
     if gateway_mode:
-        url = args.gateway_url or env.get("ANTHROPIC_BASE_URL")
-        token = gateway_token or env.get("ANTHROPIC_AUTH_TOKEN")
+        url = args.gateway_url or env.get("ANTHROPIC_BASE_URL") or os.environ.get("ANTHROPIC_BASE_URL")
+        token = gateway_token or env.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
         if not url or not token:
             fail("gateway mode requires both URL and token before any write")
         gateway_url_check(str(url))
@@ -1934,6 +1934,11 @@ def determine_gateway(args: argparse.Namespace, previous: dict, existing: dict, 
         # Credentials already present in settings are an intentional gateway
         # profile even when older metadata did not record gateway ownership.
         return True, "gateway (existing URL and token)"
+    env_url = os.environ.get("ANTHROPIC_BASE_URL")
+    env_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    if env_url and env_token:
+        gateway_url_check(env_url)
+        return True, "gateway (detected from environment)"
     if previous.get("gatewayKeysOwned"):
         fail("previously bundle-owned gateway settings are incomplete; provide --gateway-url and --gateway-token-env")
     return False, "direct Anthropic (no gateway)"
@@ -2030,6 +2035,10 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
             fail(f"apply failed ({exc!r}) and automatic rollback also failed ({rollback_exc!r}); backup retained at {backup}")
         return 1
     print(f"Installed Claude fleet bundle {version} ({profile}) under {home}")
+    in_path = str(bin_dir) in os.environ.get("PATH", "").split(os.pathsep)
+    if not in_path:
+        print(f"Tip: Add {bin_dir} to your PATH to run claude-fleet-setup, claude-fleet-sync, and claude-agents-doctor directly.")
+    print("Ready! Start working with: claude")
     return 0
 
 
@@ -2307,8 +2316,9 @@ def main() -> int:
     # overridden by an operator invoking the Python file directly.
     parser.add_argument("--bundle", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    # Default to apply when no explicit action flag is passed (e.g. ./install.sh on a new machine)
     if not any((args.apply, args.dry_run, args.check, args.uninstall, args.rollback)):
-        parser.error("choose an action explicitly: --dry-run, --apply, --check, --uninstall, or --rollback")
+        args.apply = True
     if args.uninstall and (args.gateway_url or args.gateway_token_env or args.enable_model_discovery):
         parser.error("gateway and discovery options do not apply to --uninstall")
     if args.rollback and (args.gateway_url or args.gateway_token_env or args.enable_model_discovery):
