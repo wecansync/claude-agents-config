@@ -8,6 +8,11 @@
       "readOnly": true,
       "fallbacks": [
         "codex-sol[1m]"
+      ],
+      "preferred": [
+        "claude-opus-5[1m]",
+        "codex-sol[1m]",
+        "agy-claude-opus[1m]"
       ]
     },
     "plan-alt": {
@@ -17,6 +22,11 @@
       "readOnly": true,
       "fallbacks": [
         "claude-opus-5[1m]"
+      ],
+      "preferred": [
+        "codex-sol[1m]",
+        "claude-opus-5[1m]",
+        "agy-claude-opus[1m]"
       ]
     },
     "implement": {
@@ -25,6 +35,11 @@
       "effort": "xhigh",
       "timeout": "2h",
       "fallbacks": [
+        "claude-sonnet-5[1m]",
+        "agy-gemini-flash[1m]"
+      ],
+      "preferred": [
+        "codex-luna[1m]",
         "claude-sonnet-5[1m]",
         "agy-gemini-flash[1m]"
       ]
@@ -36,6 +51,10 @@
       "timeout": "2h",
       "fallbacks": [
         "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "agy-gemini-flash[1m]",
+        "claude-sonnet-5[1m]"
       ]
     },
     "implement-03-agy-opus": {
@@ -44,6 +63,10 @@
       "effort": "xhigh",
       "timeout": "2h",
       "fallbacks": [
+        "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "agy-claude-opus[1m]",
         "claude-sonnet-5[1m]"
       ]
     },
@@ -54,6 +77,10 @@
       "timeout": "2h",
       "fallbacks": [
         "omniroute-free-256k-ctx"
+      ],
+      "preferred": [
+        "omniroute-free-1m-ctx[1m]",
+        "omniroute-free-256k-ctx"
       ]
     },
     "implement-05-agy-sonnet": {
@@ -62,6 +89,10 @@
       "effort": "high",
       "timeout": "2h",
       "fallbacks": [
+        "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "agy-claude-sonnet[1m]",
         "claude-sonnet-5[1m]"
       ]
     },
@@ -72,6 +103,10 @@
       "timeout": "2h",
       "fallbacks": [
         "omniroute-free-1m-ctx[1m]"
+      ],
+      "preferred": [
+        "omniroute-free-256k-ctx",
+        "omniroute-free-1m-ctx[1m]"
       ]
     },
     "implement-07-auto-128k": {
@@ -80,6 +115,10 @@
       "effort": "medium",
       "timeout": "2h",
       "fallbacks": [
+        "omniroute-free-256k-ctx"
+      ],
+      "preferred": [
+        "custom-auto",
         "omniroute-free-256k-ctx"
       ]
     },
@@ -90,6 +129,10 @@
       "timeout": "2h",
       "fallbacks": [
         "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "Atria",
+        "claude-sonnet-5[1m]"
       ]
     },
     "implement-09-codex-5-5": {
@@ -98,6 +141,10 @@
       "effort": "high",
       "timeout": "2h",
       "fallbacks": [
+        "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "codex-5.5",
         "claude-sonnet-5[1m]"
       ]
     },
@@ -108,6 +155,10 @@
       "timeout": "2h",
       "fallbacks": [
         "agy-gemini-flash[1m]"
+      ],
+      "preferred": [
+        "claude-sonnet-5[1m]",
+        "agy-gemini-flash[1m]"
       ]
     },
     "implement-11-terra": {
@@ -116,6 +167,10 @@
       "effort": "high",
       "timeout": "2h",
       "fallbacks": [
+        "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "codex-terra[1m]",
         "claude-sonnet-5[1m]"
       ]
     },
@@ -127,6 +182,11 @@
       "fallbacks": [
         "omniroute-free-1m-ctx[1m]",
         "omniroute-free-256k-ctx"
+      ],
+      "preferred": [
+        "openclaw-free",
+        "omniroute-free-1m-ctx[1m]",
+        "omniroute-free-256k-ctx"
       ]
     },
     "implement-13-grok-no-cache": {
@@ -135,6 +195,10 @@
       "effort": "xhigh",
       "timeout": "2h",
       "fallbacks": [
+        "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "cursor-grok",
         "claude-sonnet-5[1m]"
       ]
     },
@@ -145,7 +209,12 @@
         "claude-opus-5[1m]"
       ],
       "effort": "xhigh",
-      "readOnly": true
+      "readOnly": true,
+      "preferred": [
+        "codex-sol[1m]",
+        "claude-opus-5[1m]",
+        "agy-claude-opus[1m]"
+      ]
     },
     "review-02-opus": {
       "implementer": "claude",
@@ -154,6 +223,11 @@
       "readOnly": true,
       "fallbacks": [
         "codex-sol[1m]"
+      ],
+      "preferred": [
+        "claude-opus-5[1m]",
+        "codex-sol[1m]",
+        "agy-claude-opus[1m]"
       ]
     },
     "review-03-terra": {
@@ -163,6 +237,11 @@
       "readOnly": true,
       "fallbacks": [
         "claude-opus-5[1m]"
+      ],
+      "preferred": [
+        "codex-terra[1m]",
+        "claude-opus-5[1m]",
+        "codex-sol[1m]"
       ]
     },
     "review-04-gemini": {
@@ -172,6 +251,10 @@
       "readOnly": true,
       "fallbacks": [
         "claude-opus-5[1m]"
+      ],
+      "preferred": [
+        "agy-gemini-pro[1m]",
+        "claude-opus-5[1m]"
       ]
     },
     "review-05-grok": {
@@ -180,6 +263,10 @@
       "effort": "xhigh",
       "readOnly": true,
       "fallbacks": [
+        "claude-opus-5[1m]"
+      ],
+      "preferred": [
+        "cursor-grok",
         "claude-opus-5[1m]"
       ]
     },
@@ -191,7 +278,12 @@
       ],
       "description": "Frontier reviewer for very hard reviews. Use only when the user names it, when the change crosses a security or trust boundary, touches installer, migration, or concurrency paths, risks data loss, or when primary findings conflict.",
       "effort": "xhigh",
-      "readOnly": true
+      "readOnly": true,
+      "preferred": [
+        "codex-astra[1m]",
+        "codex-sol[1m]",
+        "claude-opus-5[1m]"
+      ]
     },
     "diagnose-static": {
       "implementer": "claude",
@@ -199,6 +291,11 @@
       "effort": "xhigh",
       "readOnly": true,
       "fallbacks": [
+        "claude-opus-5[1m]"
+      ],
+      "preferred": [
+        "codex-sol-max[1m]",
+        "codex-sol[1m]",
         "claude-opus-5[1m]"
       ]
     },
@@ -209,6 +306,11 @@
       "readOnly": true,
       "fallbacks": [
         "codex-sol-max[1m]"
+      ],
+      "preferred": [
+        "claude-opus-5[1m]",
+        "agy-claude-opus[1m]",
+        "codex-sol-max[1m]"
       ]
     },
     "ui": {
@@ -217,6 +319,10 @@
       "effort": "high",
       "timeout": "2h",
       "fallbacks": [
+        "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "agy-claude-opus[1m]",
         "claude-sonnet-5[1m]"
       ]
     },
@@ -227,6 +333,10 @@
       "timeout": "2h",
       "fallbacks": [
         "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "agy-gemini-flash[1m]",
+        "claude-sonnet-5[1m]"
       ]
     },
     "docs": {
@@ -235,6 +345,10 @@
       "effort": "medium",
       "timeout": "2h",
       "fallbacks": [
+        "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "agy-claude-sonnet[1m]",
         "claude-sonnet-5[1m]"
       ]
     },
@@ -245,6 +359,10 @@
       "readOnly": true,
       "fallbacks": [
         "cursor-auto"
+      ],
+      "preferred": [
+        "claude-haiku",
+        "cursor-auto"
       ]
     },
     "research-codebase": {
@@ -253,6 +371,10 @@
       "effort": "high",
       "readOnly": true,
       "fallbacks": [
+        "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "agy-gemini-pro[1m]",
         "claude-sonnet-5[1m]"
       ]
     },
@@ -263,6 +385,10 @@
       "readOnly": true,
       "fallbacks": [
         "claude-sonnet-5[1m]"
+      ],
+      "preferred": [
+        "agy-gemini-pro[1m]",
+        "claude-sonnet-5[1m]"
       ]
     },
     "triage-static": {
@@ -271,6 +397,10 @@
       "effort": "high",
       "readOnly": true,
       "fallbacks": [
+        "claude-haiku"
+      ],
+      "preferred": [
+        "cursor-auto",
         "claude-haiku"
       ]
     }
