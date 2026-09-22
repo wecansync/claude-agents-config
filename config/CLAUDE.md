@@ -2,13 +2,10 @@
 
 # Global System & Delegation Manual
 
-## 1. Quick Reference & Command Guide
-- `/model` — Switch active model, view context budgets, and browse available provider models.
-- `/fast` — Toggle fast mode (accelerated Claude Opus output).
-- `/compact` — Force compaction of the context window.
-- `/<skill-name>` — Run packaged skills (e.g. `/code-review`, `/implement`, `/diagnosing-bugs`, `/research`, `/tdd`).
-- `! <command>` — Execute shell commands directly in the conversation session (essential for interactive logins or manual checks).
-- `claude-fleet-setup --reconcile` — Fetch live provider models, run bidirectional lane reconciliation, and synchronize agents without prompting.
+## 1. Fleet Commands & Configuration Management
+- `/fleet-setup` — Interactive fleet setup: inspect provider models, review model drift proposals, reconcile delegate fleet lanes, and synchronize agent files.
+- `claude-fleet-setup --reconcile` — One-shot CLI reconciliation: fetch live provider models, run bidirectional lane reconciliation, and synchronize agents without prompting.
+- `claude-fleet-setup --status` — Inspect current policy, pending proposals, and fleet status.
 - `claude-fleet-sync` — Regenerate agent definition files (`~/.claude/agents/fleet-*.md`) from canonical configuration.
 - `claude-fleet-sync --check` — Verify that all 30 delegate agents match `config.json`.
 - `claude-agents-doctor --check` — Verify configuration health, permissions, and manifest integrity.

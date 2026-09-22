@@ -1475,6 +1475,7 @@ def managed_specs(
     add(claude / "sync-model-context.py", source_bytes(bundle, "scripts/sync-model-context.py"), 0o755, "home:.claude/sync-model-context.py")
     add(claude / "provider_catalog.py", source_bytes(bundle, PROVIDER_CATALOG_MODULE), 0o755, "home:.claude/provider_catalog.py")
     add(claude / "fleet-reconcile.py", source_bytes(bundle, RECONCILE_SCRIPT), 0o755, "home:.claude/fleet-reconcile.py")
+    add(claude / "skills" / "fleet-setup" / "SKILL.md", source_bytes(bundle, "skills/fleet-setup/SKILL.md"), 0o644, "home:.claude/skills/fleet-setup/SKILL.md")
     policy_data = source_bytes(bundle, PROVIDER_POLICY_PATH)
     existing_policy_path = fleet / "provider-policy.json"
     if existing_policy_path.is_file():
