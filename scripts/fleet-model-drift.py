@@ -68,7 +68,21 @@ def _main() -> int:
     config_home = resolve_config_home(argv, home)
     settings = read_json(home / ".claude" / "settings.json")
     policy = read_json(config_home / "delegate-skills" / "provider-policy.json")
-    fleet = read_json(config_home / "delegate-skills" / "config.json")
+    claude_fleet = home / ".claude" / "fleet.json"
+    legacy_fleet = config_home / "delegate-skills" / "config.json"
+    if claude_fleet.is_file() and legacy_fleet.is_file():
+        try:
+            if legacy_fleet.stat().st_mtime > claude_fleet.stat().st_mtime:
+                fleet_path = legacy_fleet
+            else:
+                fleet_path = claude_fleet
+        except Exception:
+            fleet_path = claude_fleet
+    elif claude_fleet.is_file():
+        fleet_path = claude_fleet
+    else:
+        fleet_path = legacy_fleet
+    fleet = read_json(fleet_path)
     if not isinstance(settings, dict) or not isinstance(policy, dict) or not isinstance(fleet, dict) or not isinstance(fleet.get("lanes"), dict):
         return 0
     try:
@@ -129,7 +143,7 @@ def _main() -> int:
         "models_hash": models_hash,
         "decision": decision,
         "auto_approved": auto_approved,
-        "fleet_config": str(config_home / "delegate-skills" / "config.json"),
+        "fleet_config": str(fleet_path),
         "missing_lane_models": missing,
         "fallback_resolutions": fallback_resolutions,
         "available_models_unused_by_fleet": unused,

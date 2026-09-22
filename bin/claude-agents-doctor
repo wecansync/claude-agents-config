@@ -294,7 +294,9 @@ def validate_agents(home: Path, config_root: Path, fleet: dict, settings: dict, 
     files = sorted(agents_dir.glob("fleet-*.md")) if agents_dir.is_dir() else []
     if len(files) != len(lanes):
         fail(errors, f"generated-agent count mismatch: expected {len(lanes)}, found {len(files)}")
-    fleet_path = config_root / "delegate-skills" / "config.json"
+    claude_fleet = home / ".claude" / "fleet.json"
+    legacy_fleet = config_root / "delegate-skills" / "config.json"
+    fleet_path = claude_fleet if claude_fleet.is_file() else legacy_fleet
     fleet_hash = sha256(fleet_path)[:16] if fleet_path.is_file() else ""
     # The installer hashes the exact bytes it writes.  Normalize equivalent JSON
     # only for legacy trees; current trees use the bytes hash checked below.
@@ -402,7 +404,9 @@ def check_target(home: Path, config_root: Path, bin_dir: Path, errors: list[str]
     manifest = installed_manifest(home, errors)
     check_installed_records(home, config_root, bin_dir, errors, manifest)
     settings_path = home / ".claude" / "settings.json"
-    fleet_path = config_root / "delegate-skills" / "config.json"
+    claude_fleet = home / ".claude" / "fleet.json"
+    legacy_fleet = config_root / "delegate-skills" / "config.json"
+    fleet_path = claude_fleet if claude_fleet.is_file() else legacy_fleet
     settings = read_json(settings_path, errors, "installed settings")
     fleet = read_json(fleet_path, errors, "installed fleet")
     metadata = read_json(home / ".claude" / ".claude-agents-config-install.json", errors, "installed metadata")
@@ -540,7 +544,10 @@ def main() -> int:
             print(f"  - {error}", file=sys.stderr)
         return 1
     bundle_text = f"; bundle={bundle}" if (args.bundle or (bundle / "manifest.json").is_file()) else ""
-    fleet_value = read_json(config_root / "delegate-skills" / "config.json", errors, "fleet") if (config_root / "delegate-skills" / "config.json").is_file() else None
+    claude_fleet = home / ".claude" / "fleet.json"
+    legacy_fleet = config_root / "delegate-skills" / "config.json"
+    fleet_target = claude_fleet if claude_fleet.is_file() else legacy_fleet
+    fleet_value = read_json(fleet_target, errors, "fleet") if fleet_target.is_file() else None
     lane_count = len(fleet_value.get("lanes", {})) if isinstance(fleet_value, dict) else 0
     print(f"claude-agents-doctor: PASS (home={home}; config={config_root}; lanes={lane_count}{bundle_text})")
     return 0

@@ -623,7 +623,20 @@ def reconcile_context(settings: dict, catalog: dict[str, dict]) -> tuple[dict, s
 
 def reconcile_home(home: Path, config_home: Path, policy_path: Path, rows: list[dict], *, catalog_valid: bool = True, already_locked: bool = False) -> dict:
     settings_path = home / ".claude" / "settings.json"
-    fleet_path = config_home / "delegate-skills" / "config.json"
+    claude_fleet = home / ".claude" / "fleet.json"
+    legacy_fleet = config_home / "delegate-skills" / "config.json"
+    if claude_fleet.is_file() and legacy_fleet.is_file():
+        try:
+            if legacy_fleet.stat().st_mtime > claude_fleet.stat().st_mtime:
+                fleet_path = legacy_fleet
+            else:
+                fleet_path = claude_fleet
+        except Exception:
+            fleet_path = claude_fleet
+    elif claude_fleet.is_file():
+        fleet_path = claude_fleet
+    else:
+        fleet_path = legacy_fleet
     # Trusted roots must come from the resolved --home/--config-home argv so a
     # damaged transaction marker can never expand its own write boundary. An
     # external --config-home (a fleet path outside home/.claude) is legitimate
@@ -663,7 +676,11 @@ def reconcile_home(home: Path, config_home: Path, policy_path: Path, rows: list[
         if changed:
             updates: dict[Path, tuple[bytes, int]] = {}
             if resolved != fleet:
-                updates[fleet_path] = (json_bytes(resolved), 0o644)
+                resolved_bytes = json_bytes(resolved)
+                if claude_fleet.is_file() or not legacy_fleet.is_file():
+                    updates[claude_fleet] = (resolved_bytes, 0o644)
+                if legacy_fleet.is_file() or not claude_fleet.is_file():
+                    updates[legacy_fleet] = (resolved_bytes, 0o644)
             if new_settings != settings:
                 updates[settings_path] = (json_bytes(new_settings), 0o600)
             transactional_write(home, updates, trusted_roots)

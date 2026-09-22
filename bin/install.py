@@ -1536,6 +1536,7 @@ def managed_specs(
             policy_data = json_bytes(source_policy)
     add(fleet / "provider-policy.json", policy_data, 0o644, "config:provider-policy.json")
     add(fleet / "config.json", fleet_bytes, 0o644, "config:delegate-fleet.json")
+    add(claude / "fleet.json", fleet_bytes, 0o644, "home:.claude/fleet.json")
     add(fleet / "generate-claude-agents.mjs", source_bytes(bundle, "scripts/generate-claude-agents.mjs"), 0o755, "config:generate-claude-agents.mjs")
     for name, data in sorted(agent_bytes.items()):
         add(claude / "agents" / name, data, 0o644, f"home:.claude/agents/{name}")
