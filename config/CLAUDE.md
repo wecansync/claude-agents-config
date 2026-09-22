@@ -3,7 +3,7 @@
 # Global System & Delegation Manual
 
 ## 1. Fleet Commands & Configuration Management
-- `/fleet-setup` — Interactive fleet setup: inspect provider models, review model drift proposals, reconcile delegate fleet lanes, and synchronize agent files.
+- `/fleet-setup` — Interactive fleet setup & context optimization: inspect live provider models, audit agents/skills/plugins for token bloat, interview core roles, suggest custom agents, and reconcile fleet lanes.
 - `claude-fleet-setup --reconcile` — One-shot CLI reconciliation: fetch live provider models, run bidirectional lane reconciliation, and synchronize agents without prompting.
 - `claude-fleet-setup --show` — Inspect current policy, approved families, and fleet status.
 - `claude-fleet-sync` — Regenerate agent definition files (`~/.claude/agents/fleet-*.md`) from canonical configuration.

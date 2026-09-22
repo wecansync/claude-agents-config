@@ -189,7 +189,7 @@
     },
     {
       "path": "config/CLAUDE.md",
-      "sha256": "bf3c61bc3729c0ca424b03a32e5505fda3e4d7e5d1a5f2db715b420d2a778f21",
+      "sha256": "10deb13ff8837cd161c821828c74a7de28bf09009dbd0c8420c6dcd188163993",
       "mode": "0o644"
     },
     {
@@ -264,7 +264,7 @@
     },
     {
       "path": "skills/fleet-setup/SKILL.md",
-      "sha256": "b057010b791476a651082fd1421af46bcdd9bb9bc5c526bd6329f725617aadc3",
+      "sha256": "bb4bf516b9342bba6173f903a82b1d3354968627c1f969cbd4bf5cf290ea66f0",
       "mode": "0o644"
     },
     {
