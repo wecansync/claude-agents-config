@@ -9,7 +9,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "6a9ba1550c7e6c739bfe99d11a98ea7f4b58d8dddca4dc2ee436cfea9b7d3920",
+      "sha256": "14ce87a1bcdaa691bd5ba3e1c3b303d74e093c40fbc52ba2f6645dcfcabc12aa",
       "mode": "0o644"
     },
     {
@@ -184,12 +184,12 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "423c06ee1002c88b075cd400baa886eb91d17ca606a3f95bf8d9a8ae15d8b843",
+      "sha256": "225d10edede6ba7044666d9f10430a5ea774a5671c1449607b8974f27a6b90fd",
       "mode": "0o755"
     },
     {
       "path": "config/CLAUDE.md",
-      "sha256": "9666526d250219b93550d08420c37ee95684f255058b9b1eaffbda0cd4b6753c",
+      "sha256": "517b75e4d3b91a010ce911279daeefe496b83715834aee315e95ab83b8491a69",
       "mode": "0o644"
     },
     {
@@ -209,17 +209,17 @@
     },
     {
       "path": "install.cmd",
-      "sha256": "f93771cf7e968ec9b03afd5a0d7f9755270f06c8454f3699a1279e8bf9dcbb0c",
+      "sha256": "31fcd93f86e3302aefd452ac621b9c37a92f007ec71fcf8c0231c8494c596532",
       "mode": "0o644"
     },
     {
       "path": "install.ps1",
-      "sha256": "b4e35e21a4d92186b868cc04a8681380b8b781534d966e2cef92a2610ad2eab3",
+      "sha256": "f1e8b936f2665fc492b8b2328780395c229080745301d69777924ec694691d33",
       "mode": "0o644"
     },
     {
       "path": "install.sh",
-      "sha256": "5086a9984869b4e9703bd846922335113fb3dccbf1fe1e0b41bdc3dd67248d0b",
+      "sha256": "6d01c168ca103c00d3c0935ecf0462e5fabed9dd6c0475b7b30327b323343cb5",
       "mode": "0o755"
     },
     {

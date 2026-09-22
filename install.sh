@@ -14,4 +14,8 @@ else
   exit 1
 fi
 INSTALLER="$($PYTHON_BIN -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parent / "bin" / "install.py")' "${BASH_SOURCE[0]}")"
-exec "$PYTHON_BIN" "$INSTALLER" "$@"
+ARGS=("$@")
+if [ "$#" -eq 0 ]; then
+  ARGS=("--apply")
+fi
+exec "$PYTHON_BIN" "$INSTALLER" "${ARGS[@]}"
