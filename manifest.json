@@ -184,12 +184,12 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "317cbf8d0d9f79f69f4cf66a3336fb9eb3a58e68f20a757098aa0fd8cbb838d3",
+      "sha256": "423c06ee1002c88b075cd400baa886eb91d17ca606a3f95bf8d9a8ae15d8b843",
       "mode": "0o755"
     },
     {
       "path": "config/CLAUDE.md",
-      "sha256": "ed5b83e95785f6d260e4041fdb1cab238b593310bb38c81dbabf1a28abf944ca",
+      "sha256": "9666526d250219b93550d08420c37ee95684f255058b9b1eaffbda0cd4b6753c",
       "mode": "0o644"
     },
     {
@@ -259,8 +259,13 @@
     },
     {
       "path": "scripts/sync-omniroute-models.mjs",
-      "sha256": "3c021c114a029ba1b04ea09a24d9cfa2e7a269e07e2f846e5e9286ea33b0387c",
+      "sha256": "7e72ce21b9dad8411c415b68fe2bd2eccbe42875daf7130e24d6150f85f539a3",
       "mode": "0o755"
+    },
+    {
+      "path": "skills/fleet-setup/SKILL.md",
+      "sha256": "7065a0f18a84755fd7c9ab9ce6738c78b1268bf4757f540990a3dc88019888a7",
+      "mode": "0o644"
     },
     {
       "path": "tests/test_provider_repair.py",

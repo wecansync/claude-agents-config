@@ -288,12 +288,23 @@ function runAgentSync() {
 function response(driftNotice, reconcileResult, extraMessage, syncResult) {
   const messages = [];
   if (extraMessage) messages.push(extraMessage);
-  if (reconcileResult?.error) messages.push(`Fleet reconciliation failed and was skipped: ${reconcileResult.error}.`);
-  if (reconcileResult?.summary) messages.push(reconcileResult.summary);
+  if (reconcileResult?.error) {
+    messages.push(`Fleet reconciliation failed: ${reconcileResult.error}. Action required: Run /fleet-setup or claude-fleet-setup --reconcile to repair.`);
+  } else if (reconcileResult?.summary) {
+    messages.push(reconcileResult.summary);
+  }
   if (syncResult?.error) messages.push(`Fleet agent synchronization failed: ${syncResult.error}.`);
   if (reconcileResult?.systemMessage) messages.push(reconcileResult.systemMessage);
-  const guide = "Commands: /model (switch model) | /fast (fast Opus) | /compact | /<skill-name> | ! <cmd> (interactive shell) | Tools: claude-fleet-setup --reconcile | claude-fleet-sync | claude-agents-doctor --check.";
-  messages.push(guide);
+
+  const hasPending = Array.isArray(reconcileResult?.pending) && reconcileResult.pending.length > 0;
+  if (hasPending) {
+    messages.push("Action required: Run /fleet-setup to review and approve pending model proposals.");
+  } else if (reconcileResult?.status === "applied") {
+    messages.push("Fleet auto-reconciled and synchronized. Run /fleet-setup to inspect or reconfigure lanes.");
+  } else if (reconcileResult?.status === "unchanged") {
+    messages.push("No action required (run /fleet-setup to reconfigure).");
+  }
+
   const output = {};
   if (messages.length) output.systemMessage = messages.join(" ");
   if (driftNotice) {
