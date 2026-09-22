@@ -38,6 +38,7 @@ from provider_catalog import (
     load_policy,
     model_family,
     release_lock,
+    strip_known_suffix,
 )
 
 MIN_CONTEXT = 100_000
@@ -597,9 +598,20 @@ def reconcile_settings(
 def reconcile_context(settings: dict, catalog: dict[str, dict]) -> tuple[dict, str | None, int | None]:
     result = copy.deepcopy(settings)
     active = result.get("model")
-    if not isinstance(active, str) or active not in catalog:
+    if not isinstance(active, str):
         return result, None, None
-    budget = safe_context(catalog[active].get("context_length"))
+    clean = strip_known_suffix(active.strip())
+    model_info = catalog.get(active.strip())
+    if not isinstance(model_info, dict):
+        if clean in catalog:
+            model_info = catalog[clean]
+        elif f"{clean}[1m]" in catalog:
+            model_info = catalog[f"{clean}[1m]"]
+        else:
+            model_info = next((row for runtime_id, row in catalog.items() if strip_known_suffix(runtime_id) == clean), None)
+    if not isinstance(model_info, dict):
+        return result, None, None
+    budget = safe_context(model_info.get("context_length"))
     if budget is None:
         return result, None, None
     env = result.get("env")
@@ -607,18 +619,16 @@ def reconcile_context(settings: dict, catalog: dict[str, dict]) -> tuple[dict, s
         return result, None, None
     top = compact_control(result.get("autoCompactWindow"))
     env_value = compact_control(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW"))
-    existing = [value for value in (top, env_value) if value is not None]
-    # Never inflate a user-selected lower budget. A pair owned by this bundle
-    # may be reduced to the active route's conservative budget, but both controls
-    # stay equal so startup cannot choose conflicting limits.
-    target = min([budget, *existing]) if existing else budget
-    changed = top != target or env_value != target
+    max_context = env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+    target = budget
+    changed = top != target or env_value != target or max_context != str(target)
     if changed:
         result["autoCompactWindow"] = target
         env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(target)
+        env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(target)
     if not changed:
         return result, None, target
-    return result, f"Verified paired compaction controls for {active}: {target} tokens. Restart Claude Code to apply startup-only limits.", target
+    return result, f"Verified paired compaction controls and context for {active}: {target} tokens. Restart Claude Code to apply startup-only limits.", target
 
 
 def reconcile_home(home: Path, config_home: Path, policy_path: Path, rows: list[dict], *, catalog_valid: bool = True, already_locked: bool = False) -> dict:

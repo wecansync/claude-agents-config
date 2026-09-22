@@ -229,7 +229,7 @@
     },
     {
       "path": "scripts/fleet-reconcile.py",
-      "sha256": "ad4aae14a649d1418a996674124e82f00b680aa9e9ef42e425edd95163b3e571",
+      "sha256": "3689c44c94b1b10ef55f7d17983899f16e422b10215d68e04f84d6ee797a670e",
       "mode": "0o755"
     },
     {
@@ -254,7 +254,7 @@
     },
     {
       "path": "scripts/sync-model-context.py",
-      "sha256": "4fa86d760d6b0cdfcd9664ded0cba0fc8cddd0d5698c4ccb24a1c632a5d38a0c",
+      "sha256": "d55aedc83b8fa8e457d8284d74ed5bf6cb401834825e90544a94598a03f08597",
       "mode": "0o755"
     },
     {
@@ -269,7 +269,7 @@
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "b3f4f84a17d6fab52d801a41933aa930694845cbaab68c9050119c11eaf09281",
+      "sha256": "3330299e3ab0a2f9f9a75ef34d70ded750667e4b028373e68b43025a22508934",
       "mode": "0o755"
     },
     {

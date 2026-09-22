@@ -473,11 +473,13 @@ class ProviderRepairTests(unittest.TestCase):
         self.assertIn("Restart Claude Code", notice)
         context_script = (ROOT / "scripts/sync-model-context.py").read_text()
         self.assertIn('latest["autoCompactWindow"] = compact_budget', context_script)
-        lower = {"model": "codex-5.5", "autoCompactWindow": 180000, "env": {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "180000"}}
-        preserved, _, lower_budget = namespace["reconcile_context"](lower, {"codex-5.5": {"context_length": 272000}})
-        self.assertEqual(lower_budget, 180000)
-        self.assertEqual(preserved["autoCompactWindow"], 180000)
-        self.assertEqual(preserved["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "180000")
+        # Test bidirectional scaling: expanding back up to 1M model from reduced state
+        lower = {"model": "agy-gemini-flash[1m]", "autoCompactWindow": 244800, "env": {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "244800", "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "244800"}}
+        expanded, _, high_budget = namespace["reconcile_context"](lower, {"agy-gemini-flash[1m]": {"context_length": 1000000}})
+        self.assertEqual(high_budget, 800000)
+        self.assertEqual(expanded["autoCompactWindow"], 800000)
+        self.assertEqual(expanded["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "800000")
+        self.assertEqual(expanded["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "800000")
 
     def test_proposal_path_follows_resolved_home_not_policy_directory(self):
         with tempfile.TemporaryDirectory(prefix="fleet proposal ") as raw:
@@ -1389,17 +1391,18 @@ class FleetSetupComprehensiveTests(unittest.TestCase):
         self.config_dir = self.home / ".config" / "delegate-skills"
         self.config_dir.mkdir(parents=True)
 
-        self.catalog_data = {
-            "format": "claude-agents-config.provider-cache.v1",
-            "provider": "omniroute",
-            "models": [
-                {"id": "claude-opus-5", "display_name": "Opus 5", "context_length": 1000000},
-                {"id": "claude-sonnet-5", "display_name": "Sonnet 5", "context_length": 1000000},
-                {"id": "claude-haiku", "display_name": "Haiku", "context_length": 200000},
-                {"id": "agy-gemini-flash", "display_name": "Gemini Flash", "context_length": 1000000},
-                {"id": "codex-5.5", "display_name": "Codex 5.5", "context_length": 272000},
-            ]
-        }
+        self.endpoint = "https://omniroute.example.com"
+        self.token = "test-token"
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from provider_catalog import cache_payload
+        self.models_list = [
+            {"id": "claude-opus-5", "display_name": "Opus 5", "context_length": 1000000},
+            {"id": "claude-sonnet-5", "display_name": "Sonnet 5", "context_length": 1000000},
+            {"id": "claude-haiku", "display_name": "Haiku", "context_length": 200000},
+            {"id": "agy-gemini-flash", "display_name": "Gemini Flash", "context_length": 1000000},
+            {"id": "codex-5.5", "display_name": "Codex 5.5", "context_length": 272000},
+        ]
+        self.catalog_data = cache_payload(self.models_list, self.endpoint, self.token)
         (self.cache_dir / "omniroute-models-cache.json").write_text(json.dumps(self.catalog_data, indent=2))
 
         self.settings_data = {
@@ -1407,6 +1410,8 @@ class FleetSetupComprehensiveTests(unittest.TestCase):
             "advisorModel": "codex-sol-max[1m]",
             "autoCompactWindow": 235929,
             "env": {
+                "ANTHROPIC_BASE_URL": self.endpoint,
+                "ANTHROPIC_AUTH_TOKEN": self.token,
                 "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "235929",
                 "ANTHROPIC_DEFAULT_OPUS_MODEL": "dead-opus-model",
                 "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5[1m]",
@@ -1424,11 +1429,7 @@ class FleetSetupComprehensiveTests(unittest.TestCase):
         }
         (self.claude_dir / "settings.json").write_text(json.dumps(self.settings_data, indent=2))
 
-        self.policy_data = {
-            "format": "provider-policy.v1",
-            "approvedFamilies": ["anthropic", "google", "openai"]
-        }
-        (self.config_dir / "provider-policy.json").write_text(json.dumps(self.policy_data, indent=2))
+        (self.config_dir / "provider-policy.json").write_text((ROOT / "config/provider-policy.json").read_text())
 
         self.fleet_data = {
             "format": "claude-agents-config.fleet.v1",
@@ -1562,6 +1563,52 @@ class FleetSetupComprehensiveTests(unittest.TestCase):
 
         active = sorted([s.name for s in self.skills_dir.iterdir()])
         self.assertEqual(active, ["code-review", "fleet-setup"])
+
+    def test_model_switch_bidirectional_context_scaling(self) -> None:
+        sync_script = ROOT / "scripts" / "sync-model-context.py"
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+
+        from provider_catalog import cache_payload
+        models_256k = list(self.models_list)
+        models_256k.append({"id": "omniroute-free-256k-ctx", "display_name": "Free 256K", "context_length": 262144})
+        catalog_with_256k = cache_payload(models_256k, self.endpoint, self.token)
+        (self.cache_dir / "omniroute-models-cache.json").write_text(json.dumps(catalog_with_256k, indent=2))
+
+        proc_256k = subprocess.run(
+            [sys.executable, str(sync_script), "--home", str(self.home), "--config-home", str(self.home / ".config")],
+            input=json.dumps({"hook_event_name": "PostModelSwitch", "to_model": "omniroute-free-256k-ctx"}),
+            capture_output=True, text=True, env=env, check=False
+        )
+        self.assertEqual(proc_256k.returncode, 0)
+        self.assertIn("235929", proc_256k.stdout)
+        settings_256k = json.loads((self.claude_dir / "settings.json").read_text())
+        self.assertEqual(settings_256k["autoCompactWindow"], 235929)
+        self.assertEqual(settings_256k["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "235929")
+        self.assertEqual(settings_256k["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "235929")
+
+        proc_1m = subprocess.run(
+            [sys.executable, str(sync_script), "--home", str(self.home), "--config-home", str(self.home / ".config")],
+            input=json.dumps({"hook_event_name": "PostModelSwitch", "to_model": "agy-gemini-flash[1m]"}),
+            capture_output=True, text=True, env=env, check=False
+        )
+        self.assertEqual(proc_1m.returncode, 0)
+        self.assertIn("800000", proc_1m.stdout)
+        settings_1m = json.loads((self.claude_dir / "settings.json").read_text())
+        self.assertEqual(settings_1m["autoCompactWindow"], 800000)
+        self.assertEqual(settings_1m["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "800000")
+        self.assertEqual(settings_1m["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "800000")
+
+        proc_claude = subprocess.run(
+            [sys.executable, str(sync_script), "--home", str(self.home), "--config-home", str(self.home / ".config")],
+            input=json.dumps({"hook_event_name": "PostModelSwitch", "to_model": "claude-opus-5[1m]"}),
+            capture_output=True, text=True, env=env, check=False
+        )
+        self.assertEqual(proc_claude.returncode, 0)
+        self.assertIn("800000", proc_claude.stdout)
+        settings_claude = json.loads((self.claude_dir / "settings.json").read_text())
+        self.assertEqual(settings_claude["autoCompactWindow"], 800000)
+        self.assertEqual(settings_claude["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "800000")
+        self.assertEqual(settings_claude["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "800000")
 
 
 if __name__ == "__main__":
