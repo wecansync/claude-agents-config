@@ -174,7 +174,7 @@
     },
     {
       "path": "bin/claude-fleet-setup",
-      "sha256": "755ab79972c405b00aa05238be71950390a7561b97b357e8a8657f161371c8d1",
+      "sha256": "571dc2dc52bc51a64c58ee0db2761dbf301d9b3f610ea54249c001d3a855de59",
       "mode": "0o755"
     },
     {
@@ -189,7 +189,7 @@
     },
     {
       "path": "config/CLAUDE.md",
-      "sha256": "10deb13ff8837cd161c821828c74a7de28bf09009dbd0c8420c6dcd188163993",
+      "sha256": "e681dbb2b60d627d0dc9535ceb0012cefbf06f23da89e06f8c57b24dd5d4e4c2",
       "mode": "0o644"
     },
     {
@@ -264,12 +264,12 @@
     },
     {
       "path": "skills/fleet-setup/SKILL.md",
-      "sha256": "bb4bf516b9342bba6173f903a82b1d3354968627c1f969cbd4bf5cf290ea66f0",
+      "sha256": "2d67bc48a7161299d704a5a8575e2a0bb3947c3d0401cb939f8be6b29646ee29",
       "mode": "0o644"
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "835bfbc7080fd751055cdf99ac4409dceabb12716b4c9263076125e99889af04",
+      "sha256": "b3f4f84a17d6fab52d801a41933aa930694845cbaab68c9050119c11eaf09281",
       "mode": "0o755"
     },
     {

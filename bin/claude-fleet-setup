@@ -11,6 +11,9 @@ import getpass
 import json
 import os
 from pathlib import Path
+import re
+import shlex
+import shutil
 import sys
 import tempfile
 
@@ -245,6 +248,540 @@ def run_setup_reconciliation_and_sync(home: Path, config_home: Path, policy_file
             pass
 
 
+def clean_model_id(model_id: str | None) -> str:
+    if not model_id or not isinstance(model_id, str):
+        return ""
+    return re.sub(r"\[.*?\]$", "", model_id).strip()
+
+
+def get_live_catalog_info(home: Path) -> dict:
+    catalog_cache = home / ".claude" / "cache" / "omniroute-models-cache.json"
+    cache_data = read_json(catalog_cache, {})
+    models = []
+    if isinstance(cache_data, dict) and isinstance(cache_data.get("models"), list):
+        models = cache_data["models"]
+
+    live_ids = set()
+    clean_ids = set()
+    models_summary = []
+    for m in models:
+        if isinstance(m, dict) and isinstance(m.get("id"), str):
+            mid = m["id"]
+            live_ids.add(mid)
+            clean = clean_model_id(mid)
+            clean_ids.add(clean)
+            models_summary.append({
+                "id": mid,
+                "clean_id": clean,
+                "display_name": m.get("display_name", mid),
+                "description": m.get("description", ""),
+                "context_length": m.get("context_length", 0),
+            })
+    return {
+        "models": models_summary,
+        "live_ids": live_ids,
+        "clean_ids": clean_ids,
+        "cache_file": str(catalog_cache),
+        "exists": catalog_cache.is_file(),
+    }
+
+
+def categorize_agent(name: str) -> str:
+    stem = name.lower()
+    if any(k in stem for k in [
+        "database", "mcp", "security", "testing", "accessibility", "compliance",
+        "solidity", "incident", "threat", "data-remediation", "onboarding",
+        "firmware", "api", "code-reviewer", "code-simplifier", "filament",
+        "model-qa", "reality-checker", "evidence-collector", "code-architect",
+        "code-explorer"
+    ]):
+        return "engineering"
+    elif any(k in stem for k in [
+        "unity", "unreal", "godot", "roblox", "blender", "game", "level-designer",
+        "audio", "narrative", "technical-artist", "spatial", "visionos", "xr-"
+    ]):
+        return "game_dev"
+    elif any(k in stem for k in [
+        "wechat", "feishu", "china", "tiktok", "e-commerce", "livestream",
+        "kuaishou", "bilibili", "xiaohongshu", "zhihu", "douyin", "baidu", "weibo"
+    ]):
+        return "niche_ops"
+    return "other"
+
+
+def categorize_skill(name: str) -> str:
+    if name == "fleet-setup":
+        return "core"
+    elif name.endswith("-delegate") or name == "delegate-setup":
+        return "delegates"
+    elif name in [
+        "codebase-design", "code-review", "diagnosing-bugs", "domain-modeling",
+        "tdd", "resolving-merge-conflicts", "prototype", "research",
+        "writing-for-agents", "simplify", "run", "security-review"
+    ]:
+        return "engineering"
+    return "other"
+
+
+def audit_fleet(home: Path, config_home: Path, policy_file: Path) -> dict:
+    catalog_info = get_live_catalog_info(home)
+    live_ids = catalog_info["live_ids"]
+    clean_ids = catalog_info["clean_ids"]
+
+    settings_file = home / ".claude" / "settings.json"
+    settings = read_json(settings_file, {})
+    if not isinstance(settings, dict):
+        settings = {}
+
+    stale_models = {}
+    current_advisor = settings.get("advisorModel")
+    if current_advisor:
+        if clean_model_id(current_advisor) not in clean_ids and current_advisor not in live_ids:
+            stale_models["advisorModel"] = {"current": current_advisor, "reason": "Not in live provider catalog"}
+
+    current_model = settings.get("model")
+    if current_model:
+        if clean_model_id(current_model) not in clean_ids and current_model not in live_ids:
+            stale_models["model"] = {"current": current_model, "reason": "Not in live provider catalog"}
+
+    env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+    for env_key, val in env.items():
+        if (env_key in {
+            "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"
+        } or env_key.endswith("_MODEL")) and isinstance(val, str):
+            if clean_model_id(val) not in clean_ids and val not in live_ids:
+                stale_models[f"env.{env_key}"] = {"current": val, "reason": "Not in live provider catalog"}
+
+    compact_window = env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") or settings.get("autoCompactWindow")
+    try:
+        compact_int = int(compact_window) if compact_window is not None else 0
+    except (ValueError, TypeError):
+        compact_int = 0
+    compaction_optimal = compact_int >= 800000
+
+    hook_validations = []
+    hooks_dict = settings.get("hooks", {})
+    if isinstance(hooks_dict, dict):
+        for event, entries in hooks_dict.items():
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, dict) and isinstance(entry.get("hooks"), list):
+                        for h in entry["hooks"]:
+                            if isinstance(h, dict) and isinstance(h.get("command"), str):
+                                cmd = h["command"]
+                                clean_cmd = cmd.split("#")[0].strip()
+                                parts = shlex.split(clean_cmd) if clean_cmd else []
+                                exe = parts[0] if parts else ""
+                                script_target = parts[1] if len(parts) > 1 and any(parts[1].endswith(ext) for ext in [".py", ".js", ".mjs", ".sh"]) else None
+                                exe_ok = bool((Path(exe).is_file() and os.access(exe, os.X_OK)) or shutil.which(exe))
+                                script_ok = bool(Path(script_target).is_file()) if script_target else True
+                                is_valid = exe_ok and script_ok
+                                error = None
+                                if not exe_ok:
+                                    error = f"Executable not found or not executable: {exe}"
+                                elif not script_ok:
+                                    error = f"Script target not found on disk: {script_target}"
+                                hook_validations.append({
+                                    "event": event,
+                                    "command": cmd,
+                                    "executable": exe,
+                                    "script_target": script_target,
+                                    "valid": is_valid,
+                                    "error": error
+                                })
+
+    statusline = settings.get("subagentStatusLine")
+    if isinstance(statusline, dict) and isinstance(statusline.get("command"), str):
+        cmd = statusline["command"]
+        clean_cmd = cmd.split("#")[0].strip()
+        parts = shlex.split(clean_cmd) if clean_cmd else []
+        exe = parts[0] if parts else ""
+        script_target = parts[1] if len(parts) > 1 and any(parts[1].endswith(ext) for ext in [".py", ".js", ".mjs", ".sh"]) else None
+        exe_ok = bool((Path(exe).is_file() and os.access(exe, os.X_OK)) or shutil.which(exe))
+        script_ok = bool(Path(script_target).is_file()) if script_target else True
+        is_valid = exe_ok and script_ok
+        error = None
+        if not exe_ok:
+            error = f"Executable not found or not executable: {exe}"
+        elif not script_ok:
+            error = f"Script target not found on disk: {script_target}"
+        hook_validations.append({
+            "event": "subagentStatusLine",
+            "command": cmd,
+            "executable": exe,
+            "script_target": script_target,
+            "valid": is_valid,
+            "error": error
+        })
+
+    agents_dir = home / ".claude" / "agents"
+    fleet_count = 0
+    non_fleet_by_cat = {"engineering": [], "game_dev": [], "niche_ops": [], "other": []}
+    non_fleet_total_tokens = 0
+
+    if agents_dir.is_dir():
+        for f in sorted(agents_dir.glob("*.md")):
+            if f.name.startswith("fleet-"):
+                fleet_count += 1
+            else:
+                cat = categorize_agent(f.name)
+                try:
+                    text = f.read_text(encoding="utf-8")
+                    tokens = len(text) // 4
+                except OSError:
+                    tokens = 0
+                non_fleet_total_tokens += tokens
+                non_fleet_by_cat.setdefault(cat, []).append({
+                    "name": f.name,
+                    "category": cat,
+                    "est_tokens": tokens
+                })
+
+    archived_agents_dir = home / ".claude" / "agents-archived"
+    archived_by_cat = {"engineering": 0, "game_dev": 0, "niche_ops": 0, "other": 0}
+    archived_total = 0
+    if archived_agents_dir.is_dir():
+        for f in archived_agents_dir.glob("*.md"):
+            cat = categorize_agent(f.name)
+            archived_by_cat[cat] = archived_by_cat.get(cat, 0) + 1
+            archived_total += 1
+
+    skills_dir = home / ".claude" / "skills"
+    skills_by_cat = {"core": [], "delegates": [], "engineering": [], "other": []}
+    if skills_dir.is_dir():
+        for s in sorted(skills_dir.iterdir()):
+            cat = categorize_skill(s.name)
+            skills_by_cat.setdefault(cat, []).append(s.name)
+
+    archived_skills_dir = home / ".claude" / "skills-archived"
+    archived_skills_count = len(list(archived_skills_dir.iterdir())) if archived_skills_dir.is_dir() else 0
+
+    fleet_config_file = home / ".claude" / "fleet.json"
+    if not fleet_config_file.is_file():
+        fleet_config_file = config_home / "delegate-skills" / "config.json"
+    fleet_config = read_json(fleet_config_file, {})
+    lanes = fleet_config.get("lanes", {}) if isinstance(fleet_config, dict) else {}
+    assigned_models = set()
+    for lane_id, lane_cfg in lanes.items():
+        if isinstance(lane_cfg, dict) and lane_cfg.get("model"):
+            assigned_models.add(clean_model_id(lane_cfg["model"]))
+
+    utilized_live_models = [m for m in catalog_info["models"] if m["clean_id"] in assigned_models or m["id"] in assigned_models]
+    unutilized_live_models = [m for m in catalog_info["models"] if m["clean_id"] not in assigned_models and m["id"] not in assigned_models]
+
+    return {
+        "format": "claude-fleet-audit.v1",
+        "live_models": {
+            "total": len(catalog_info["models"]),
+            "models": catalog_info["models"],
+            "cache_exists": catalog_info["exists"],
+        },
+        "settings": {
+            "file": str(settings_file),
+            "model": current_model,
+            "advisor_model": current_advisor,
+            "stale_models": stale_models,
+            "compaction": {
+                "current": compact_window,
+                "recommended": 800000,
+                "optimal": compaction_optimal
+            }
+        },
+        "hooks": {
+            "total": len(hook_validations),
+            "all_valid": all(h["valid"] for h in hook_validations) if hook_validations else True,
+            "validations": hook_validations
+        },
+        "agents": {
+            "fleet_active_lanes": fleet_count,
+            "non_fleet_active_count": sum(len(items) for items in non_fleet_by_cat.values()),
+            "non_fleet_est_tokens": non_fleet_total_tokens,
+            "non_fleet_by_category": non_fleet_by_cat,
+            "archived_total": archived_total,
+            "archived_by_category": archived_by_cat
+        },
+        "skills": {
+            "total_active": sum(len(items) for items in skills_by_cat.values()),
+            "by_category": skills_by_cat,
+            "archived_total": archived_skills_count
+        },
+        "fleet_coverage": {
+            "total_lanes": len(lanes),
+            "utilized_live_models_count": len(utilized_live_models),
+            "unutilized_live_models_count": len(unutilized_live_models),
+            "utilized_models": [m["id"] for m in utilized_live_models],
+            "unutilized_models": [m["id"] for m in unutilized_live_models],
+            "full_coverage": len(unutilized_live_models) == 0 and len(catalog_info["models"]) > 0
+        }
+    }
+
+
+def print_audit_summary(audit: dict) -> None:
+    live = audit["live_models"]
+    st = audit["settings"]
+    hk = audit["hooks"]
+    ag = audit["agents"]
+    sk = audit["skills"]
+    fc = audit["fleet_coverage"]
+
+    print("=== Claude Fleet & Context Audit ===")
+    print(f"[Live Models] {live['total']} models online in provider catalog.")
+
+    stale = st.get("stale_models", {})
+    if stale:
+        print("[Settings] Stale models detected:")
+        for k, info in stale.items():
+            print(f"  - {k}: '{info['current']}' ({info['reason']})")
+    else:
+        print(f"[Settings] All configured models are valid live models (active model: {st.get('model')}, advisor: {st.get('advisor_model')}).")
+
+    comp = st.get("compaction", {})
+    if not comp.get("optimal"):
+        print(f"  - Compaction window: {comp.get('current')} (recommend 800000 for 1M context models).")
+    else:
+        print(f"  - Compaction window: {comp.get('current')} (optimal).")
+
+    if hk.get("all_valid"):
+        print(f"[Hooks] {hk.get('total')}/{hk.get('total')} hook commands verified (executables & script targets present on disk).")
+    else:
+        invalid = [h for h in hk.get("validations", []) if not h.get("valid")]
+        print(f"[Hooks] {len(invalid)} hook issue(s) detected:")
+        for inv in invalid:
+            print(f"  - [{inv.get('event')}] {inv.get('error')}")
+
+    print(f"[Agents] {ag.get('fleet_active_lanes')} Fleet lanes active.")
+    non_fleet_total = ag.get("non_fleet_active_count", 0)
+    tokens_est = ag.get("non_fleet_est_tokens", 0)
+    print(f"  Non-fleet agents: {non_fleet_total} active (~{tokens_est:,} prompt tokens overhead)")
+    cats = ag.get("non_fleet_by_category", {})
+    eng_count = len(cats.get("engineering", []))
+    game_count = len(cats.get("game_dev", []))
+    niche_count = len(cats.get("niche_ops", []))
+    other_count = len(cats.get("other", []))
+    print(f"  - Engineering & QA tools: {eng_count} active (Database Optimizer, MCP Builder, Security, Accessibility, etc.) [Keep recommended]")
+    print(f"  - Game Dev & 3D: {game_count} active (Unity, Unreal, Godot, Roblox, Blender, XR) [Archive candidate]")
+    print(f"  - Niche & Regional ops: {niche_count} active (WeChat, Feishu) [Archive candidate]")
+    print(f"  - Other specialized: {other_count} active")
+    if ag.get("archived_total", 0) > 0:
+        print(f"  (Archived: {ag.get('archived_total')} agents in ~/.claude/agents-archived/)")
+
+    print(f"[Skills] {sk.get('total_active')} active skills (Core: {len(sk.get('by_category', {}).get('core', []))}, Delegates: {len(sk.get('by_category', {}).get('delegates', []))}, Engineering: {len(sk.get('by_category', {}).get('engineering', []))}, Other: {len(sk.get('by_category', {}).get('other', []))}).")
+
+    if fc.get("full_coverage"):
+        print(f"[Fleet Coverage] {fc.get('total_lanes')} lanes active · 100% gateway model coverage ({fc.get('utilized_live_models_count')}/{fc.get('utilized_live_models_count')} models utilized).")
+    else:
+        print(f"[Fleet Coverage] {fc.get('total_lanes')} lanes active · {fc.get('utilized_live_models_count')} models utilized, {fc.get('unutilized_live_models_count')} unutilized.")
+
+
+def fix_settings(home: Path, advisor_override: str | None = None, target_compaction: int = 800000) -> dict:
+    settings_file = home / ".claude" / "settings.json"
+    settings = read_json(settings_file, {})
+    if not isinstance(settings, dict):
+        raise SystemExit(f"settings file not found or invalid: {settings_file}")
+
+    catalog_info = get_live_catalog_info(home)
+    live_ids = catalog_info["live_ids"]
+    clean_ids = catalog_info["clean_ids"]
+
+    changes = []
+
+    current_advisor = settings.get("advisorModel")
+    if advisor_override:
+        settings["advisorModel"] = advisor_override
+        changes.append(f"advisorModel: {current_advisor} -> {advisor_override}")
+    elif current_advisor:
+        clean = clean_model_id(current_advisor)
+        if clean not in clean_ids and current_advisor not in live_ids:
+            replacement = None
+            for cand in ["claude-opus-5[1m]", "claude-opus-5", "codex-5.5", "agy-claude-opus[1m]"]:
+                if cand in live_ids or clean_model_id(cand) in clean_ids:
+                    replacement = cand
+                    break
+            if not replacement and catalog_info["models"]:
+                replacement = catalog_info["models"][0]["id"]
+            if replacement:
+                settings["advisorModel"] = replacement
+                changes.append(f"advisorModel: replaced stale '{current_advisor}' with live '{replacement}'")
+
+    current_model = settings.get("model")
+    if current_model:
+        clean = clean_model_id(current_model)
+        if clean not in clean_ids and current_model not in live_ids:
+            replacement = None
+            for cand in ["claude-sonnet-5[1m]", "claude-sonnet-5", "agy-gemini-flash[1m]", "agy-claude-sonnet[1m]"]:
+                if cand in live_ids or clean_model_id(cand) in clean_ids:
+                    replacement = cand
+                    break
+            if not replacement and catalog_info["models"]:
+                replacement = catalog_info["models"][0]["id"]
+            if replacement:
+                settings["model"] = replacement
+                changes.append(f"model: replaced stale '{current_model}' with live '{replacement}'")
+
+    env = settings.setdefault("env", {})
+    if isinstance(env, dict):
+        env_models = {
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": ["claude-opus-5[1m]", "agy-claude-opus[1m]"],
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": ["claude-sonnet-5[1m]", "agy-claude-sonnet[1m]"],
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": ["claude-haiku"],
+            "ANTHROPIC_SMALL_FAST_MODEL": ["claude-haiku"],
+        }
+        for env_key, preferred_list in env_models.items():
+            val = env.get(env_key)
+            if isinstance(val, str):
+                clean = clean_model_id(val)
+                if clean not in clean_ids and val not in live_ids:
+                    rep = None
+                    for p in preferred_list:
+                        if p in live_ids or clean_model_id(p) in clean_ids:
+                            rep = p
+                            break
+                    if rep:
+                        env[env_key] = rep
+                        changes.append(f"env.{env_key}: replaced stale '{val}' with live '{rep}'")
+
+        if env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") != str(target_compaction):
+            old_val = env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(target_compaction)
+            changes.append(f"env.CLAUDE_CODE_AUTO_COMPACT_WINDOW: {old_val} -> {target_compaction}")
+
+    if settings.get("autoCompactWindow") != target_compaction:
+        old_val = settings.get("autoCompactWindow")
+        settings["autoCompactWindow"] = target_compaction
+        changes.append(f"autoCompactWindow: {old_val} -> {target_compaction}")
+
+    if changes:
+        atomic_json(settings_file, settings, 0o600)
+    return {"changed": bool(changes), "changes": changes}
+
+
+def archive_agents(home: Path, targets: list[str]) -> dict:
+    agents_dir = home / ".claude" / "agents"
+    archived_dir = home / ".claude" / "agents-archived"
+    if not agents_dir.is_dir():
+        return {"archived": 0, "files": []}
+
+    archived_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    normalized_targets = [t.strip().lower() for t in targets if t.strip()]
+
+    moved = []
+    for f in sorted(agents_dir.glob("*.md")):
+        if f.name.startswith("fleet-"):
+            continue
+        cat = categorize_agent(f.name)
+        should_archive = False
+        if "all" in normalized_targets:
+            should_archive = True
+        elif cat in normalized_targets:
+            should_archive = True
+        elif f.name.lower() in normalized_targets or f.stem.lower() in normalized_targets:
+            should_archive = True
+
+        if should_archive:
+            dest = archived_dir / f.name
+            f.rename(dest)
+            moved.append({"name": f.name, "category": cat})
+
+    return {"archived": len(moved), "files": moved}
+
+
+def restore_agents(home: Path, targets: list[str]) -> dict:
+    agents_dir = home / ".claude" / "agents"
+    archived_dir = home / ".claude" / "agents-archived"
+    if not archived_dir.is_dir():
+        return {"restored": 0, "files": []}
+
+    agents_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    normalized_targets = [t.strip().lower() for t in targets if t.strip()]
+
+    restored = []
+    for f in sorted(archived_dir.glob("*.md")):
+        cat = categorize_agent(f.name)
+        should_restore = False
+        if "all" in normalized_targets:
+            should_restore = True
+        elif cat in normalized_targets:
+            should_restore = True
+        elif f.name.lower() in normalized_targets or f.stem.lower() in normalized_targets:
+            should_restore = True
+
+        if should_restore:
+            dest = agents_dir / f.name
+            f.rename(dest)
+            restored.append({"name": f.name, "category": cat})
+
+    return {"restored": len(restored), "files": restored}
+
+
+def archive_skills(home: Path, targets: list[str]) -> dict:
+    skills_dir = home / ".claude" / "skills"
+    archived_dir = home / ".claude" / "skills-archived"
+    if not skills_dir.is_dir():
+        return {"archived": 0, "files": []}
+
+    archived_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    normalized_targets = [t.strip().lower() for t in targets if t.strip()]
+
+    moved = []
+    for s in sorted(skills_dir.iterdir()):
+        if s.name == "fleet-setup":
+            continue
+        cat = categorize_skill(s.name)
+        should_archive = False
+        if "all" in normalized_targets:
+            should_archive = True
+        elif cat in normalized_targets:
+            should_archive = True
+        elif s.name.lower() in normalized_targets:
+            should_archive = True
+
+        if should_archive:
+            dest = archived_dir / s.name
+            if s.is_symlink():
+                link_target = os.readlink(s)
+                s.unlink()
+                (archived_dir / s.name).symlink_to(link_target)
+            else:
+                s.rename(dest)
+            moved.append({"name": s.name, "category": cat})
+
+    return {"archived": len(moved), "files": moved}
+
+
+def restore_skills(home: Path, targets: list[str]) -> dict:
+    skills_dir = home / ".claude" / "skills"
+    archived_dir = home / ".claude" / "skills-archived"
+    if not archived_dir.is_dir():
+        return {"restored": 0, "files": []}
+
+    skills_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    normalized_targets = [t.strip().lower() for t in targets if t.strip()]
+
+    restored = []
+    for s in sorted(archived_dir.iterdir()):
+        cat = categorize_skill(s.name)
+        should_restore = False
+        if "all" in normalized_targets:
+            should_restore = True
+        elif cat in normalized_targets:
+            should_restore = True
+        elif s.name.lower() in normalized_targets:
+            should_restore = True
+
+        if should_restore:
+            dest = skills_dir / s.name
+            if s.is_symlink():
+                link_target = os.readlink(s)
+                s.unlink()
+                (skills_dir / s.name).symlink_to(link_target)
+            else:
+                s.rename(dest)
+            restored.append({"name": s.name, "category": cat})
+
+    return {"restored": len(restored), "files": restored}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Review provider-aware fleet policy")
     parser.add_argument("--home")
@@ -254,13 +791,77 @@ def main() -> int:
     parser.add_argument("--decisions", help="JSON decision file for noninteractive setup")
     parser.add_argument("--show", action="store_true", help="print effective policy without changing it")
     parser.add_argument("--reconcile", action="store_true", help="reconcile fleet against live provider models and sync agents")
+    parser.add_argument("--audit", action="store_true", help="scan configuration, models, hooks, agents, and skills for health and bloat")
+    parser.add_argument("--json", action="store_true", help="output audit results as JSON")
+    parser.add_argument("--fix-settings", action="store_true", help="replace stale models in settings.json and optimize compaction")
+    parser.add_argument("--advisor", help="override advisorModel when fixing settings")
+    parser.add_argument("--compaction", type=int, default=800000, help="target compaction window when fixing settings (default 800000)")
+    parser.add_argument("--archive-agents", help="comma-separated agent filenames or categories (engineering, game_dev, niche_ops, other, all) to archive")
+    parser.add_argument("--restore-agents", help="comma-separated agent filenames or categories to restore from archive")
+    parser.add_argument("--archive-skills", help="comma-separated skill names or categories (core, delegates, engineering, other, all) to archive")
+    parser.add_argument("--restore-skills", help="comma-separated skill names or categories to restore from archive")
     parser.add_argument("--lock-timeout", type=float, default=4.0, help=argparse.SUPPRESS)
     args = parser.parse_args()
     home = resolved_home(args)
     path = policy_path(args)
+    config_home = Path(args.config_home).expanduser().resolve() if args.config_home else Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")).resolve()
+
+    if args.audit:
+        res = audit_fleet(home, config_home, path)
+        if args.json:
+            print(json.dumps(res, ensure_ascii=False, indent=2))
+        else:
+            print_audit_summary(res)
+        return 0
+
+    did_action = False
+    if args.fix_settings:
+        fix_res = fix_settings(home, advisor_override=args.advisor, target_compaction=args.compaction)
+        if fix_res["changed"]:
+            print("Settings updated:")
+            for c in fix_res["changes"]:
+                print(f"  - {c}")
+        else:
+            print("Settings already optimal; no changes required.")
+        did_action = True
+
+    if args.archive_agents:
+        targets = [t.strip() for t in args.archive_agents.split(",") if t.strip()]
+        res = archive_agents(home, targets)
+        print(f"Archived {res['archived']} agents to {home / '.claude' / 'agents-archived'}.")
+        for item in res["files"]:
+            print(f"  - {item['name']} ({item['category']})")
+        did_action = True
+
+    if args.restore_agents:
+        targets = [t.strip() for t in args.restore_agents.split(",") if t.strip()]
+        res = restore_agents(home, targets)
+        print(f"Restored {res['restored']} agents to {home / '.claude' / 'agents'}.")
+        for item in res["files"]:
+            print(f"  - {item['name']} ({item['category']})")
+        did_action = True
+
+    if args.archive_skills:
+        targets = [t.strip() for t in args.archive_skills.split(",") if t.strip()]
+        res = archive_skills(home, targets)
+        print(f"Archived {res['archived']} skills to {home / '.claude' / 'skills-archived'}.")
+        for item in res["files"]:
+            print(f"  - {item['name']} ({item['category']})")
+        did_action = True
+
+    if args.restore_skills:
+        targets = [t.strip() for t in args.restore_skills.split(",") if t.strip()]
+        res = restore_skills(home, targets)
+        print(f"Restored {res['restored']} skills to {home / '.claude' / 'skills'}.")
+        for item in res["files"]:
+            print(f"  - {item['name']} ({item['category']})")
+        did_action = True
+
     if args.reconcile:
-        config_home = Path(args.config_home).expanduser().resolve() if args.config_home else Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")).resolve()
         run_setup_reconciliation_and_sync(home, config_home, path)
+        return 0
+
+    if did_action and not args.show:
         return 0
     try:
         policy = load_policy(path)
