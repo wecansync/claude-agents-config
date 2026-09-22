@@ -5,6 +5,13 @@ import json
 import sys
 from datetime import datetime, timezone
 
+# Windows pipes and consoles default to a legacy encoding while status content
+# may contain non-ASCII text; emit stdout as UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 
 def compact_number(value):
     if not isinstance(value, (int, float)):

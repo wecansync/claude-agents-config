@@ -27,6 +27,13 @@ from provider_catalog import (  # noqa: E402
     load_policy,
 )
 
+# Windows pipes and consoles default to a legacy encoding while drift notices
+# may quote non-ASCII provider text; emit stdout as UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 MAX_NOTICE_ITEMS = 8
 
 

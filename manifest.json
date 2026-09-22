@@ -169,12 +169,12 @@
     },
     {
       "path": "bin/claude-agents-doctor",
-      "sha256": "7b3fd8ed5e627dd5d4b087d18d4c5744b5b3770a58d3d655336f707527790cc2",
+      "sha256": "c378dbca97978dc405c83ca52ca14edb37e2297acc2eecca75a26d128d407511",
       "mode": "0o755"
     },
     {
       "path": "bin/claude-fleet-setup",
-      "sha256": "f6c9ac5636035c8e596424a4d0f38a857a02b20401f6513b25edd048c225f57f",
+      "sha256": "755ab79972c405b00aa05238be71950390a7561b97b357e8a8657f161371c8d1",
       "mode": "0o755"
     },
     {
@@ -184,7 +184,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "0a2669ed4a79db02927c01ee783c4a859d1bc3cde7f741d2a3c5c906633ae1f0",
+      "sha256": "ce8a0ad4dff26879bd3629e3638b76e73f1575565ecf2086391a9111d8a97c85",
       "mode": "0o755"
     },
     {
@@ -224,7 +224,7 @@
     },
     {
       "path": "scripts/fleet-model-drift.py",
-      "sha256": "9dfa2a23448b6306f0d9440ae393712af7b6be7fa672704dee9ac503594f6675",
+      "sha256": "a595d1887e742373cd4b083f76dcfd7b6985574f15abfe4b7a86e8f536f7e108",
       "mode": "0o755"
     },
     {
@@ -234,12 +234,12 @@
     },
     {
       "path": "scripts/generate-claude-agents.mjs",
-      "sha256": "ceb04d530cae3fcc3f034532d3d1cc97a4470d01fd7915ce8dfc9bb69eb242e0",
+      "sha256": "23336b13480228e435342881427bf2d14235b3fdc1946bd16ee638d55aa84264",
       "mode": "0o755"
     },
     {
       "path": "scripts/provider_catalog.py",
-      "sha256": "983ff4efc31e62996c362d23205b26a907f606c51a6bbe6173bd7c460a1e0b96",
+      "sha256": "88032b252b144052b246609f1ecd4d84e8b9307ea7c0536718adf1e76f00b3f7",
       "mode": "0o755"
     },
     {
@@ -249,12 +249,12 @@
     },
     {
       "path": "scripts/subagent-statusline.py",
-      "sha256": "75d7647bd8a690b6597ccb3f255508b73ce56d5940aaabe7787abf9f128f27d7",
+      "sha256": "384fd3ff385aeb2ab2e01076c839366af3fe906e0d57a79d0ade8383003aeb24",
       "mode": "0o755"
     },
     {
       "path": "scripts/sync-model-context.py",
-      "sha256": "8ddde5bf95ac80ee28330f71f67148c56bc742c8c6026e90e5f2817b16d1631c",
+      "sha256": "4fa86d760d6b0cdfcd9664ded0cba0fc8cddd0d5698c4ccb24a1c632a5d38a0c",
       "mode": "0o755"
     },
     {

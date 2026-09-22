@@ -32,6 +32,13 @@ from provider_catalog import (  # noqa: E402
     release_lock,
 )
 
+# Windows pipes and consoles default to a legacy encoding while provider
+# payloads may contain non-ASCII text; emit stdout as UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 MIN_CONTEXT = 100_000
 MAX_CONTEXT = 800_000
 HEADROOM_NUMERATOR = 9

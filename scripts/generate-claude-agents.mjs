@@ -223,23 +223,48 @@ function releaseWriterLock(fd) {
   } catch {}
 }
 
+function sleepSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    return;
+  } catch {}
+  const end = Date.now() + ms;
+  while (Date.now() < end);
+}
+
+function isTransientFsError(error) {
+  return error && (error.code === "EPERM" || error.code === "EACCES" || error.code === "EBUSY");
+}
+
 function writeAgentAtomically(path, content, mode = 0o644) {
   failIfSymlinkChain(path, "agent parent");
   failIfSymlink(path, "agent file");
   const temp = `${path}.tmp.${process.pid}.${createHash("sha256").update(String(Date.now()) + Math.random()).digest("hex").slice(0, 12)}`;
-  try {
-    const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode);
+  // Transient Windows locks (real-time antivirus, file watchers, indexers)
+  // routinely deny the rename for milliseconds. Retry those briefly instead
+  // of failing the whole commit; anything else fails immediately.
+  let attempt = 0;
+  for (;;) {
     try {
-      writeFileSync(fd, content, "utf8");
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
+      const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode);
+      try {
+        writeFileSync(fd, content, "utf8");
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      chmodSync(temp, mode);
+      renameSync(temp, path);
+      return;
+    } catch (error) {
+      try { unlinkSync(temp); } catch {}
+      if (isTransientFsError(error) && attempt < 5) {
+        attempt += 1;
+        sleepSync(100 * 2 ** (attempt - 1));
+        continue;
+      }
+      fail(`cannot write generated agent ${path}: ${error.message}`);
     }
-    chmodSync(temp, mode);
-    renameSync(temp, path);
-  } catch (error) {
-    try { unlinkSync(temp); } catch {}
-    fail(`cannot write generated agent ${path}: ${error.message}`);
   }
 }
 

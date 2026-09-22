@@ -26,6 +26,13 @@ SCRIPTS = _HERE if (_HERE / "provider_catalog.py").is_file() else _HERE.parent /
 sys.path.insert(0, str(SCRIPTS))
 from provider_catalog import CatalogError, acquire_lock, load_policy, release_lock  # noqa: E402
 
+# Windows pipes and consoles default to a legacy encoding while policy output
+# may quote non-ASCII model names or paths; emit stdout as UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 
 def read_json(path: Path, default: object = None) -> object:
     try:

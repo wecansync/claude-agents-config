@@ -22,6 +22,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# Windows pipes and consoles default to a legacy encoding while provider
+# payloads routinely contain non-ASCII text; emit stdout as UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 CACHE_FORMAT = "claude-agents-config.provider-cache.v1"
 POLICY_FORMAT = "provider-policy.v1"
 PROVIDER_NAME = "omniroute"
