@@ -246,6 +246,22 @@ function main {
         }
         Write-Info "checksum verified."
 
+        # Defense in depth: every entry must sit under agentfleet-<version>/
+        # with no absolute path, drive letter, or ".." component.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+        try {
+            $top = "agentfleet-$($release.Version)/"
+            foreach ($entry in $archive.Entries) {
+                $name = $entry.FullName -replace '\\', '/'
+                if (-not $name.StartsWith($top) -or $name.StartsWith('/') -or $name -match '^[A-Za-z]:' -or $name -match '(^|/)\.\.(/|$)') {
+                    Fail "release archive contains an unexpected path: $($entry.FullName)"
+                }
+            }
+        } finally {
+            $archive.Dispose()
+        }
+
         $stageDir = Join-Path $tempDir 'stage'
         New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
         try {

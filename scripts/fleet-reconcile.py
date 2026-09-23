@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import tempfile
@@ -367,8 +368,12 @@ def _release_time(row: dict) -> int:
         return 0
     if isinstance(value, (int, float)):
         return int(value)
-    if isinstance(value, str) and len(value) >= 10 and value[:4].isdigit():
-        return int(value[:10].replace("-", ""))
+    if isinstance(value, str):
+        # Only a leading YYYY?MM?DD date counts; any separator is accepted and
+        # anything unparseable means "unknown", never an exception.
+        digits = re.sub(r"\D", "", value[:10])
+        if len(digits) == 8:
+            return int(digits)
     return 0
 
 
@@ -428,7 +433,9 @@ def rank_live_candidates(
         # capable models and never trades a 1M window for a smaller one.
         score -= 15 * min(usage.get(cand, 0), 2)
         if cand in avoid:
-            score -= 700
+            # Independence is a hard rule: an alternate takes its sibling's
+            # model only when nothing else is live.
+            score -= 100_000
         scored.append((score, cand))
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [cand for _, cand in scored]

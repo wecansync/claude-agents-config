@@ -120,6 +120,9 @@ def load_release_inputs(ref: str) -> tuple[dict, dict[str, bytes], str]:
         mode = item.get("mode")
         if not isinstance(rel, str) or not rel:
             fail(f"manifest has an invalid path: {rel!r}")
+        parts = rel.split("/")
+        if rel.startswith("/") or "\\" in rel or ":" in parts[0] or any(part in {"", ".", ".."} for part in parts):
+            fail(f"manifest path is not a safe relative path: {rel!r}")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             fail(f"manifest has an invalid checksum for {rel}")
         if mode not in {"0o644", "0o755"}:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import http.server
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -1934,6 +1935,17 @@ class AgentFleetTwoTests(unittest.TestCase):
             listing = subprocess.run([agentfleet, "profiles"], env=env, text=True, capture_output=True)
             self.assertIn("* work", listing.stdout)
             self.assertNotIn("fake-token", listing.stdout + native.stdout + back.stdout)
+            reserved = subprocess.run([agentfleet, "save", "native"], env=env, text=True, capture_output=True)
+            self.assertNotEqual(reserved.returncode, 0, "'native' is reserved for the Claude login")
+            # A stale marker (settings changed behind agentfleet's back) is ignored.
+            (home / ".claude/agentfleet/active").write_text("native\n")
+            stale = subprocess.run([agentfleet, "use", "native"], env=env, text=True, capture_output=True)
+            self.assertEqual(stale.returncode, 0, stale.stderr)
+            self.assertNotIn("Already using", stale.stdout)
+            self.assertNotIn("ANTHROPIC_AUTH_TOKEN", json.loads((home / ".claude/settings.json").read_text())["env"])
+            uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(uninstall.returncode, 0, uninstall.stderr + uninstall.stdout)
+            self.assertFalse((home / ".claude/agentfleet").exists(), "uninstall removes saved profiles and tokens")
 
     def test_upgrade_from_1_0_0_prunes_retired_lanes_and_carries_choices(self):
         if shutil.which("node") is None:
@@ -2022,6 +2034,57 @@ class AgentFleetTwoTests(unittest.TestCase):
             settings = json.loads((home / ".claude/settings.json").read_text())
             self.assertEqual(settings["env"]["ANTHROPIC_BASE_URL"], endpoint)
             self.assertEqual(settings["env"]["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"], "1")
+
+    def test_explicit_native_provider_ignores_exported_gateway_credentials(self):
+        with tempfile.TemporaryDirectory(prefix="agentfleet env creds ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config, ANTHROPIC_BASE_URL="https://gateway.example.com", ANTHROPIC_AUTH_TOKEN="shell-token-value")
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            text = (home / ".claude/settings.json").read_text()
+            self.assertNotIn("shell-token-value", text, "an explicit native install must not persist a shell token")
+            self.assertNotIn("ANTHROPIC_BASE_URL", json.loads(text).get("env", {}))
+
+    def test_read_only_original_file_stays_restorable(self):
+        with tempfile.TemporaryDirectory(prefix="agentfleet readonly ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config)
+            original = home / ".claude" / "CLAUDE.md"
+            original.parent.mkdir(parents=True)
+            original.write_text("# my own instructions\n")
+            os.chmod(original, 0o444)
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--force-owned", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            rollback = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--rollback", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(rollback.returncode, 0, rollback.stderr + rollback.stdout)
+            self.assertEqual(original.read_text(), "# my own instructions\n")
+            self.assertEqual(stat_mode(original), 0o444)
+
+    def test_pruning_never_touches_unowned_user_agents(self):
+        spec = importlib.util.spec_from_file_location("agentfleet_install_prune", ROOT / "bin/install.py")
+        installer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(installer)
+        with tempfile.TemporaryDirectory(prefix="agentfleet prune ") as raw:
+            home = Path(raw)
+            agents = home / ".claude" / "agents"
+            agents.mkdir(parents=True)
+            marker = f"<!-- {installer.GENERATED_MARKER}; source-sha256: 0 -->\n"
+            (agents / "fleet-review-06-astra.md").write_text("retired bundle lane\n" + marker)
+            (agents / "fleet-my-helper.md").write_text("copied by the user\n" + marker)
+            (agents / "fleet-plan.md").write_text("current lane\n" + marker)
+            found = installer.obsolete_paths({}, {agents / "fleet-plan.md": (b"", 0o644, "x")}, home, home / ".local/bin", home / ".config")
+            self.assertEqual(found, [agents / "fleet-review-06-astra.md"])
+
+    def test_release_dates_and_alternate_independence_are_robust(self):
+        ns = self.reconcile()
+        self.assertEqual(ns["_release_time"]({"created_at": "2023.01.01"}), 20230101)
+        self.assertEqual(ns["_release_time"]({"created_at": "not a date"}), 0)
+        rows = [{"id": "big-opus", "context_length": 1000000, "capabilities": {"thinking": True}}, {"id": "tiny-free", "context_length": 100000}]
+        lanes = {name: {"implementer": "claude", "model": "x", "tier": "deep", "readOnly": True, "longContext": True, "strongest": True} for name in ("review", "review-alt")}
+        lanes["review-alt"]["altOf"] = "review"
+        resolved, *_ = ns["resolve_fleet"]({"version": "delegate-fleet.v1", "lanes": lanes}, {}, rows, GENERIC_POLICY)
+        self.assertNotEqual(resolved["lanes"]["review-alt"]["model"], resolved["lanes"]["review"]["model"])
+
 
 def stat_mode(path: Path) -> int:
     return path.stat().st_mode & 0o777

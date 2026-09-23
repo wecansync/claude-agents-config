@@ -156,12 +156,21 @@ def current_kind(settings: dict) -> str:
 
 
 def active_name(paths: Paths, settings: dict) -> str:
+    """The recorded active profile, unless the live settings contradict it
+    (e.g. a reinstall switched providers without going through agentfleet)."""
+    kind = current_kind(settings)
     try:
         name = paths.active.read_text(encoding="utf-8").strip()
-        if PROFILE_NAME_RE.fullmatch(name):
-            return name
     except OSError:
-        pass
+        name = ""
+    if PROFILE_NAME_RE.fullmatch(name):
+        saved = paths.profiles / f"{name}.json"
+        try:
+            saved_kind = json.loads(saved.read_text(encoding="utf-8")).get("kind") if saved.is_file() else ("native" if name == "native" else None)
+        except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+            saved_kind = None
+        if saved_kind == kind:
+            return name
     env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
     url = env.get("ANTHROPIC_BASE_URL")
     return gateway_name(url) if isinstance(url, str) and url else "native"
@@ -216,6 +225,8 @@ def load_profile(paths: Paths, name: str) -> tuple[dict, str | None]:
     profile = read_json(path)
     if profile.get("format") != PROFILE_FORMAT:
         die(f"{path} is not an AgentFleet profile")
+    if name == "native" and profile.get("kind") != "native":
+        return {}, None
     token = None
     secret = paths.secrets / f"{name}.token"
     if secret.is_file():
@@ -356,6 +367,8 @@ def cmd_save(paths: Paths, args: argparse.Namespace) -> int:
     fd, lock = with_lock(paths)
     try:
         settings = read_json(paths.settings)
+        if name == "native" and current_kind(settings) != "native":
+            die("'native' is reserved for your Claude login; save this gateway under another name")
         fleet, _ = fleet_map(paths)
         profile, token = snapshot(settings, fleet, name)
         save_profile(paths, profile, token)
@@ -368,22 +381,28 @@ def cmd_save(paths: Paths, args: argparse.Namespace) -> int:
 
 def cmd_use(paths: Paths, args: argparse.Namespace) -> int:
     name = valid_name(args.name)
+    # Regenerating agents needs Node; check before anything changes so a
+    # switch is never left half-applied.
+    if not shutil.which("node") or not paths.generator.is_file():
+        die("switching needs Node.js 18+ and the agent generator; install Node.js, then rerun")
     fd, lock = with_lock(paths)
     try:
         settings = read_json(paths.settings)
         fleet, _ = fleet_map(paths)
         current = active_name(paths, settings)
         if current == name and not args.force:
-            print(f"Already using '{name}'.")
+            print(f"Already using '{name}'. (Use --force to re-apply it.)")
             return 0
-        # Save where we are first, so switching back restores it exactly.
-        profile, token = snapshot(settings, fleet, current)
-        save_profile(paths, profile, token)
         target, target_token = load_profile(paths, name)
         if not target:
             if name != "native":
                 die(f"no saved profile '{name}'. Saved profiles: agentfleet profiles")
             target = native_profile(fleet, paths)
+        if target.get("kind") == "gateway" and not target_token:
+            die(f"profile '{name}' has no saved gateway token; switch to that gateway and run: agentfleet save {name}")
+        # Save where we are first, so switching back restores it exactly.
+        profile, token = snapshot(settings, fleet, current)
+        save_profile(paths, profile, token)
         apply_profile(paths, target, target_token)
         atomic_write(paths.active, (name + "\n").encode("utf-8"), 0o600)
     finally:

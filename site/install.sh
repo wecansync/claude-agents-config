@@ -319,6 +319,14 @@ download_and_install() {
     mkdir -p "$_dai_stage_root"
     _dai_stage_dir=$(mktemp -d "$_dai_stage_root/build.XXXXXX")
 
+    # Defense in depth: every entry must sit under agentfleet-<version>/ with
+    # no absolute path or ".." component, whatever tar implementation runs.
+    _dai_listing=$(tar -tzf "$_dai_tar_path" 2>/dev/null) || fail "failed to read $_dai_tar_path"
+    printf '%s\n' "$_dai_listing" | awk -v top="agentfleet-$_dai_version/" '
+        index($0, top) != 1 { bad = 1 }
+        /^\// || /(^|\/)\.\.(\/|$)/ { bad = 1 }
+        END { exit bad ? 1 : 0 }' || fail "release archive contains unexpected paths; refusing to extract"
+
     if ! tar -xzpf "$_dai_tar_path" -C "$_dai_stage_dir" 2>/dev/null; then
         fail "failed to extract $_dai_tar_path"
     fi
@@ -393,9 +401,8 @@ main() {
     log "installed to $RELEASE_DIR"
 
     log "running installer..."
+    # Under set -e a failing installer ends the script with its own status.
     run_bundle_installer "$RELEASE_DIR" "$@"
-    _m_status=$?
-    exit $_m_status
 }
 
 main "$@"

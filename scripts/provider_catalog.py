@@ -323,7 +323,8 @@ TIERS = ("cheap", "fast", "balanced", "deep")
 TIER_RANK = {tier: index for index, tier in enumerate(TIERS)}
 TIER_ID_KEYWORDS = (
     ("cheap", ("free", "cheap", "budget", "auto")),
-    ("fast", ("haiku", "flash", "mini", "lite", "nano", "fast", "small", "instant", "turbo")),
+    # "turbo" is deliberately absent: gpt-4-turbo is a strong model.
+    ("fast", ("haiku", "flash", "mini", "lite", "nano", "fast", "small", "instant")),
     ("deep", ("opus", "pro", "max", "ultra", "large", "sol", "astra", "o1", "o3", "reasoner")),
 )
 TIER_DESCRIPTION_KEYWORDS = (

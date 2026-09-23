@@ -76,6 +76,14 @@ LANE_RENAMES = {
     "review-02-opus": "review-alt",
     "review-06-astra": "review-deep",
 }
+# Every lane 1.0.0 shipped that 2.0.0 no longer has. Their generated agents
+# may be pruned on upgrade even when install metadata lost track of them.
+RETIRED_LANES = {
+    "implement-02-gemini-flash", "implement-03-agy-opus", "implement-04-free-1m", "implement-05-agy-sonnet",
+    "implement-06-free-256k", "implement-07-auto-128k", "implement-08-atria-experimental", "implement-09-codex-5-5",
+    "implement-10-sonnet", "implement-11-terra", "implement-12-openclaw-free", "implement-13-grok-no-cache",
+    "review-02-opus", "review-03-terra", "review-04-gemini", "review-05-grok", "review-06-astra",
+}
 # User-owned lane fields carried across an update; everything else comes from
 # the bundle so lane definitions can evolve.
 CARRIED_LANE_FIELDS = ("preferred", "model", "fallbacks")
@@ -1504,6 +1512,13 @@ def agent_for_profile(
         lambda match: f"{match.group(1)}{model}.{match.group(2)}\n",
         text, count=1, flags=re.MULTILINE,
     )
+    # The generator's other wording, for lanes without their own text:
+    # "Alternate <role> lane on <model>. Use when ...".
+    text = re.sub(
+        r'^(description: "Alternate [a-z-]+ lane on ).+?(\. Use when )',
+        lambda match: f"{match.group(1)}{model}{match.group(2)}",
+        text, count=1, flags=re.MULTILINE,
+    )
     text = re.sub(r"^model: .*\n", f"model: {json.dumps(model)}\n", text, count=1, flags=re.MULTILINE)
     fallback_values = [value for value in fallbacks if isinstance(value, str) and value][:3] if isinstance(fallbacks, list) else []
     fallback_line = f"fallbackModel: {json.dumps(','.join(fallback_values))}\n" if fallback_values else ""
@@ -1534,19 +1549,28 @@ def obsolete_paths(previous: dict, specs: dict, home: Path, bin_dir: Path, confi
     is exactly what claude-fleet-sync would prune.
     """
     found: dict[str, Path] = {}
-    for item in metadata_records(previous, home, bin_dir, config_root) if previous else []:
-        path = Path(item["path"])
+    owned = {Path(item["path"]): item for item in (metadata_records(previous, home, bin_dir, config_root) if previous else [])}
+    for path, item in owned.items():
         if path in specs or path.is_symlink() or not path.is_file():
             continue
         data = path.read_bytes()
-        if MARKER.encode() in data or GENERATED_MARKER.encode() in data or bytes_sha256(data) == item.get("sha256"):
+        # Generated agents are rewritten by claude-fleet-sync after install,
+        # so their bytes rarely match the install record; the generator
+        # marker identifies them instead. Other files must still carry the
+        # bundle marker or be unchanged since install.
+        is_agent = path.parent == home / ".claude" / "agents" and path.name.startswith("fleet-")
+        if (is_agent and GENERATED_MARKER.encode() in data) or (not is_agent and MARKER.encode() in data) or bytes_sha256(data) == item.get("sha256"):
             found[str(path)] = path
     agents = home / ".claude" / "agents"
     if agents.is_dir():
         for path in agents.glob("fleet-*.md"):
-            if path in specs or path.is_symlink() or not path.is_file():
+            if path in specs or path in owned or path.is_symlink() or not path.is_file():
                 continue
-            if GENERATED_MARKER.encode() in path.read_bytes():
+            # Unowned files are pruned only when they are a lane this bundle
+            # shipped before (a regenerated agent from an older release);
+            # anything else is the user's and stays.
+            lane = path.stem.removeprefix("fleet-")
+            if lane in RETIRED_LANES and GENERATED_MARKER.encode() in path.read_bytes():
                 found[str(path)] = path
     return [found[key] for key in sorted(found)]
 
@@ -2065,7 +2089,10 @@ def restore_snapshot(backup: Path, home: Path, bin_dir: Path, config_root: Path,
             mode = record.get("mode")
             if not isinstance(backup_name, str) or not backup_name or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
                 fail(f"backup record lacks a valid payload/hash: {path}")
-            if not isinstance(mode, int) or stat.S_IMODE(mode) != mode or mode < 0o600 or mode > 0o777:
+            # Any permission bits are valid for the *original* file: a user's
+            # read-only (0444) file must still be restorable. The payload's own
+            # 0600 mode is checked separately.
+            if not isinstance(mode, int) or isinstance(mode, bool) or stat.S_IMODE(mode) != mode or not 0 <= mode <= 0o777:
                 fail(f"backup record has an invalid mode: {path}")
             relative_payload = Path(backup_name)
             if relative_payload.is_absolute() or ".." in relative_payload.parts or relative_payload.parts[:1] != ("files",):
@@ -2217,7 +2244,12 @@ def profile_data(
             # Code's aliases, which the gateway serves through the
             # ANTHROPIC_DEFAULT_*_MODEL mapping; the startup reconcile hook
             # replaces them with discovered models once the gateway answers.
-            fleet = direct_fleet(fleet_source)
+            fleet = direct_fleet(carried)
+            # Keep the user's preferences so the startup reconcile can restore
+            # them once the gateway answers again.
+            for name, config in carried.get("lanes", {}).items():
+                if isinstance(config, dict) and config.get("preferred") and isinstance(fleet["lanes"].get(name), dict):
+                    fleet["lanes"][name]["preferred"] = copy.deepcopy(config["preferred"])
             template_profile = copy.deepcopy(template)
             template_profile["modelPicker"] = {"options": copy.deepcopy(NATIVE_PICKER), "replaceBuiltInOptions": True}
             template_profile["model"] = "default"
@@ -2233,8 +2265,9 @@ def profile_data(
 
 def determine_gateway(args: argparse.Namespace, previous: dict, existing: dict, apply: bool) -> tuple[bool, str | None]:
     existing_env = existing.get("env") if isinstance(existing.get("env"), dict) else {}
-    if getattr(args, "provider", None) in {"native", "anthropic-api"} and (existing_env.get("ANTHROPIC_BASE_URL") or existing_env.get("ANTHROPIC_AUTH_TOKEN")):
-        fail("this home is configured for a gateway; switch it to your Claude login with: agentfleet use native")
+    direct_requested = getattr(args, "provider", None) in {"native", "anthropic-api"}
+    if direct_requested and (existing_env.get("ANTHROPIC_BASE_URL") or existing_env.get("ANTHROPIC_AUTH_TOKEN")):
+        fail("this home is configured for a gateway; update without --provider first, then switch to your Claude login with: agentfleet use native")
     if args.gateway_token_env and not args.gateway_url:
         fail("--gateway-token-env requires --gateway-url")
     if args.gateway_url:
@@ -2252,6 +2285,10 @@ def determine_gateway(args: argparse.Namespace, previous: dict, existing: dict, 
         # Credentials already present in settings are an intentional gateway
         # profile even when older metadata did not record gateway ownership.
         return True, "gateway (existing URL and token)"
+    # An explicit direct provider wins over credentials exported in the shell:
+    # they must never be copied into settings.json against the user's choice.
+    if direct_requested:
+        return False, "direct Anthropic (requested)"
     env_url = os.environ.get("ANTHROPIC_BASE_URL")
     env_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
     if env_url and env_token:
@@ -2267,7 +2304,7 @@ def prompt(text: str, default: str = "") -> str:
     try:
         answer = input(f"{text}{suffix}: ").strip()
     except EOFError:
-        answer = ""
+        fail("setup input ended before the wizard finished; rerun it in a terminal or pass --provider")
     return answer or default
 
 
@@ -2279,7 +2316,14 @@ def ask_yes_no(text: str, default: bool) -> bool:
 def wizard_eligible(args: argparse.Namespace, home: Path) -> bool:
     """The provider wizard runs only for a fresh interactive install with no
     provider flags, or when --wizard asks for it explicitly."""
+    interactive = False
+    try:
+        interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        pass
     if args.wizard:
+        if not interactive:
+            fail("--wizard needs an interactive terminal; pass --provider for unattended installs")
         return True
     if args.no_wizard or args.provider or args.gateway_url or os.environ.get("AGENTFLEET_NONINTERACTIVE"):
         return False
@@ -2305,7 +2349,10 @@ def run_provider_wizard(args: argparse.Namespace) -> None:
     print("  1) Claude subscription  - sign in with your Claude account (default)")
     print("  2) Anthropic API key    - uses ANTHROPIC_API_KEY from your environment")
     print("  3) Custom gateway       - any Anthropic-compatible endpoint")
-    choice = prompt("Choose 1-3", "1")
+    env_url, env_token = os.environ.get("ANTHROPIC_BASE_URL"), os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    if env_url and env_token:
+        print(f"\nFound a gateway in your environment: {env_url}")
+    choice = prompt("Choose 1-3", "3" if env_url and env_token else "1")
     while choice not in {"1", "2", "3"}:
         choice = prompt("Please choose 1, 2, or 3", "1")
     if choice == "1":
@@ -2318,13 +2365,13 @@ def run_provider_wizard(args: argparse.Namespace) -> None:
             print("Note: ANTHROPIC_API_KEY is not set in this shell. Export it in your shell profile so Claude Code can use it.")
         return
     while True:
-        url = prompt("Gateway URL (https://...)")
+        url = prompt("Gateway URL (https://...)", env_url if env_url and env_token else "")
         parsed = urllib.parse.urlparse(url)
         loopback_ok = parsed.scheme == "http" and args.allow_insecure_http and (parsed.hostname or "").lower() in LOOPBACK_HOSTS
         if (parsed.scheme == "https" or loopback_ok) and parsed.hostname and not parsed.username and not parsed.password:
             break
         print("The gateway URL must be https:// with no embedded credentials.")
-    env_name = prompt("Environment variable that holds the gateway token", "AGENTFLEET_GATEWAY_TOKEN")
+    env_name = prompt("Environment variable that holds the gateway token", "ANTHROPIC_AUTH_TOKEN" if env_url and env_token else "AGENTFLEET_GATEWAY_TOKEN")
     while not TOKEN_ENV_RE.fullmatch(env_name):
         env_name = prompt("Use letters, digits, and underscores only", "AGENTFLEET_GATEWAY_TOKEN")
     if not os.environ.get(env_name):
@@ -2478,6 +2525,8 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
         for path in retired:
             path.unlink()
             fsync_dir(path.parent)
+        if retired:
+            print(f"Removed {len(retired)} retired file(s); copies are kept in {backup}")
         result = run_doctor(bundle, home, config_root, bin_dir, profile)
         if result != 0:
             raise InstallerError(f"post-install doctor failed with exit code {result}")
@@ -2641,6 +2690,11 @@ def _uninstall_locked(args: argparse.Namespace, bundle: Path, dry: bool, home: P
             preserved.append(path)
     if settings_changed:
         removable.append(settings_path)
+    # Saved provider profiles and gateway tokens belong to this bundle's
+    # agentfleet command; leaving plaintext tokens behind would be a leak.
+    store = home / ".claude" / "agentfleet"
+    store_files = sorted(path for path in store.rglob("*") if path.is_file() and not path.is_symlink()) if store.is_dir() and not store.is_symlink() else []
+    removable.extend(store_files)
     metadata_path = home / ".claude" / ".claude-agents-config-install.json"
     verification_path = home / ".claude" / ".claude-agents-config-manifest.json"
     if lexists(verification_path) and verification_path not in removable:
@@ -2670,6 +2724,11 @@ def _uninstall_locked(args: argparse.Namespace, bundle: Path, dry: bool, home: P
                     fail(f"refusing to remove directory or symlink: {path}")
                 path.unlink()
                 fsync_dir(path.parent)
+        for directory in (store / "secrets", store / "profiles", store):
+            if directory.is_dir() and not directory.is_symlink() and not any(directory.iterdir()):
+                directory.rmdir()
+        if store_files:
+            print("Removed saved AgentFleet profiles and gateway tokens.")
         # Keep metadata when an edited managed file remains, so a later clean
         # uninstall can still identify ownership safely.
         if preserved and metadata_path not in preserved:
