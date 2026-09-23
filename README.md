@@ -64,6 +64,27 @@ its models?":
 
 Updates never run the wizard; they keep the installed profile.
 
+### Automatic updates
+
+Each time Claude Code starts, a quick hook checks at most once a day whether a
+newer AgentFleet release exists. A newer release with the same major version
+(for example 2.0.3 → 2.1.0) is installed in the background, with the same
+checksum verification and backup as a manual update, so new sessions pick it
+up. The next session mentions it in one line. A new major version is never
+installed automatically; you get a one-time notice to run `agentfleet update`.
+The hook never delays startup, and it is skipped for installs made from a git
+clone.
+
+```bash
+agentfleet auto-update status   # enabled?, installed and latest versions, last result
+agentfleet auto-update off      # stop automatic updates
+agentfleet auto-update on       # turn them back on
+```
+
+`AGENTFLEET_AUTO_UPDATE=0` also turns them off (useful in CI). The state lives in
+`~/.claude/agentfleet/auto-update.json` and each run's output in
+`~/.claude/agentfleet/auto-update.log`.
+
 ### Non-interactive flags
 
 ```bash
@@ -234,6 +255,7 @@ maps lanes to the `opus`/`sonnet`/`haiku` aliases.
 | `agentfleet doctor` | Verify the installation (`claude-agents-doctor --check`). |
 | `agentfleet sync` | Regenerate fleet agents from `~/.claude/fleet.json`; pass `--check` to verify without writing. |
 | `agentfleet update` | Re-run the download script to install the latest release. |
+| `agentfleet auto-update [on\|off\|status]` | Turn automatic background updates on or off, or show their status. |
 | `agentfleet uninstall` | Remove AgentFleet and restore earlier settings. |
 | `agentfleet rollback [--backup DIR]` | Restore the files and settings from before the last install or update (the newest backup, or a named one). |
 | `agentfleet version` | Print the installed version. |

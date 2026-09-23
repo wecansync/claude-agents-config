@@ -543,6 +543,7 @@ claude-fleet-setup --tier my-model-id=</code></pre>
           <div class="cmd-ref-item"><code class="il">agentfleet doctor</code><p>Verify the installation (runs <code class="il">claude-agents-doctor --check</code>).</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet sync</code><p>Regenerate fleet agent files from <code class="il">~/.claude/fleet.json</code>.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet update</code><p>Download and install the latest release. Extra arguments are forwarded to the installer.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet auto-update [on|off|status]</code><p>Turn automatic background updates on or off, or show whether they are enabled, the installed and latest versions, and the last result.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet uninstall</code><p>Remove AgentFleet and restore your earlier settings.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet rollback [--backup DIR]</code><p>Restore the files and settings from before the last install or update. Uses the newest backup by default; <code class="il">--backup DIR</code> restores a named snapshot.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet version</code><p>Print the installed version.</p></div>
@@ -671,6 +672,7 @@ claude-fleet-setup --tier my-model-id=</code></pre>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> The log rotates at 2,000,000 bytes.</li>
         </ul>
         <p>The hook is fail-open: a logging failure does not block a prompt. The doctor checks these retention and redaction values in both the packaged and installed hook.</p>
+        <p>The automatic update check makes at most one request a day to <code class="il">https://agentfleet.wecansync.com/releases/latest.json</code>, identified only by the user agent <code class="il">agentfleet/&lt;version&gt;</code>; it sends nothing about your projects, prompts, or provider. Turn it off with <code class="il">agentfleet auto-update off</code>.</p>
       </section>
 
       <section id="safety">
@@ -698,6 +700,21 @@ claude-fleet-setup --tier my-model-id=</code></pre>
           <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy workaround install command">Copy</button></div>
           <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh</code></pre>
         </div>
+        <h3 id="upgrading-auto" class="anchor-heading">Automatic updates<a class="anchor-link" href="#upgrading-auto" aria-label="Link to this section">#</a></h3>
+        <p>From 2.0.4 on, AgentFleet keeps itself up to date. Each time Claude Code starts, a quick hook checks at most once a day whether a newer release exists:</p>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> A newer release with the <strong>same major version</strong> is installed in the background, with the same checksum verification, backup, and doctor gate as <code class="il">agentfleet update</code>. New sessions use it, and the next session mentions it in one line.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> A new <strong>major version</strong> is never installed automatically; you get a one-time notice to run <code class="il">agentfleet update</code>.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> The hook never delays startup, prints nothing when there is nothing to report, and is skipped for installs made from a git clone.</li>
+        </ul>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy auto-update commands">Copy</button></div>
+          <pre><code>agentfleet auto-update status   # enabled?, versions, last result
+agentfleet auto-update off      # stop automatic updates
+agentfleet auto-update on       # turn them back on</code></pre>
+        </div>
+        <p><code class="il">AGENTFLEET_AUTO_UPDATE=0</code> also turns them off, for example in CI. The state lives in <code class="il">~/.claude/agentfleet/auto-update.json</code> and each run's output in <code class="il">~/.claude/agentfleet/auto-update.log</code>. Versions before 2.0.4 need one manual update to get the hook.</p>
+
         <h3 id="upgrading-1x" class="anchor-heading">Migrating from 1.0.0<a class="anchor-link" href="#upgrading-1x" aria-label="Link to this section">#</a></h3>
         <p>The installer migrates automatically. Lanes that encoded vendor model names in their names are renamed:</p>
         <div class="table-wrap">
