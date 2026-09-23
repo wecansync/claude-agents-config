@@ -536,6 +536,7 @@ def audit_fleet(home: Path, config_home: Path, policy_file: Path) -> dict:
             "file": str(settings_file),
             "model": current_model,
             "advisor_model": current_advisor,
+            "native": not bool(env.get("ANTHROPIC_BASE_URL")),
             "stale_models": stale_models,
             "compaction": {
                 "current": compact_window,
@@ -581,7 +582,10 @@ def print_audit_summary(audit: dict) -> None:
     fc = audit["fleet_coverage"]
 
     print("=== Claude Fleet & Context Audit ===")
-    print(f"[Live Models] {live['total']} models online in provider catalog.")
+    if st.get("native"):
+        print("[Models] Native profile: lanes use opus / sonnet / haiku through your Claude login.")
+    else:
+        print(f"[Live Models] {live['total']} models online in provider catalog.")
 
     stale = st.get("stale_models", {})
     if stale:

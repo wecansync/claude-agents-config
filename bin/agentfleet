@@ -409,7 +409,7 @@ def run_tool(paths: Paths, script: str, extra: list[str]) -> int:
 
 def cmd_status(paths: Paths, _args: argparse.Namespace) -> int:
     settings = read_json(paths.settings)
-    print(f"Active profile: {active_name(paths, settings)} ({current_kind(settings)})")
+    print(f"Active profile: {active_name(paths, settings)} ({current_kind(settings)})", flush=True)
     return run_tool(paths, "claude-fleet-setup.py", ["--audit"])
 
 

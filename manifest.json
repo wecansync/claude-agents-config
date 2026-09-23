@@ -124,7 +124,7 @@
     },
     {
       "path": "bin/agentfleet",
-      "sha256": "172e09a2e6bf7ec72fc3f0b82cf86f1b18c6884f2c9e653a6194e71a8e382ccb",
+      "sha256": "c6c03891177adc2b15a0c8e29b0bf448661de8fabf9dd9c6a85b5b73bf3ee0e8",
       "mode": "0o755"
     },
     {
@@ -134,7 +134,7 @@
     },
     {
       "path": "bin/claude-fleet-setup",
-      "sha256": "73374539b3a43efc1fe2c46695bb5714544df5167bf606853318c8537faf6313",
+      "sha256": "2775062811c3d961ed17b9413629e1768117fea9276cd4dd7e551409178b8d29",
       "mode": "0o755"
     },
     {
