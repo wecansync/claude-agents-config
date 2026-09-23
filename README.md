@@ -10,7 +10,7 @@ hook, a privacy-safe status line, a global `CLAUDE.md`, and the `/fleet-setup`
 skill. Everything lives under your home directory; no root or admin access is
 required.
 
-Version: **2.0.2** — MIT license. See [LICENSE](LICENSE).
+Version: **2.0.3** — MIT license. See [LICENSE](LICENSE).
 
 > AgentFleet is an independent project by WeCanSync. It is not affiliated with
 > or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.
@@ -127,10 +127,12 @@ changes.
 | `fleet-review-alt` | Independent review model |
 | `fleet-review-deep` | Deep review (security, migration, concurrency, data-loss) |
 
-Read-only lanes receive no `Bash`, `Edit`, or `Write` tools. All lanes are
-background agents with `omitClaudeMd: true` and cannot spawn nested agents,
-commit, push, deploy, or take other outward-facing actions. The main agent owns
-integration, final gates, and all external actions.
+Read-only lanes receive no `Bash`, `Edit`, or `Write` tools, so they cannot
+change files, commit, or push. All lanes are background agents with
+`omitClaudeMd: true`, and none has the `Agent` tool, so none can spawn nested
+agents. Writable lanes are instructed never to commit, push, deploy, or take
+other outward-facing actions (a prompt rule, not a tool restriction). The main
+agent owns integration, final gates, and all external actions.
 
 ---
 
@@ -222,6 +224,7 @@ maps lanes to the `opus`/`sonnet`/`haiku` aliases.
 | `agentfleet sync` | Regenerate fleet agents from `~/.claude/fleet.json`; pass `--check` to verify without writing. |
 | `agentfleet update` | Re-run the download script to install the latest release. |
 | `agentfleet uninstall` | Remove AgentFleet and restore earlier settings. |
+| `agentfleet rollback [--backup DIR]` | Restore the files and settings from before the last install or update (the newest backup, or a named one). |
 | `agentfleet version` | Print the installed version. |
 | `claude-fleet-setup --audit` | Scan models, settings, hooks, agents, and skills for health and bloat. |
 | `claude-fleet-setup --archive-agents <categories>` | Archive agent files by category. |
@@ -299,9 +302,10 @@ prompt. The doctor checks these values in the packaged and installed hook.
 
 - **Backups before every apply.** All managed files are copied to a mode-0700
   snapshot under `~/.claude/backups/claude-agents-config/` before any write.
-- **Rollback.** `agentfleet rollback --apply` (or `install.py --rollback
-  --apply [--backup DIR]`) restores the nearest pre-change snapshot. The backup
-  is kept until you remove it.
+- **Rollback.** `agentfleet rollback` (or `install.py --rollback --apply
+  [--backup DIR]` from a clone) restores the newest pre-change snapshot;
+  `agentfleet rollback --backup DIR` restores a named one. The backup is kept
+  until you remove it.
 - **Idempotent.** Repeated installs produce the same configuration and
   regenerate no duplicate hooks.
 - **Non-destructive.** Uninstall removes only files and hook entries owned by

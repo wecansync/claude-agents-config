@@ -3,317 +3,424 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AgentFleet</title>
-<meta name="description" content="A provider-agnostic fleet of Claude Code subagents. One command to install. Works with your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway.">
+<title>AgentFleet — a fleet of Claude Code subagents for any provider</title>
+<meta name="description" content="AgentFleet installs a fleet of native Claude Code subagents mapped to whatever models your provider offers: a Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway.">
 <meta property="og:title" content="AgentFleet">
-<meta property="og:description" content="A provider-agnostic fleet of Claude Code subagents. One command to install. Works with your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway.">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<style>
-:root {
-  --bg: #ffffff;
-  --bg-surface: #f4f5f7;
-  --bg-code: #f0f1f3;
-  --text: #1a1a1a;
-  --text-muted: #555;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --border: #d1d5db;
-  --ring: rgba(37,99,235,0.4);
-  --code-text: #1a1a1a;
-  --table-stripe: #f9fafb;
-  --copied-bg: #16a34a;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111218;
-    --bg-surface: #1a1b23;
-    --bg-code: #1e1f2a;
-    --text: #e4e4e7;
-    --text-muted: #a1a1aa;
-    --accent: #60a5fa;
-    --accent-hover: #93bbfd;
-    --border: #2e2f3a;
-    --ring: rgba(96,165,250,0.45);
-    --code-text: #e4e4e7;
-    --table-stripe: #1e1f2a;
-    --copied-bg: #16a34a;
-  }
-}
-*,*::before,*::after{box-sizing:border-box}
-body{
-  margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
-  background:var(--bg);color:var(--text);line-height:1.6;-webkit-text-size-adjust:100%;
-}
-a{color:var(--accent);text-decoration:none}
-a:hover{text-decoration:underline;color:var(--accent-hover)}
-a:focus-visible{outline:2px solid var(--ring);outline-offset:2px;border-radius:2px}
-.wrap{max-width:860px;margin:0 auto;padding:0 1.25rem}
-header{padding:3rem 0 2rem;text-align:center}
-header h1{font-size:2.5rem;margin:0 0 .75rem;letter-spacing:-.02em;font-weight:700}
-header p{font-size:1.1rem;max-width:600px;margin:0 auto;color:var(--text-muted)}
-main{padding-bottom:3rem}
-h2{font-size:1.35rem;margin:2.5rem 0 1rem;font-weight:600}
-h3{font-size:1.1rem;margin:1.5rem 0 .5rem;font-weight:600}
-/* Tabs */
-.tabs{margin-bottom:.5rem}
-[role=tablist]{display:flex;gap:0;border-bottom:2px solid var(--border);padding:0;margin:0;list-style:none}
-[role=tab]{background:none;border:none;padding:.5rem 1rem;font:inherit;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:color .15s,border-color .15s}
-[role=tab]:hover{color:var(--text)}
-[role=tab][aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
-[role=tab]:focus-visible{outline:2px solid var(--ring);outline-offset:-2px;border-radius:2px}
-[role=tabpanel]{padding:.75rem 0}
-[role=tabpanel][hidden]{display:none}
-/* Code blocks */
-.code-wrap{position:relative;margin:.5rem 0 1rem}
-.code-wrap pre{background:var(--bg-code);border:1px solid var(--border);border-radius:6px;padding:.85rem 3rem .85rem 1rem;overflow-x:auto;margin:0;font-size:.875rem;line-height:1.5;color:var(--code-text)}
-.code-wrap code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,Courier,monospace;white-space:pre}
-.copy-btn{position:absolute;top:.5rem;right:.5rem;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;padding:.3rem .55rem;font-size:.75rem;cursor:pointer;color:var(--text-muted);transition:background .15s,color .15s}
-.copy-btn:hover{background:var(--border);color:var(--text)}
-.copy-btn:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
-.copy-btn[data-copied=true]{background:var(--copied-bg);color:#fff;border-color:var(--copied-bg)}
-/* Details */
-details{margin:1rem 0}
-details summary{cursor:pointer;font-weight:600;color:var(--accent);padding:.25rem 0}
-details summary:focus-visible{outline:2px solid var(--ring);outline-offset:2px;border-radius:2px}
-details summary:hover{color:var(--accent-hover)}
-/* Lane grid */
-.lane-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:.65rem;margin:1rem 0}
-.lane-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:6px;padding:.7rem .85rem}
-.lane-card .lane-name{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,Courier,monospace;font-size:.8rem;font-weight:600;color:var(--accent);margin-bottom:.15rem}
-.lane-card .lane-desc{font-size:.85rem;color:var(--text-muted);margin:0}
-/* Inline code */
-code.il{background:var(--bg-code);border:1px solid var(--border);border-radius:3px;padding:.1em .35em;font-size:.85em;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,Courier,monospace}
-/* Requirements list */
-.req-list{list-style:none;padding:0;margin:.5rem 0}
-.req-list li{padding:.25rem 0;font-size:.95rem}
-.req-list li::before{content:"\2713 ";color:var(--accent);font-weight:700}
-/* Footer */
-footer{border-top:1px solid var(--border);padding:1.5rem 0;font-size:.85rem;color:var(--text-muted);text-align:center}
-footer p{margin:.35rem 0}
-footer a{color:var(--accent)}
-/* sr-only */
-.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
-/* Reduced motion */
-@media (prefers-reduced-motion: reduce) {
-  *,*::before,*::after{transition-duration:0s!important;animation-duration:0s!important}
-}
-@media (max-width: 480px) {
-  header h1{font-size:1.8rem}
-  header p{font-size:1rem}
-  [role=tab]{padding:.4rem .65rem;font-size:.9rem}
-  .lane-grid{grid-template-columns:1fr}
-}
-</style>
+<meta property="og:description" content="A fleet of native Claude Code subagents. One command to install. Works with your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway.">
+<meta property="og:type" content="website">
+<link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/site.css?v=1">
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('agentfleet-theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+  document.documentElement.classList.add('js');
+})();
+</script>
 </head>
 <body>
-<header>
-  <div class="wrap">
-    <h1>AgentFleet</h1>
-    <p>A provider-agnostic fleet of Claude Code subagents. One command to install. Works with your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway.</p>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="container header-inner">
+    <a class="brand" href="/">
+      <img src="/favicon.svg?v=1" alt="" width="26" height="26">
+      AgentFleet
+    </a>
+    <nav class="main-nav" id="primary-nav" data-main-nav aria-label="Primary">
+      <a href="#features">Features</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#lanes">Lanes</a>
+      <a href="/docs/">Docs</a>
+      <a href="https://github.com/wecansync/claude-agents-config">GitHub</a>
+    </nav>
+    <div class="header-actions">
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v3M12 18.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2.5 12h3M18.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>
+      </button>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="primary-nav" aria-label="Toggle navigation menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+    </div>
   </div>
 </header>
 
-<main>
-<div class="wrap">
+<main id="main">
 
-<h2>Install</h2>
-<div class="tabs" id="install-tabs">
-  <div role="tablist" aria-label="Operating system">
-    <button role="tab" id="tab-unix" aria-controls="panel-unix" aria-selected="true">macOS / Linux</button>
-    <button role="tab" id="tab-win" aria-controls="panel-win" aria-selected="false" tabindex="-1">Windows (PowerShell)</button>
-  </div>
-  <div role="tabpanel" id="panel-unix" aria-labelledby="tab-unix">
-    <div class="code-wrap">
-      <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh</code></pre>
-      <button class="copy-btn" type="button" aria-label="Copy macOS / Linux install command">Copy</button>
+<!-- ============================== HERO ============================== -->
+<section class="hero">
+  <div class="container hero-grid">
+    <div>
+      <p class="eyebrow">Native Claude Code subagents</p>
+      <h1>A fleet of specialist agents that runs on any provider</h1>
+      <p class="lede">AgentFleet installs 19 native Claude Code subagents ("lanes"), each named for a role — plan, implement, review, test — never a model. Point it at your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway, and every lane gets the best-fit model automatically.</p>
+
+      <div class="tabs" id="install-tabs">
+        <div role="tablist" aria-label="Operating system">
+          <button role="tab" id="tab-mac" aria-controls="panel-mac">macOS</button>
+          <button role="tab" id="tab-linux" aria-controls="panel-linux">Linux</button>
+          <button role="tab" id="tab-win" aria-controls="panel-win">Windows</button>
+        </div>
+        <div role="tabpanel" id="panel-mac" aria-labelledby="tab-mac">
+          <p class="panel-label">macOS</p>
+          <div class="code-wrap">
+            <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy macOS install command">Copy</button></div>
+            <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh</code></pre>
+          </div>
+        </div>
+        <div role="tabpanel" id="panel-linux" aria-labelledby="tab-linux">
+          <p class="panel-label">Linux</p>
+          <div class="code-wrap">
+            <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy Linux install command">Copy</button></div>
+            <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh</code></pre>
+          </div>
+        </div>
+        <div role="tabpanel" id="panel-win" aria-labelledby="tab-win">
+          <p class="panel-label">Windows</p>
+          <div class="code-wrap">
+            <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy Windows install command">Copy</button></div>
+            <pre><code>irm https://agentfleet.wecansync.com/install.ps1 | iex</code></pre>
+          </div>
+        </div>
+      </div>
+      <div aria-live="polite" class="sr-only" id="copy-announce"></div>
+      <p class="text-muted" style="font-size:.88rem">Read it first: <a href="/install.sh">install.sh</a> &middot; <a href="/install.ps1">install.ps1</a>.</p>
+
+      <div class="hero-cta btn-row">
+        <a class="btn btn-secondary" href="/docs/">Read the docs</a>
+        <a class="btn btn-secondary" href="https://github.com/wecansync/claude-agents-config">View on GitHub</a>
+      </div>
+    </div>
+
+    <div>
+      <div class="terminal">
+        <div class="terminal-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+        <pre class="terminal-body"><span class="prompt">$</span> curl -fsSL https://agentfleet.wecansync.com/install.sh | sh
+<span class="muted">Verifying SHA-256… ok
+Installing under ~/.claude and ~/.local/bin — no root required.</span>
+
+How should Claude Code reach its models?
+<span class="choice selected">1. Claude subscription (default)</span>
+<span class="choice">2. Anthropic API key</span>
+<span class="choice">3. Custom gateway</span></pre>
+      </div>
     </div>
   </div>
-  <div role="tabpanel" id="panel-win" aria-labelledby="tab-win" hidden>
-    <div class="code-wrap">
-      <pre><code>irm https://agentfleet.wecansync.com/install.ps1 | iex</code></pre>
-      <button class="copy-btn" type="button" aria-label="Copy Windows install command">Copy</button>
+</section>
+
+<!-- ============================== FEATURES ============================== -->
+<section class="section" id="why">
+  <div class="container">
+    <p class="eyebrow">Why AgentFleet</p>
+    <h2>A team of specialists, not one all-powerful agent</h2>
+    <p class="lede">Most standard AI tools act as a single, all-powerful agent that can easily make accidental changes and break your software. AgentFleet innovates by replacing this risky setup with a highly structured team of specialized AI assistants.</p>
+    <p class="why-body">Just like a real engineering agency, our AI planners are restricted to reading and strategizing, while separate AI coders and testers handle the actual execution. By strictly limiting what each AI is allowed to touch, planning and review can never edit your code, and changes happen only in the lanes built to make them. This brings true enterprise-grade safety and organization to AI development, letting your team build faster with far less risk of breaking things.</p>
+
+    <div class="features-grid features-grid-two">
+      <div class="feature-card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></div>
+        <h3>11 lanes read, search, and plan</h3>
+        <p>Planning, review, security review, diagnosis, research, exploration, and triage lanes get no <code class="il">Bash</code>, <code class="il">Edit</code>, or <code class="il">Write</code> tools. The doctor fails any read-only lane that has them.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
+        <h3>8 lanes make the changes</h3>
+        <p>Implementation, tests, UI, and docs lanes edit code. No lane has the tool to spawn nested agents, and writable lanes are instructed never to commit, push, or deploy: the main agent integrates and owns every outward-facing action.</p>
+      </div>
     </div>
   </div>
-</div>
-<p>The installer downloads a pinned release, verifies its SHA-256 checksum, and installs only under your home directory; it never needs root or admin rights. Read it first: <a href="/install.sh">install.sh</a> &middot; <a href="/install.ps1">install.ps1</a>.</p>
+</section>
 
-<div aria-live="polite" class="sr-only" id="copy-announce"></div>
+<section class="section section-alt" id="features">
+  <div class="container">
+    <p class="eyebrow">Features</p>
+    <h2>Built to survive a provider change</h2>
+    <p class="lede">Every design decision in AgentFleet exists so that switching providers, or switching models within one provider, never means rewriting your workflow.</p>
 
-<h2>Requirements</h2>
-<ul class="req-list">
-  <li><a href="https://claude.com/claude-code">Claude Code</a></li>
-  <li>Python 3.10+</li>
-  <li>Node.js 18+</li>
-</ul>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v4M15 2v4M6 8h12l-1 5a5 5 0 0 1-10 0z"/><path d="M12 17v3M9 22h6"/></svg></div>
+        <h3>Any provider</h3>
+        <p>Works with your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway whose models are discovered from <code class="il">GET /v1/models</code>.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12.5 12 21l-9-9L11.5 3H20a.5.5 0 0 1 .5.5z"/><circle cx="15.5" cy="7.5" r="1.5"/></svg></div>
+        <h3>Role-named lanes</h3>
+        <p>Lane names describe a role — <code class="il">fleet-implement</code>, <code class="il">fleet-review</code> — never a model, so names and workflows survive provider changes.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5z"/><path d="M2 12l10 5 10-5M2 17l10 5 10-5"/></svg></div>
+        <h3>Capability tiers</h3>
+        <p>Every discovered model gets a tier — cheap, fast, balanced, deep — and each lane is ranked against live models by tier, with automatic fallbacks.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2.1 21 6l-4 3.9M3 12v-1a4 4 0 0 1 4-4h14M7 21.9 3 18l4-3.9M21 12v1a4 4 0 0 1-4 4H3"/></svg></div>
+        <h3>One-command switching</h3>
+        <p><code class="il">agentfleet use &lt;profile&gt;</code> switches providers without reinstalling. Lanes keep their names; only the models behind them change.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.4 8.4 8 11 4.6-2.6 8-6 8-11V5z"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <h3>Safe installs</h3>
+        <p>Backups before every apply, one-command rollback, idempotent re-runs, and no overwriting of files it doesn't own.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><path d="M3 3l18 18"/></svg></div>
+        <h3>Privacy-safe routing log</h3>
+        <p>The routing hook logs the lane, reason, timestamp, and character count — never prompt text — to a mode-0600 file that purges itself.</p>
+      </div>
+      <div class="feature-card feature-wide">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg></div>
+        <div>
+          <h3>One-line install &amp; update</h3>
+          <p>A single command downloads a checksum-verified release into your home directory. No root or admin rights, ever.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
-<h2>First-run wizard</h2>
-<p>On first install you choose a provider:</p>
-<ul>
-  <li><strong>Claude subscription</strong> &mdash; uses Claude Code's own login; lanes map to opus / sonnet / haiku.</li>
-  <li><strong>Anthropic API key</strong></li>
-  <li><strong>Custom gateway</strong> &mdash; any Anthropic-compatible endpoint; you give the URL and the name of the environment variable that holds the token. Models are discovered from the gateway's <code class="il">/v1/models</code> and each lane gets the best match plus fallbacks.</li>
-</ul>
+<!-- ============================== HOW IT WORKS ============================== -->
+<section class="section" id="how-it-works">
+  <div class="container">
+    <p class="eyebrow">How it works</p>
+    <h2>From one command to a ranked fleet</h2>
 
-<details>
-<summary>Non-interactive install</summary>
+    <div class="steps">
+      <div class="step">
+        <h3>Install</h3>
+        <p>One command downloads a checksum-verified release and runs the installer entirely under your home directory.</p>
+      </div>
+      <div class="step">
+        <h3>The wizard picks a provider</h3>
+        <p>Claude subscription, Anthropic API key, or a custom gateway with live model discovery — on first install only.</p>
+      </div>
+      <div class="step">
+        <h3>Lanes are ranked by tier</h3>
+        <p>At startup, every live model is matched against each lane's required capability tier, with the next-best models kept as fallbacks.</p>
+      </div>
+      <div class="step">
+        <h3>Claude Code delegates</h3>
+        <p>The main agent routes each task to the matching lane by role. Restart after a provider switch and the same lane names still apply.</p>
+      </div>
+    </div>
 
-<h3>macOS / Linux, subscription</h3>
-<div class="code-wrap">
-  <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh -s -- --provider native</code></pre>
-  <button class="copy-btn" type="button" aria-label="Copy non-interactive subscription command">Copy</button>
-</div>
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 760 200" role="img" aria-labelledby="diagram-title">
+        <title id="diagram-title">Diagram: 19 lanes are matched to capability tiers, which are matched to live provider models</title>
+        <g font-size="13">
+          <rect class="flow-node accent" x="10" y="30" width="180" height="140" rx="10" stroke-width="1.5"/>
+          <text x="100" y="24" text-anchor="middle" font-weight="700">19 lanes</text>
+          <text x="100" y="70" text-anchor="middle">fleet-plan</text>
+          <text x="100" y="92" text-anchor="middle">fleet-implement</text>
+          <text x="100" y="114" text-anchor="middle">fleet-review</text>
+          <text x="100" y="136" text-anchor="middle">fleet-tests</text>
+          <text x="100" y="158" text-anchor="middle">…and 15 more</text>
 
-<h3>macOS / Linux, gateway</h3>
-<div class="code-wrap">
-  <pre><code>export MY_GATEWAY_TOKEN='…'
-curl -fsSL https://agentfleet.wecansync.com/install.sh | sh -s -- --provider gateway --gateway-url https://gateway.example.com --gateway-token-env MY_GATEWAY_TOKEN</code></pre>
-  <button class="copy-btn" type="button" aria-label="Copy non-interactive gateway command for macOS / Linux">Copy</button>
-</div>
+          <path class="flow-line" d="M190 100 H 300" stroke-width="1.5" fill="none"/>
+          <path class="flow-arrow" d="M300 100 l-8 -5 v10 z"/>
 
-<h3>Windows, gateway</h3>
-<div class="code-wrap">
-  <pre><code>$env:MY_GATEWAY_TOKEN='…'; &amp; ([scriptblock]::Create((irm https://agentfleet.wecansync.com/install.ps1))) --provider gateway --gateway-url https://gateway.example.com --gateway-token-env MY_GATEWAY_TOKEN</code></pre>
-  <button class="copy-btn" type="button" aria-label="Copy non-interactive gateway command for Windows">Copy</button>
-</div>
+          <rect class="flow-node" x="308" y="30" width="150" height="140" rx="10" stroke-width="1.5"/>
+          <text x="383" y="24" text-anchor="middle" font-weight="700">Tiers</text>
+          <text x="383" y="70" text-anchor="middle">cheap</text>
+          <text x="383" y="96" text-anchor="middle">fast</text>
+          <text x="383" y="122" text-anchor="middle">balanced</text>
+          <text x="383" y="148" text-anchor="middle">deep</text>
 
-<h3>Pin a version</h3>
-<div class="code-wrap">
-  <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | AGENTFLEET_VERSION=2.0.0 sh</code></pre>
-  <button class="copy-btn" type="button" aria-label="Copy pin-a-version command">Copy</button>
-</div>
-</details>
+          <path class="flow-line" d="M458 100 H 568" stroke-width="1.5" fill="none"/>
+          <path class="flow-arrow" d="M568 100 l-8 -5 v10 z"/>
 
-<h2>Switch providers any time</h2>
-<div class="code-wrap">
-  <pre><code>agentfleet profiles        # list profiles
-agentfleet use native      # switch to your Claude subscription
-agentfleet use &lt;gateway&gt;   # switch to a gateway</code></pre>
-  <button class="copy-btn" type="button" aria-label="Copy switch-provider commands">Copy</button>
-</div>
-<p>Agents keep their names; only the models behind them change. Restart Claude Code after switching. Gateway tokens are kept in a private file readable only by you.</p>
+          <rect class="flow-node accent" x="576" y="30" width="176" height="140" rx="10" stroke-width="1.5"/>
+          <text x="664" y="24" text-anchor="middle" font-weight="700">Live provider models</text>
+          <text x="664" y="70" text-anchor="middle">Claude subscription</text>
+          <text x="664" y="96" text-anchor="middle">Anthropic API key</text>
+          <text x="664" y="122" text-anchor="middle">Custom gateway</text>
+          <text x="664" y="148" text-anchor="middle">(GET /v1/models)</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+</section>
 
-<h2>The fleet &mdash; 19 lanes</h2>
-<div class="lane-grid">
-  <div class="lane-card"><div class="lane-name">fleet-plan</div><p class="lane-desc">Design and approach before code exists</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-plan-alt</div><p class="lane-desc">Second planning opinion from a different model</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-implement</div><p class="lane-desc">Build features, fix bugs, refactor</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-implement-alt</div><p class="lane-desc">Implementation on an independent model</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-implement-fast</div><p class="lane-desc">Quick, low-latency changes</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-implement-deep</div><p class="lane-desc">Hard, multi-file changes that need deep reasoning</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-implement-cheap</div><p class="lane-desc">Bulk or low-stakes work on budget/free models</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-review</div><p class="lane-desc">Defect review of diffs, branches, plans</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-review-alt</div><p class="lane-desc">Independent second reviewer</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-review-deep</div><p class="lane-desc">Very hard reviews: security, migrations, concurrency, data-loss risk</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-tests</div><p class="lane-desc">Write, fix, investigate tests</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-ui</div><p class="lane-desc">User-facing interface code</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-docs</div><p class="lane-desc">READMEs, guides, changelogs</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-security-review</div><p class="lane-desc">Auth, secrets, injection, trust boundaries</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-diagnose-static</div><p class="lane-desc">Root-cause failures from source</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-explore-narrow</div><p class="lane-desc">Find a symbol, file, or call site</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-triage-static</div><p class="lane-desc">Ownership, scope, next action</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-research-codebase</div><p class="lane-desc">Sweep the repo to explain a system</p></div>
-  <div class="lane-card"><div class="lane-name">fleet-research-web</div><p class="lane-desc">Evaluate external tools and current docs</p></div>
-</div>
+<!-- ============================== LANES ============================== -->
+<section class="section section-alt" id="lanes">
+  <div class="container">
+    <p class="eyebrow">The fleet</p>
+    <h2>19 lanes: 12 task lanes, 7 variants</h2>
+    <p class="lede">Read-only lanes get no <code class="il">Bash</code>, <code class="il">Edit</code>, or <code class="il">Write</code> tools. No lane can spawn nested agents, and writable lanes are instructed never to commit, push, or deploy — the main agent owns integration and every outward-facing action.</p>
 
-<h2>Everyday commands</h2>
-<div class="code-wrap">
-  <pre><code>/fleet-setup              # inside Claude Code: audit models, settings, hooks, agents, skills and tune the fleet
-agentfleet status         # show current profile and lane health
-agentfleet doctor         # diagnose configuration problems
-agentfleet sync           # pull latest lane definitions
-agentfleet update         # update AgentFleet itself
-agentfleet uninstall      # remove AgentFleet cleanly</code></pre>
-  <button class="copy-btn" type="button" aria-label="Copy everyday commands">Copy</button>
-</div>
+    <div class="lane-group">
+      <h3>Task lanes</h3>
+      <div class="lane-grid">
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-plan</span><span class="tag tag-ro">Read-only</span></div><p class="lane-desc">Planning and architecture</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-implement</span><span class="tag tag-rw">Writable</span></div><p class="lane-desc">General implementation</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-review</span><span class="tag tag-ro">Read-only</span></div><p class="lane-desc">Code review</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-tests</span><span class="tag tag-rw">Writable</span></div><p class="lane-desc">Test writing</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-ui</span><span class="tag tag-rw">Writable</span></div><p class="lane-desc">UI/frontend work</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-docs</span><span class="tag tag-rw">Writable</span></div><p class="lane-desc">Documentation</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-security-review</span><span class="tag tag-ro">Read-only</span></div><p class="lane-desc">Security review</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-diagnose-static</span><span class="tag tag-ro">Read-only</span></div><p class="lane-desc">Static diagnosis</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-explore-narrow</span><span class="tag tag-ro">Read-only</span></div><p class="lane-desc">Bounded exploration</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-triage-static</span><span class="tag tag-ro">Read-only</span></div><p class="lane-desc">Issue triage</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-research-codebase</span><span class="tag tag-ro">Read-only</span></div><p class="lane-desc">Repository research (no web tools)</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-research-web</span><span class="tag tag-ro">Read-only</span></div><p class="lane-desc">Web research (WebSearch, WebFetch)</p></div>
+      </div>
+    </div>
 
-</div>
+    <div class="lane-group">
+      <h3>Variant lanes</h3>
+      <p class="text-muted">Named for a capability, never a model, so names survive provider changes.</p>
+      <div class="lane-grid">
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-plan-alt</span><span class="tag tag-ro">Read-only</span></div><p class="lane-desc">Alternate planning model</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-implement-alt</span><span class="tag tag-rw">Writable</span></div><p class="lane-desc">Alternate implementation model</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-implement-fast</span><span class="tag tag-rw">Writable</span></div><p class="lane-desc">Low-latency implementation</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-implement-deep</span><span class="tag tag-rw">Writable</span></div><p class="lane-desc">Reasoning-capable implementation</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-implement-cheap</span><span class="tag tag-rw">Writable</span></div><p class="lane-desc">Budget or free-tier implementation</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-review-alt</span><span class="tag tag-ro">Read-only</span></div><p class="lane-desc">Independent review model</p></div>
+        <div class="lane-card"><div class="lane-name-row"><span class="lane-name">fleet-review-deep</span><span class="tag tag-ro">Read-only</span></div><p class="lane-desc">Deep review: security, migration, concurrency, data-loss</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== PROVIDERS & PROFILES ============================== -->
+<section class="section" id="providers">
+  <div class="container">
+    <p class="eyebrow">Providers &amp; profiles</p>
+    <h2>Switch providers without reinstalling</h2>
+    <p class="lede">Profiles save the current setup before switching, so switching back restores it exactly. Restart Claude Code after switching.</p>
+    <div class="code-wrap">
+      <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy provider profile commands">Copy</button></div>
+      <pre><code>agentfleet profiles          # list saved profiles (* = active)
+agentfleet use native        # switch to your Claude login
+agentfleet use &lt;name&gt;        # switch to a saved gateway profile
+agentfleet save &lt;name&gt;       # name the current setup</code></pre>
+    </div>
+    <p class="text-muted">Gateway tokens are stored at <code class="il">~/.claude/agentfleet/secrets/&lt;name&gt;.token</code> (mode 0600). Switching to <code class="il">native</code> removes gateway environment overrides and maps lanes back to the <code class="il">opus</code>/<code class="il">sonnet</code>/<code class="il">haiku</code> aliases.</p>
+  </div>
+</section>
+
+<!-- ============================== SAFETY & PRIVACY ============================== -->
+<section class="section section-alt" id="safety">
+  <div class="container">
+    <p class="eyebrow">Safety &amp; privacy</p>
+    <h2>Nothing changes without a backup</h2>
+    <div class="features-grid">
+      <div class="feature-card">
+        <h3>Backups before every apply</h3>
+        <p>All managed files are copied to a mode-0700 snapshot under <code class="il">~/.claude/backups/claude-agents-config/</code> before any write.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Rollback</h3>
+        <p><code class="il">agentfleet rollback</code> restores the newest backup (<code class="il">agentfleet rollback --backup DIR</code> restores a named one). The backup is kept until you remove it.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Idempotent &amp; non-destructive</h3>
+        <p>Repeated installs produce the same configuration. Uninstall removes only files and hook entries this bundle owns.</p>
+      </div>
+      <div class="feature-card">
+        <h3>No accidental overwrites</h3>
+        <p>Existing files without the bundle's ownership marker are never overwritten without <code class="il">--force-owned</code>.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Credential safety</h3>
+        <p>The scanner checks for credential-shaped literals. The gateway token is the only secret normally needed.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Privacy-safe routing log</h3>
+        <p>Only a <code class="il">no-match</code> entry keeps a redacted, max-160-character excerpt. Text is purged after 14 days, entries after 90.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== REQUIREMENTS ============================== -->
+<section class="section" id="requirements">
+  <div class="container-narrow">
+    <p class="eyebrow">Requirements</p>
+    <h2>What you need first</h2>
+    <ul class="req-list">
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <a href="https://claude.com/claude-code">Claude Code</a></li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Python 3.10+</li>
+      <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Node.js 18+</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================== FAQ ============================== -->
+<section class="section section-alt" id="faq">
+  <div class="container-narrow">
+    <p class="eyebrow">FAQ</p>
+    <h2>Frequently asked questions</h2>
+    <div class="faq-list">
+      <details class="faq-item">
+        <summary>Does it work with my Claude subscription?</summary>
+        <p>Yes. It's the default provider: the wizard's first choice uses Claude Code's own login, and lanes map to the <code class="il">opus</code>, <code class="il">sonnet</code>, and <code class="il">haiku</code> aliases.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What does "any provider" actually mean?</summary>
+        <p>An Anthropic API key, or any Anthropic-compatible gateway whose models are discovered from <code class="il">GET /v1/models</code>. Catalogs report context size but not price or speed, which is why explicit tier labels exist.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I pin a lane to a specific model?</summary>
+        <p>Yes: <code class="il">claude-fleet-setup --prefer fleet-implement=my-model-id</code>. Clear a pin with <code class="il">claude-fleet-setup --prefer fleet-implement=</code>. A lane with an explicit preferred list respects your order.</p>
+      </details>
+      <details class="faq-item">
+        <summary>How do I roll back or uninstall?</summary>
+        <p><code class="il">agentfleet rollback</code> restores the newest backup. <code class="il">agentfleet uninstall</code> removes only the files and hook entries this bundle owns and restores earlier settings.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Where do my own Claude Code instructions go?</summary>
+        <p>In <code class="il">~/.claude/rules/*.md</code>. Claude Code loads those every session and AgentFleet never touches them, because AgentFleet manages and rewrites <code class="il">~/.claude/CLAUDE.md</code> itself.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Does updating re-run the setup wizard?</summary>
+        <p>No. Updates never run the wizard — they keep your installed profile. Only a fresh interactive install, or an explicit <code class="il">--wizard</code> flag, prompts you.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What happens when I switch providers?</summary>
+        <p>Switching first saves the current setup, so switching back restores it exactly. Lane names never change — only the models behind them do. Restart Claude Code after switching.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== CLOSING CTA ============================== -->
+<section class="section">
+  <div class="container center">
+    <h2>Install AgentFleet in one command</h2>
+    <p class="lede center" style="margin:0 auto 1.5rem">No root, no admin rights, checksum-verified releases.</p>
+    <div class="btn-row center" style="justify-content:center">
+      <a class="btn btn-primary" href="/docs/#install">Get started</a>
+      <a class="btn btn-secondary" href="https://github.com/wecansync/claude-agents-config">View on GitHub</a>
+    </div>
+  </div>
+</section>
+
 </main>
 
-<footer>
-  <div class="wrap">
-    <p><a href="https://github.com/wecansync/claude-agents-config">GitHub</a> &middot; MIT License</p>
-    <p>AgentFleet is an independent project by WeCanSync. It is not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-top">
+      <div class="maker-credit">
+        <span>An open-source project by</span>
+        <a href="https://wecansync.com">
+          <img class="logo-dark" src="/assets/logo-dark.png?v=1" alt="WeCanSync" width="59" height="20">
+          <img class="logo-light" src="/assets/logo-light.png?v=1" alt="WeCanSync" width="59" height="20">
+        </a>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/wecansync/claude-agents-config">GitHub</a>
+        <a href="https://github.com/wecansync/claude-agents-config/blob/main/LICENSE">MIT License</a>
+        <a href="/docs/">Docs</a>
+      </div>
+    </div>
+    <p class="disclaimer">AgentFleet is an independent project by WeCanSync. It is not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
   </div>
 </footer>
 
-<script>
-(function(){
-  /* --- Tab switching --- */
-  var tablist = document.querySelector('[role=tablist]');
-  var tabs = Array.prototype.slice.call(tablist.querySelectorAll('[role=tab]'));
-  var panels = tabs.map(function(t){ return document.getElementById(t.getAttribute('aria-controls')); });
-
-  function activate(tab){
-    tabs.forEach(function(t,i){
-      var selected = t === tab;
-      t.setAttribute('aria-selected', selected ? 'true' : 'false');
-      t.tabIndex = selected ? 0 : -1;
-      if(selected){ panels[i].removeAttribute('hidden'); } else { panels[i].setAttribute('hidden',''); }
-    });
-    tab.focus();
-  }
-
-  tablist.addEventListener('click', function(e){
-    var t = e.target.closest('[role=tab]');
-    if(t) activate(t);
-  });
-
-  tablist.addEventListener('keydown', function(e){
-    var idx = tabs.indexOf(document.activeElement);
-    if(idx < 0) return;
-    var next = -1;
-    if(e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % tabs.length;
-    else if(e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (idx - 1 + tabs.length) % tabs.length;
-    else if(e.key === 'Home') next = 0;
-    else if(e.key === 'End') next = tabs.length - 1;
-    if(next >= 0){ e.preventDefault(); activate(tabs[next]); }
-  });
-
-  /* Detect OS and preselect tab */
-  try {
-    var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
-    if(/win/i.test(ua)) activate(tabs[1]);
-  } catch(e){}
-
-  /* --- Copy buttons --- */
-  var announce = document.getElementById('copy-announce');
-  var btns = Array.prototype.slice.call(document.querySelectorAll('.copy-btn'));
-
-  btns.forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var code = btn.parentNode.querySelector('code');
-      if(!code) return;
-      var text = code.textContent;
-      var done = function(){
-        btn.textContent = 'Copied';
-        btn.setAttribute('data-copied','true');
-        announce.textContent = 'Copied to clipboard';
-        setTimeout(function(){
-          btn.textContent = 'Copy';
-          btn.removeAttribute('data-copied');
-          announce.textContent = '';
-        }, 1500);
-      };
-      if(navigator.clipboard && navigator.clipboard.writeText){
-        navigator.clipboard.writeText(text).then(done).catch(fallback);
-      } else {
-        fallback();
-      }
-      function fallback(){
-        try {
-          var range = document.createRange();
-          range.selectNodeContents(code);
-          var sel = window.getSelection();
-          sel.removeAllRanges();
-          sel.addRange(range);
-          document.execCommand('copy');
-          sel.removeAllRanges();
-          done();
-        } catch(e){ btn.textContent = 'Select & copy manually'; setTimeout(function(){ btn.textContent = 'Copy'; },2000); }
-      }
-    });
-  });
-})();
-</script>
+<script src="/assets/site.js?v=1"></script>
 </body>
 </html>

@@ -2183,6 +2183,25 @@ class AgentFleetTwoTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             self.assertIn("--home", (home / "update-args").read_text())
 
+    def test_agentfleet_rollback_restores_the_pre_install_state(self):
+        with tempfile.TemporaryDirectory(prefix="agentfleet rollback ") as raw:
+            home, config, store = Path(raw) / "home", Path(raw) / "config", Path(raw) / "store"
+            (home / ".claude").mkdir(parents=True)
+            original = b'{\n  "theme": "light-daltonized"\n}\n'
+            (home / ".claude/settings.json").write_bytes(original)
+            version = (ROOT / "VERSION").read_text().strip()
+            (store / "releases").mkdir(parents=True)
+            (store / "current").write_text(version + "\n")
+            (store / "releases" / version).symlink_to(ROOT, target_is_directory=True)
+            env = self.env_for(home, config, AGENTFLEET_HOME=str(store))
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            self.assertNotEqual((home / ".claude/settings.json").read_bytes(), original)
+            rollback = subprocess.run([str(home / ".local/bin/agentfleet"), "rollback"], env=env, text=True, capture_output=True)
+            self.assertEqual(rollback.returncode, 0, rollback.stderr + rollback.stdout)
+            self.assertEqual((home / ".claude/settings.json").read_bytes(), original)
+            self.assertFalse(list((home / ".claude/agents").glob("fleet-*.md")) if (home / ".claude/agents").exists() else [])
+
     def test_doctor_rejects_write_tools_on_read_only_lanes(self):
         with tempfile.TemporaryDirectory(prefix="agentfleet readonly ") as raw:
             home, config = Path(raw) / "home", Path(raw) / "config"
