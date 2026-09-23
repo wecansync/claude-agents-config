@@ -10,7 +10,7 @@ hook, a privacy-safe status line, a global `CLAUDE.md`, and the `/fleet-setup`
 skill. Everything lives under your home directory; no root or admin access is
 required.
 
-Version: **2.0.0** — MIT license. See [LICENSE](LICENSE).
+Version: **2.0.1** — MIT license. See [LICENSE](LICENSE).
 
 > AgentFleet is an independent project by WeCanSync. It is not affiliated with
 > or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.
@@ -238,7 +238,10 @@ maps lanes to the `opus`/`sonnet`/`haiku` aliases.
 - `~/.claude/settings.json` — merged settings. Unrelated permissions, hooks,
   plugins, and environment values are preserved. Mode 0600 because it can
   contain a gateway token.
-- `~/.claude/CLAUDE.md` — the global delegation policy.
+- `~/.claude/CLAUDE.md` — the global delegation policy. AgentFleet manages this
+  file and rewrites it on update; keep your own instructions in
+  `~/.claude/rules/*.md`, which Claude Code loads in every session and
+  AgentFleet never touches.
 - `~/.claude/route-to-fleet.py` — UserPromptSubmit routing hook.
 - `~/.claude/subagent-statusline.py` — native subagent status rendering.
 - `~/.claude/sync-provider-models.mjs` — startup hook for gateway model

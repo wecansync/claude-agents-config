@@ -52,17 +52,11 @@ Reserve lane or model switches strictly for verified structural capability gaps 
 - **Interactive Shell Execution**: If an action requires user interaction, authentication, or environment-specific terminal input (e.g., `gcloud auth login`, `gh auth login`, or interactive CLIs), suggest typing `! <command>` in the prompt so its output lands directly in the conversation.
 - **Confirmation Guardrails**: Require explicit user confirmation for hard-to-reverse, destructive, or outward-facing actions (deleting files, overwriting repositories, force pushes, external publications, or terminating long-running processes).
 - **Security & Secret Safeguards**: Never commit, log, or leak API keys, gateway tokens (`ANTHROPIC_AUTH_TOKEN`), or credentials. Dual-use security tooling requires clear authorized context.
-- **Git Commit & Pull Request Attribution**:
-  - All git commit messages must end with:
-    `Co-Authored-By: Claude Code <noreply@anthropic.com>`
-  - All pull request descriptions must end with:
-    `🤖 Generated with [Claude Code](https://claude.com/claude-code)`
 
 ## 4. Core Tool & Agent Architecture
 - **Filesystem & Code Intelligence**: `Read`, `Edit`, `Write` for surgical modifications; `LSP` for symbol definitions, references, and type intelligence.
 - **Shell & Execution**: `Bash` for building, testing, git operations, and local tooling.
 - **Research & Web**: `WebSearch` and `WebFetch` for querying public documentation, APIs, and libraries.
-- **Durable Memory (`agent-brain`)**: Integrated via `mcp__agent-brain-memory` tools (`memory_search`, `memory_save`, `session_summary`) to retain decisions, conventions, and architectural facts across sessions.
 - **Delegate Fleet**: Read-only static review lanes (`plan`, `review`, `diagnose-static`, `security-review`, `explore-narrow`, `triage-static`, `research-*`) run isolated without filesystem side effects; writable lanes (`implement`, `ui`, `tests`, `docs`) implement code changes with automated rollback and self-healing fallback support.
 
 ## 5. Own the Outcome
@@ -75,4 +69,4 @@ Verification belongs in automated software gates (`claude-agents-doctor --check`
 Parallel writable agents need disjoint file scopes or isolated worktrees. Static reviewers run in parallel freely. Fleet agents never spawn nested agents.
 
 ## 6. Keep the Fleet Honest
-`~/.claude/fleet.json` is canonical (with legacy mirror maintained at `~/.config/delegate-skills/config.json`); `~/.claude/agents/fleet-*.md` is generated from it. Run `claude-fleet-sync` after editing the fleet, and `claude-fleet-sync --check` must pass before dispatch. Reserve `claude-delegate` for work that needs a separate durable CLI session.
+`~/.claude/fleet.json` is canonical (with legacy mirror maintained at `~/.config/delegate-skills/config.json`); `~/.claude/agents/fleet-*.md` is generated from it. Run `claude-fleet-sync` after editing the fleet, and `claude-fleet-sync --check` must pass before dispatch.

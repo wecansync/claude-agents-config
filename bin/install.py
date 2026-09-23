@@ -84,6 +84,9 @@ RETIRED_LANES = {
     "implement-10-sonnet", "implement-11-terra", "implement-12-openclaw-free", "implement-13-grok-no-cache",
     "review-02-opus", "review-03-terra", "review-04-gemini", "review-05-grok", "review-06-astra",
 }
+# Permission-mode settings only the first 1.x release shipped; an update
+# retracts them unless the user changed them.
+PERMISSION_MODE_KEYS = ("defaultMode", "skipDangerousModePermissionPrompt")
 # User-owned lane fields carried across an update; everything else comes from
 # the bundle so lane definitions can evolve.
 CARRIED_LANE_FIELDS = ("preferred", "model", "fallbacks")
@@ -1003,8 +1006,8 @@ def direct_template(template: dict) -> dict:
         "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
     }
     result["env"] = {key: value for key, value in env.items() if key not in dropped}
-    result.pop("defaultMode", None)
-    result.pop("skipDangerousModePermissionPrompt", None)
+    for key in PERMISSION_MODE_KEYS:
+        result.pop(key, None)
     return result
 
 
@@ -1023,13 +1026,21 @@ def existing_fleet_map(home: Path, config_root: Path) -> dict:
     return {}
 
 
-def carry_lane_choices(bundle_fleet: dict, existing: dict) -> dict:
+def version_key(value: object) -> tuple[int, ...]:
+    """(major, minor, patch) of a recorded version; () when there is none."""
+    return tuple(int(part) for part in re.findall(r"[0-9]+", value)[:3]) if isinstance(value, str) else ()
+
+
+def carry_lane_choices(bundle_fleet: dict, existing: dict, *, drop_shipped_pins: bool = False) -> dict:
     """Keep the user's per-lane model choices across an update.
 
     Old lane names are mapped to their successors; lanes the bundle no longer
     ships are dropped (their generated agents are pruned by the installer).
-    Model-tier labels written by the setup wizard are kept as well.
+    Model-tier labels written by the setup wizard are kept as well. With
+    drop_shipped_pins (an update from before 2.0.1), preferences 1.0.0 shipped
+    as defaults are dropped once instead of being carried as user choices.
     """
+    shipped = reconcile_module().is_shipped_1_0_preference
     result = copy.deepcopy(bundle_fleet)
     old_lanes = existing.get("lanes") if isinstance(existing.get("lanes"), dict) else {}
     for old_name, old_config in old_lanes.items():
@@ -1048,6 +1059,8 @@ def carry_lane_choices(bundle_fleet: dict, existing: dict) -> dict:
             if field == "model" and isinstance(value, str) and value:
                 target["model"] = value
             elif field in {"preferred", "fallbacks"} and isinstance(value, list):
+                if field == "preferred" and drop_shipped_pins and shipped(name, value):
+                    continue
                 values = [item for item in value if isinstance(item, str) and item]
                 if values:
                     target[field] = values
@@ -1205,6 +1218,22 @@ def merge_settings(
             # preserving a later user edit to the same setting.
             record_value_journal(journal, identity, [key], desired[key], value, prior)
             desired[key] = copy.deepcopy(value)
+
+    # A default the bundle no longer ships becomes the user's: forget its
+    # ownership, so later updates and uninstall leave the value alone. The
+    # exception is a permission bypass an early release shipped: if the user
+    # never changed it, the update takes it back instead.
+    for identity in list(journal):
+        key = identity.removeprefix("value:")
+        if not identity.startswith("value:") or ":" in key or key in template:
+            continue
+        entry = journal[identity]
+        if key in PERMISSION_MODE_KEYS and entry.get("installedPresent") and key in desired and desired[key] == entry.get("installed"):
+            if entry.get("beforePresent"):
+                desired[key] = copy.deepcopy(entry.get("before"))
+            else:
+                del desired[key]
+        del journal[identity]
 
     env = desired.get("env") if isinstance(desired.get("env"), dict) else {}
     env_was_absent = env_before is ABSENT
@@ -2203,6 +2232,7 @@ def profile_data(
     gateway_token: str | None,
     policy: dict,
     tier_labels: dict[str, str] | None = None,
+    drop_shipped_pins: bool = False,
 ) -> tuple[str, bytes, dict, dict, str]:
     """Return (profile, fleet bytes, fleet, settings template, catalog note)."""
     template = load_json(bundle / "config/settings.template.json", "settings template")
@@ -2211,7 +2241,7 @@ def profile_data(
     note = ""
     if gateway_mode:
         profile = "gateway"
-        carried = carry_lane_choices(fleet_source, existing_fleet_map(home, config_root))
+        carried = carry_lane_choices(fleet_source, existing_fleet_map(home, config_root), drop_shipped_pins=drop_shipped_pins)
         if tier_labels:
             carried["modelTiers"] = {**carried.get("modelTiers", {}), **tier_labels}
         url = gateway_url or (existing.get("env") or {}).get("ANTHROPIC_BASE_URL")
@@ -2239,7 +2269,7 @@ def profile_data(
     else:
         # Custom lanes carry over here too; direct_fleet then maps every lane,
         # custom ones included, to the native alias for its tier.
-        fleet = direct_fleet(carry_lane_choices(fleet_source, existing_fleet_map(home, config_root)))
+        fleet = direct_fleet(carry_lane_choices(fleet_source, existing_fleet_map(home, config_root), drop_shipped_pins=drop_shipped_pins))
         template_profile = direct_template(template)
         profile = "direct-anthropic"
     fleet_bytes = json_bytes(fleet)
@@ -2442,6 +2472,9 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
         profile, fleet_bytes, fleet, template, catalog_note = profile_data(
             bundle, gateway_mode, home=home, config_root=config_root, existing=existing,
             gateway_url=args.gateway_url, gateway_token=gateway_token, policy=policy, tier_labels=labels,
+            # One-time migration of 1.0.0's shipped pins. A fresh install
+            # also qualifies, harmlessly: it has no fleet to carry.
+            drop_shipped_pins=version_key(previous.get("version")) < (2, 0, 1),
         )
         if catalog_note:
             print(catalog_note)

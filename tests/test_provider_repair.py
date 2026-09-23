@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socketserver
 import subprocess
@@ -1923,11 +1924,19 @@ class AgentFleetTwoTests(unittest.TestCase):
             self.assertIn('model: "opus"', (home / ".claude/agents/fleet-plan.md").read_text())
             self.assertEqual(subprocess.run(doctor, env=env, text=True, capture_output=True).returncode, 0)
 
+            saved_work = home / ".claude/agentfleet/profiles/work.json"
+            profile = json.loads(saved_work.read_text())
+            self.assertIn("agentfleetVersion", profile)
+            # Simulate a profile 2.0.0 saved while the 1.0.0 pins were live.
+            del profile["agentfleetVersion"]
+            profile["lanes"]["review-deep"]["preferred"] = ["codex-astra[1m]", "codex-sol[1m]", "claude-opus-5[1m]"]
+            saved_work.write_text(json.dumps(profile))
             back = subprocess.run([agentfleet, "use", "work"], env=env, text=True, capture_output=True)
             self.assertEqual(back.returncode, 0, back.stderr)
             restored = json.loads((home / ".claude/settings.json").read_text())
             self.assertEqual(restored["env"]["ANTHROPIC_BASE_URL"], endpoint)
             self.assertEqual(restored["env"]["ANTHROPIC_AUTH_TOKEN"], "fake-token")
+            self.assertNotIn("preferred", json.loads((home / ".claude/fleet.json").read_text())["lanes"]["review-deep"], "a 2.0.0 profile does not restore 1.0.0 pins")
             self.assertEqual({lane: config["model"] for lane, config in json.loads((home / ".claude/fleet.json").read_text())["lanes"].items()},
                              {lane: config["model"] for lane, config in gateway_lanes.items()}, "switching back restores every lane")
             result = subprocess.run(doctor, env=env, text=True, capture_output=True)
@@ -1980,12 +1989,25 @@ class AgentFleetTwoTests(unittest.TestCase):
             self.assertNotIn("sync-omniroute-models.mjs", settings_text)
             lanes = json.loads((home / ".claude/fleet.json").read_text())["lanes"]
             self.assertEqual(lanes["implement-fast"]["model"], "codex-5.5", "the old lane's preference moved to its successor")
+            self.assertEqual(lanes["implement-fast"]["preferred"], ["codex-5.5"], "a user's own preference is kept")
+            pinned = sorted(lane for lane, config in lanes.items() if lane != "implement-fast" and config.get("preferred"))
+            self.assertEqual(pinned, [], "1.0.0's shipped preferences are bundle defaults, not user choices")
+            self.assertEqual([lane for lane, config in lanes.items() if not config.get("fallbacks")], [], "tier ranking gives every lane fallbacks")
+            # 1.0.0 shipped personal preferences; 2.0 stops shipping them but
+            # leaves the installed values, which now belong to the user.
+            upgraded = json.loads((home / ".claude/settings.json").read_text())
+            self.assertEqual((upgraded.get("effortLevel"), upgraded.get("outputStyle")), ("xhigh", "concise"))
+            template = json.loads((ROOT / "config/settings.template.json").read_text())
+            self.assertFalse({"effortLevel", "outputStyle", "tui", "agentPushNotifEnabled"} & set(template))
+            self.assertNotIn("Co-Authored-By", (home / ".claude/CLAUDE.md").read_text())
             doctor = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], env=env, text=True, capture_output=True)
             self.assertEqual(doctor.returncode, 0, doctor.stdout + doctor.stderr)
             sync = subprocess.run([str(home / ".local/bin/claude-fleet-sync"), "--check"], env=env, text=True, capture_output=True)
             self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
             uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(uninstall.returncode, 0, uninstall.stderr)
+            remaining = json.loads((home / ".claude/settings.json").read_text())
+            self.assertEqual(remaining.get("effortLevel"), "xhigh", "uninstall leaves values the bundle no longer ships")
 
 
     def test_first_run_wizard_gateway_flow_with_tier_edit(self):
@@ -2086,6 +2108,61 @@ class AgentFleetTwoTests(unittest.TestCase):
         self.assertNotEqual(resolved["lanes"]["review-alt"]["model"], resolved["lanes"]["review"]["model"])
 
 
+    def test_dropped_defaults_become_user_owned_and_shipped_bypass_is_retracted(self):
+        spec = importlib.util.spec_from_file_location("agentfleet_install_journal", ROOT / "bin/install.py")
+        installer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(installer)
+        template = json.loads((ROOT / "config/settings.template.json").read_text())
+        shipped = {"effortLevel": "xhigh", "defaultMode": "bypassPermissions", "skipDangerousModePermissionPrompt": True}
+        previous = {"settingsJournal": [
+            {"id": f"value:{key}", "kind": "value", "path": [key], "beforePresent": False, "before": None, "installedPresent": True, "installed": value}
+            for key, value in shipped.items()
+        ]}
+        args = installer.argparse.Namespace(force_owned=False, allow_insecure_http=False)
+        with tempfile.TemporaryDirectory(prefix="agentfleet journal ") as raw:
+            home = Path(raw)
+            desired, journal, *_ = installer.merge_settings(dict(shipped), template, home, home / ".config", args, False, previous, False, None, set())
+            owned = {entry["id"] for entry in journal} if isinstance(journal, list) else set(journal)
+            self.assertEqual(desired.get("effortLevel"), "xhigh", "an update never deletes a dropped preference")
+            self.assertNotIn("defaultMode", desired, "an unchanged shipped permission bypass is taken back")
+            self.assertNotIn("skipDangerousModePermissionPrompt", desired)
+            self.assertFalse({"value:effortLevel", "value:defaultMode", "value:skipDangerousModePermissionPrompt"} & owned)
+            # A bypass the user set themselves after install is theirs.
+            edited = {**shipped, "defaultMode": "acceptEdits"}
+            desired, *_ = installer.merge_settings(edited, template, home, home / ".config", args, False, previous, False, None, set())
+            self.assertEqual(desired.get("defaultMode"), "acceptEdits")
+
+    def test_shipped_pins_are_dropped_only_when_migrating(self):
+        spec = importlib.util.spec_from_file_location("agentfleet_install_pins", ROOT / "bin/install.py")
+        installer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(installer)
+        bundle = json.loads((ROOT / "config/delegate-fleet.json").read_text())
+        shipped = ["claude-opus-5[1m]", "codex-sol[1m]", "agy-claude-opus[1m]"]
+        existing = {"lanes": {"plan": {"preferred": shipped}, "review": {"preferred": ["codex-sol[1m]", 7, "claude-opus-5[1m]", "agy-claude-opus[1m]"]}}}
+        migrated = installer.carry_lane_choices(bundle, existing, drop_shipped_pins=True)["lanes"]
+        self.assertNotIn("preferred", migrated["plan"])
+        self.assertEqual(migrated["review"]["preferred"], ["codex-sol[1m]", "claude-opus-5[1m]", "agy-claude-opus[1m]"], "only an exact shipped list is dropped")
+        kept = installer.carry_lane_choices(bundle, existing, drop_shipped_pins=False)["lanes"]
+        self.assertEqual(kept["plan"]["preferred"], shipped, "after the migration a matching list is the user's own pin")
+        self.assertLess(installer.version_key("1.0.0"), (2, 0, 1))
+        self.assertLess(installer.version_key("2.0.0"), (2, 0, 1))
+        self.assertLess(installer.version_key(None), (2, 0, 1))
+        self.assertFalse(installer.version_key("2.0.1") < (2, 0, 1))
+
+    def test_doctor_rejects_write_tools_on_read_only_lanes(self):
+        with tempfile.TemporaryDirectory(prefix="agentfleet readonly ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config)
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            agent = home / ".claude/agents/fleet-review-deep.md"
+            text = agent.read_text()
+            self.assertNotIn("Bash", text)
+            agent.write_text(re.sub(r"^tools: (.*)$", r"tools: \1, Bash", text, count=1, flags=re.M))
+            doctor = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], env=env, text=True, capture_output=True)
+            self.assertNotEqual(doctor.returncode, 0)
+            self.assertIn("static lane has write or nested-agent tools", doctor.stdout + doctor.stderr)
+
     def test_custom_lane_survives_reinstall_and_profile_switch(self):
         if shutil.which("node") is None:
             self.skipTest("Node.js is required for the agent generator")
@@ -2123,6 +2200,8 @@ class AgentFleetTwoTests(unittest.TestCase):
                 for mirror in (home / ".claude/fleet.json", config / "delegate-skills/config.json"):
                     data = json.loads(mirror.read_text())
                     data["lanes"]["db-tuner"] = lane
+                    # Read-only wins over a name that sounds writable.
+                    data["lanes"]["implement-audit"] = {**lane, "description": "Audit an implementation plan."}
                     mirror.write_text(json.dumps(data, indent=2) + "\n")
                 setup = str(bindir / "claude-fleet-setup")
                 run([setup, "--reconcile"])
@@ -2130,6 +2209,8 @@ class AgentFleetTwoTests(unittest.TestCase):
                 again = run(install)
                 self.assertIn("Keeping custom lane(s): fleet-db-tuner", again.stdout)
                 self.assertEqual(custom_model(), expected)
+                audit_tools = re.search(r"^tools: (.*)$", (home / ".claude/agents/fleet-implement-audit.md").read_text(), re.M).group(1)
+                self.assertNotIn("Bash", audit_tools)
                 if provider == "native":
                     run([setup, "--prefer", "db-tuner=sonnet"])
                     run(install)

@@ -45,10 +45,11 @@ FORBIDDEN_SOURCE_STRINGS = (
     "/" + "mnt/html",
     "/" + "var/www/html/" + "claude-agents-config",
 )
+# Lanes that must never get write or nested-agent tools, whatever the fleet
+# map says; any other lane marked readOnly is held to the same rule.
 STATIC_ROLES = {
-    "plan", "plan-alt", "review", "review-02-opus", "review-03-terra",
-    "review-04-gemini", "review-05-grok", "review-06-astra", "diagnose-static", "security-review",
-    "research-codebase", "explore-narrow", "triage-static",
+    "plan", "plan-alt", "review", "review-alt", "review-deep", "diagnose-static", "security-review",
+    "research-codebase", "research-web", "explore-narrow", "triage-static",
 }
 AUTO_COMPACT_WINDOW = 800000
 AUTO_COMPACT_MIN = 100000
@@ -332,7 +333,7 @@ def validate_agents(home: Path, config_root: Path, fleet: dict, settings: dict, 
         if GENERATED_MARKER not in text:
             fail(errors, f"agent is not generator-owned: {path}")
         tools = {part.strip() for part in fm.get("tools", "").split(",")}
-        if lane in STATIC_ROLES and tools.intersection({"Bash", "Edit", "Write", "Agent"}):
+        if (lane in STATIC_ROLES or (isinstance(config, dict) and config.get("readOnly") is True)) and tools.intersection({"Bash", "Edit", "Write", "Agent"}):
             fail(errors, f"static lane has write or nested-agent tools: {path}")
         if lane == "research-web" and not {"WebSearch", "WebFetch"}.issubset(tools):
             fail(errors, f"research-web lacks WebSearch/WebFetch: {path}")

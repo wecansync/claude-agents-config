@@ -363,6 +363,78 @@ def lane_tier(lane: str, config: dict) -> str:
     return "deep" if config.get("readOnly") is True else "balanced"
 
 
+# Model preferences 1.0.0 shipped (and seeded into every install) per lane,
+# keyed by the 2.0 lane name. A `preferred` list that matches one exactly was
+# a bundle default, not the user's choice; left alone it would pin the lane to
+# vendor model names instead of tier ranking.
+SHIPPED_1_0_PREFERRED: dict[str, tuple[tuple[str, ...], ...]] = {
+    "diagnose-static": (
+        ("codex-sol-max[1m]", "codex-sol[1m]", "claude-opus-5[1m]",),
+    ),
+    "docs": (
+        ("agy-claude-sonnet[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "explore-narrow": (
+        ("claude-haiku", "cursor-auto",),
+        ("claude-haiku", "cursor-auto", "qwen-3.8-128k-ctx",),
+    ),
+    "implement": (
+        ("codex-luna[1m]", "claude-sonnet-5[1m]", "agy-gemini-flash[1m]",),
+    ),
+    "implement-alt": (
+        ("agy-claude-sonnet[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "implement-cheap": (
+        ("omniroute-free-1m-ctx[1m]", "omniroute-free-256k-ctx",),
+    ),
+    "implement-deep": (
+        ("agy-claude-opus[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "implement-fast": (
+        ("agy-gemini-flash[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "plan": (
+        ("claude-opus-5[1m]", "codex-sol[1m]", "agy-claude-opus[1m]",),
+    ),
+    "plan-alt": (
+        ("codex-sol[1m]", "claude-opus-5[1m]", "agy-claude-opus[1m]",),
+    ),
+    "research-codebase": (
+        ("agy-gemini-pro[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "research-web": (
+        ("agy-gemini-pro[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "review": (
+        ("codex-sol[1m]", "claude-opus-5[1m]", "agy-claude-opus[1m]",),
+    ),
+    "review-alt": (
+        ("claude-opus-5[1m]", "codex-sol[1m]", "agy-claude-opus[1m]",),
+    ),
+    "review-deep": (
+        ("codex-astra[1m]", "codex-sol[1m]", "claude-opus-5[1m]",),
+    ),
+    "security-review": (
+        ("claude-opus-5[1m]", "agy-claude-opus[1m]", "codex-sol-max[1m]",),
+    ),
+    "tests": (
+        ("agy-gemini-flash[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "triage-static": (
+        ("cursor-auto", "claude-haiku",),
+        ("cursor-auto", "qwen-3.8-128k-ctx", "claude-haiku",),
+    ),
+    "ui": (
+        ("agy-claude-opus[1m]", "claude-sonnet-5[1m]",),
+    ),
+}
+
+
+def is_shipped_1_0_preference(lane: str, preferred: object) -> bool:
+    """True when a lane's `preferred` list is exactly one 1.0.0 shipped."""
+    return isinstance(preferred, list) and tuple(preferred) in SHIPPED_1_0_PREFERRED.get(lane, ())
+
+
 def lane_order(lanes: dict) -> list[str]:
     """Map order, except that an alternate always comes right after its
     sibling so it competes before later lanes have used up the good models."""
