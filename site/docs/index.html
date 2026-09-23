@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docs — AgentFleet</title>
+<meta name="description" content="AgentFleet documentation: install, the 19 lanes, capability tiers, provider profiles, commands, safety guarantees, and troubleshooting.">
+<link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/site.css?v=1">
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('agentfleet-theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+  document.documentElement.classList.add('js');
+})();
+</script>
+
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="container header-inner">
+    <a class="brand" href="/">
+      <img src="/favicon.svg?v=1" alt="" width="26" height="26">
+      AgentFleet
+    </a>
+    <nav class="main-nav" id="primary-nav" data-main-nav aria-label="Primary">
+      <a href="/#features">Features</a>
+      <a href="/#how-it-works">How it works</a>
+      <a href="/#lanes">Lanes</a>
+      <a href="/docs/">Docs</a>
+      <a href="https://github.com/wecansync/claude-agents-config">GitHub</a>
+    </nav>
+    <div class="header-actions">
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v3M12 18.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2.5 12h3M18.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>
+      </button>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="primary-nav" aria-label="Toggle navigation menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<div class="container">
+  <button class="docs-toc-toggle" type="button" data-docs-toc-toggle aria-expanded="false" aria-controls="docs-sidebar">
+    Contents
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="16" height="16"><path d="M6 9l6 6 6-6"/></svg>
+  </button>
+
+  <div class="docs-shell">
+    <nav class="docs-sidebar" id="docs-sidebar" data-docs-sidebar aria-label="Documentation contents">
+      <ul class="docs-nav">
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#requirements">Requirements</a></li>
+        <li><a href="#install">Install</a></li>
+        <li><a href="#first-run-wizard">First-run wizard</a></li>
+        <li><a href="#install-flags">Install flags</a></li>
+        <li><a href="#lanes">Lanes</a></li>
+        <li><a href="#tiers">Tiers</a></li>
+        <li><a href="#tuning">Tuning</a></li>
+        <li><a href="#custom-lanes">Custom lanes</a></li>
+        <li><a href="#profiles">Profiles</a></li>
+        <li><a href="#commands">Commands</a></li>
+        <li><a href="#fleet-setup">fleet-setup</a></li>
+        <li><a href="#what-gets-installed">What gets installed</a></li>
+        <li><a href="#context-compaction">Context compaction</a></li>
+        <li><a href="#privacy">Privacy</a></li>
+        <li><a href="#safety">Safety</a></li>
+        <li><a href="#upgrading">Upgrading</a></li>
+        <li><a href="#uninstall">Uninstall</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+        <li><a href="#faq">FAQ</a></li>
+        <li><a href="#development">Development</a></li>
+      </ul>
+    </nav>
+
+    <div class="docs-main container-narrow" style="padding:0">
+
+      <section id="overview">
+        <h2 class="anchor-heading">Overview<a class="anchor-link" href="#overview" aria-label="Link to this section">#</a></h2>
+        <p>AgentFleet installs 19 native Claude Code subagents — called <em>lanes</em> — under <code class="il">~/.claude/agents/fleet-*.md</code> and maps each lane to whatever models your provider offers: a Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway. Lane names describe a role, never a model, so the same setup survives provider changes.</p>
+        <p>The moving parts:</p>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Lanes</strong> — generated subagent files, one per role. Read-only lanes receive no <code class="il">Bash</code>, <code class="il">Edit</code>, or <code class="il">Write</code> tools. All lanes run in the background with <code class="il">omitClaudeMd: true</code> and cannot spawn nested agents; writable lanes are instructed never to commit, push, or take outward-facing actions.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Tier ranking at startup</strong> — a reconcile step compares your live provider models against each lane's required capability tier and assigns the best fit, spreading models across lanes and keeping assignments stable between sessions.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Hooks</strong> — a routing hook (<code class="il">UserPromptSubmit</code>), a startup model-sync hook, a context-budget hook, and a privacy-safe status line, all installed under <code class="il">~/.claude/</code>.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Profiles</strong> — named provider configurations you can switch between without reinstalling. The <code class="il">native</code> profile uses your Claude login; gateway profiles store tokens in mode-0600 files.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Safety</strong> — every apply operation takes a backup first; <code class="il">agentfleet rollback</code> restores the previous state. Uninstall removes only files and settings owned by this bundle.</li>
+        </ul>
+        <p>AgentFleet is for teams and individuals who use Claude Code daily and want a consistent, well-structured agent fleet that adapts to their provider without manual configuration. Everything lives under your home directory; no root or admin access is required.</p>
+        <aside class="callout note"><span class="callout-label">Note</span><p>AgentFleet is an independent project by WeCanSync. It is not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.</p></aside>
+      </section>
+
+      <section id="requirements">
+        <h2 class="anchor-heading">Requirements<a class="anchor-link" href="#requirements" aria-label="Link to this section">#</a></h2>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Claude Code</strong></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Python 3.10 or later</strong></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Node.js 18 or later</strong> (required for agent generation and gateway model discovery)</li>
+        </ul>
+        <p>Supported platforms: macOS, Linux, and Windows. No root or admin access is required.</p>
+      </section>
+
+      <!-- ================================================================
+           INSTALL — fully written from README.md. This is the component
+           showcase: every component in the library comment above appears
+           at least once in this section.
+           ================================================================ -->
+      <section id="install">
+        <h2 class="anchor-heading">Install<a class="anchor-link" href="#install" aria-label="Link to this section">#</a></h2>
+        <p>The download script fetches <code class="il">releases/latest.json</code>, downloads the pinned release archive, verifies its SHA-256, extracts it to <code class="il">~/.local/share/agentfleet/releases/&lt;version&gt;</code> (Windows: <code class="il">%LOCALAPPDATA%\AgentFleet\releases\&lt;version&gt;</code>), then runs <code class="il">bin/install.py</code>.</p>
+
+        <div class="tabs" id="install-quick-tabs">
+          <div role="tablist" aria-label="Operating system">
+            <button role="tab" id="tab-quick-unix" aria-controls="panel-quick-unix">macOS / Linux</button>
+            <button role="tab" id="tab-quick-win" aria-controls="panel-quick-win">Windows (PowerShell)</button>
+          </div>
+          <div role="tabpanel" id="panel-quick-unix" aria-labelledby="tab-quick-unix">
+            <h3 class="panel-label">macOS / Linux</h3>
+            <div class="code-wrap">
+              <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy macOS / Linux install command">Copy</button></div>
+              <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh</code></pre>
+            </div>
+          </div>
+          <div role="tabpanel" id="panel-quick-win" aria-labelledby="tab-quick-win">
+            <h3 class="panel-label">Windows (PowerShell)</h3>
+            <div class="code-wrap">
+              <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy Windows install command">Copy</button></div>
+              <pre><code>irm https://agentfleet.wecansync.com/install.ps1 | iex</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <p>From a clone, <code class="il">./install.sh</code> (or <code class="il">install.ps1</code> / <code class="il">install.cmd</code>) does the same.</p>
+
+        <aside class="callout note">
+          <span class="callout-label">Note</span>
+          <p>Pin a version with <code class="il">AGENTFLEET_VERSION=2.0.3</code>. Override the host with <code class="il">AGENTFLEET_BASE_URL</code> (https only; http is accepted only for localhost).</p>
+        </aside>
+
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy pin-a-version command">Copy</button></div>
+          <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | AGENTFLEET_VERSION=2.0.3 sh</code></pre>
+        </div>
+
+        <h3 id="install-what-it-does" class="anchor-heading">What the installer does<a class="anchor-link" href="#install-what-it-does" aria-label="Link to this section">#</a></h3>
+        <ol class="step-list">
+          <li><h4>Fetch the release manifest</h4><p>Downloads <code class="il">releases/latest.json</code> from the configured host.</p></li>
+          <li><h4>Download the pinned archive</h4><p>Fetches the release archive named in the manifest, or the version pinned by <code class="il">AGENTFLEET_VERSION</code>.</p></li>
+          <li><h4>Verify the checksum</h4><p>Confirms the archive's SHA-256 before extracting anything.</p></li>
+          <li><h4>Extract under your home directory</h4><p>Unpacks to <code class="il">~/.local/share/agentfleet/releases/&lt;version&gt;</code> (or the Windows equivalent). No root or admin access is required.</p></li>
+          <li><h4>Run the installer</h4><p>Runs <code class="il">bin/install.py</code>, which writes the managed files described in <a href="#what-gets-installed">What gets installed</a>.</p></li>
+        </ol>
+
+        <h3 id="install-noninteractive" class="anchor-heading">Non-interactive install<a class="anchor-link" href="#install-noninteractive" aria-label="Link to this section">#</a></h3>
+        <p>Set <code class="il">AGENTFLEET_NONINTERACTIVE=1</code> to disable all prompts, or pass explicit flags:</p>
+
+        <div class="tabs" id="install-gateway-tabs">
+          <div role="tablist" aria-label="Operating system">
+            <button role="tab" id="tab-gw-unix" aria-controls="panel-gw-unix">macOS / Linux</button>
+            <button role="tab" id="tab-gw-win" aria-controls="panel-gw-win">Windows (PowerShell)</button>
+          </div>
+          <div role="tabpanel" id="panel-gw-unix" aria-labelledby="tab-gw-unix">
+            <h3 class="panel-label">macOS / Linux</h3>
+            <div class="code-wrap">
+              <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy non-interactive gateway install command for macOS / Linux">Copy</button></div>
+              <pre><code># Gateway example (set the token first, outside shell history):
+export MY_GATEWAY_TOKEN=…
+curl -fsSL https://agentfleet.wecansync.com/install.sh | \
+  sh -s -- --provider gateway \
+            --gateway-url https://gateway.example.com \
+            --gateway-token-env MY_GATEWAY_TOKEN</code></pre>
+            </div>
+          </div>
+          <div role="tabpanel" id="panel-gw-win" aria-labelledby="tab-gw-win">
+            <h3 class="panel-label">Windows (PowerShell)</h3>
+            <div class="code-wrap">
+              <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy non-interactive gateway install command for Windows">Copy</button></div>
+              <pre><code>$env:MY_GATEWAY_TOKEN='…'; &amp; ([scriptblock]::Create((irm https://agentfleet.wecansync.com/install.ps1))) --provider gateway --gateway-url https://gateway.example.com --gateway-token-env MY_GATEWAY_TOKEN</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <aside class="callout warn">
+          <span class="callout-label">Warning</span>
+          <p>Keep gateway tokens in a protected environment variable, not in version control, shell history, or logs. The gateway token is the only secret normally needed.</p>
+        </aside>
+
+        <h3 id="install-flags-table" class="anchor-heading">Flags<a class="anchor-link" href="#install-flags-table" aria-label="Link to this section">#</a></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td><code class="il">--provider native|anthropic-api|gateway</code></td><td>Set the provider without the wizard. <code class="il">gateway</code> also turns on startup model discovery.</td></tr>
+              <tr><td><code class="il">--gateway-url URL</code></td><td>Gateway base URL (https required outside loopback).</td></tr>
+              <tr><td><code class="il">--gateway-token-env NAME</code></td><td>Environment variable that holds the gateway token.</td></tr>
+              <tr><td><code class="il">--enable-model-discovery</code></td><td>Turn on startup model discovery for a bare <code class="il">--gateway-url</code> install (implied by <code class="il">--provider gateway</code>).</td></tr>
+              <tr><td><code class="il">--no-wizard</code></td><td>Never prompt; keep or infer the provider.</td></tr>
+              <tr><td><code class="il">--wizard</code></td><td>Force the wizard even on an existing install.</td></tr>
+              <tr><td><code class="il">--dry-run</code></td><td>Show changes without writing anything.</td></tr>
+              <tr><td><code class="il">--check</code></td><td>Run the bundle doctor without changing files.</td></tr>
+              <tr><td><code class="il">--uninstall --apply</code></td><td>Remove setup-owned files.</td></tr>
+              <tr><td><code class="il">--rollback --apply [--backup DIR]</code></td><td>Restore the newest (or a named) backup.</td></tr>
+              <tr><td><code class="il">--home</code>, <code class="il">--config-home</code>, <code class="il">--prefix</code></td><td>Override path roots.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <aside class="callout tip">
+          <span class="callout-label">Tip</span>
+          <p>Run <code class="il">--dry-run</code> first on a machine you're not sure about — it shows every change without writing anything.</p>
+        </aside>
+
+        <h3 id="install-quick-reference" class="anchor-heading">Quick reference<a class="anchor-link" href="#install-quick-reference" aria-label="Link to this section">#</a></h3>
+        <div class="cmd-ref">
+          <div class="cmd-ref-item"><code class="il">curl -fsSL https://agentfleet.wecansync.com/install.sh | sh</code><p>Install on macOS or Linux.</p></div>
+          <div class="cmd-ref-item"><code class="il">irm https://agentfleet.wecansync.com/install.ps1 | iex</code><p>Install on Windows PowerShell.</p></div>
+          <div class="cmd-ref-item"><code class="il">curl -fsSL https://agentfleet.wecansync.com/install.sh | AGENTFLEET_VERSION=2.0.3 sh</code><p>Pin a specific version.</p></div>
+          <div class="cmd-ref-item"><code class="il">./install.sh</code><p>From a local clone; <code class="il">install.ps1</code> / <code class="il">install.cmd</code> do the same on Windows.</p></div>
+        </div>
+      </section>
+
+      <section id="first-run-wizard">
+        <h2 class="anchor-heading">First-run wizard<a class="anchor-link" href="#first-run-wizard" aria-label="Link to this section">#</a></h2>
+        <p>On a fresh interactive install, the wizard asks how Claude Code should reach its models. There are three choices:</p>
+        <ol class="step-list">
+          <li><h4>Claude subscription (default)</h4><p>Uses Claude Code's own login. Lanes are mapped to the <code class="il">opus</code>, <code class="il">sonnet</code>, and <code class="il">haiku</code> aliases. No catalog discovery is needed.</p></li>
+          <li><h4>Anthropic API key</h4><p>Reads <code class="il">ANTHROPIC_API_KEY</code> from the environment. Lanes use first-party model IDs directly.</p></li>
+          <li><h4>Custom gateway</h4><p>Asks for an https URL and the name of the environment variable that holds the token (default: <code class="il">AGENTFLEET_GATEWAY_TOKEN</code>). If that variable is unset, the wizard prompts for the token with hidden input. It then calls <code class="il">GET /v1/models</code> to discover models, shows each model's assigned tier, and offers to adjust tier labels before writing anything.</p></li>
+        </ol>
+        <p>Updates never run the wizard. They keep the installed profile and skip directly to reconciliation.</p>
+        <h3 id="wizard-noninteractive" class="anchor-heading">Skipping the wizard<a class="anchor-link" href="#wizard-noninteractive" aria-label="Link to this section">#</a></h3>
+        <div class="cmd-ref">
+          <div class="cmd-ref-item"><code class="il">--wizard</code><p>Force the wizard even on an existing install.</p></div>
+          <div class="cmd-ref-item"><code class="il">--no-wizard</code><p>Never prompt; keep or infer the provider from the current install.</p></div>
+          <div class="cmd-ref-item"><code class="il">AGENTFLEET_NONINTERACTIVE=1</code><p>Disable all prompts. Equivalent to <code class="il">--no-wizard</code> plus suppressing any other interactive input.</p></div>
+        </div>
+        <aside class="callout tip"><span class="callout-label">Tip</span><p>Pass flags through the one-liner with <code class="il">sh -s -- --no-wizard</code> on macOS/Linux, or wrap the PowerShell script in a scriptblock and append flags directly. See <a href="#install-flags">Install flags</a> for the full flag list and examples.</p></aside>
+      </section>
+
+      <section id="install-flags">
+        <h2 class="anchor-heading">Install flags<a class="anchor-link" href="#install-flags" aria-label="Link to this section">#</a></h2>
+        <p>Pass flags to the installer by appending them after <code class="il">sh -s --</code> on macOS/Linux, or by wrapping the PowerShell script in a scriptblock. The table below covers all user-facing flags from <code class="il">python3 bin/install.py --help</code>.</p>
+        <h3 id="install-flags-provider" class="anchor-heading">Provider flags<a class="anchor-link" href="#install-flags-provider" aria-label="Link to this section">#</a></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td><code class="il">--provider native|anthropic-api|gateway</code></td><td><code class="il">native</code> = Claude subscription login; <code class="il">anthropic-api</code> = <code class="il">ANTHROPIC_API_KEY</code>; <code class="il">gateway</code> = custom endpoint (also enables startup model discovery).</td></tr>
+              <tr><td><code class="il">--gateway-url URL</code></td><td>Gateway base URL. HTTPS is required outside loopback; use <code class="il">--allow-insecure-http</code> for local testing.</td></tr>
+              <tr><td><code class="il">--gateway-token-env NAME</code></td><td>Name of the environment variable that holds the gateway token.</td></tr>
+              <tr><td><code class="il">--allow-insecure-http</code></td><td>Explicitly allow a loopback HTTP gateway URL (for local development only).</td></tr>
+              <tr><td><code class="il">--enable-model-discovery</code></td><td>Register gateway model discovery at startup. Implied by <code class="il">--provider gateway</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3 id="install-flags-behavior" class="anchor-heading">Behavior flags<a class="anchor-link" href="#install-flags-behavior" aria-label="Link to this section">#</a></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td><code class="il">--apply</code></td><td>Apply the installation or selected operation (default mode when run via the install script).</td></tr>
+              <tr><td><code class="il">--dry-run</code></td><td>Show changes without writing anything.</td></tr>
+              <tr><td><code class="il">--check</code></td><td>Run the bundle doctor without changing any files.</td></tr>
+              <tr><td><code class="il">--wizard</code></td><td>Force the provider wizard even on an existing install.</td></tr>
+              <tr><td><code class="il">--no-wizard</code></td><td>Never prompt; keep or infer the provider.</td></tr>
+              <tr><td><code class="il">--force-owned</code></td><td>Replace conflicting files that lack an ownership marker (after taking a backup).</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3 id="install-flags-advanced" class="anchor-heading">Advanced flags<a class="anchor-link" href="#install-flags-advanced" aria-label="Link to this section">#</a></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td><code class="il">--uninstall</code></td><td>Remove setup-owned files. Combine with <code class="il">--apply</code> or <code class="il">--dry-run</code>.</td></tr>
+              <tr><td><code class="il">--rollback</code></td><td>Restore the latest or named backup. Combine with <code class="il">--apply</code> or <code class="il">--dry-run</code>.</td></tr>
+              <tr><td><code class="il">--backup DIR</code></td><td>Snapshot directory to restore when using <code class="il">--rollback</code>.</td></tr>
+              <tr><td><code class="il">--home DIR</code></td><td>Override the target home directory (containing <code class="il">.claude</code>).</td></tr>
+              <tr><td><code class="il">--prefix DIR</code></td><td>Override the target prefix. Without <code class="il">--home</code> it also acts as the sandbox home.</td></tr>
+              <tr><td><code class="il">--config-home DIR</code></td><td>Override the configuration root (defaults to <code class="il">XDG_CONFIG_HOME</code> or <code class="il">~/.config</code>).</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3 id="install-flags-oneliners" class="anchor-heading">Passing flags through the one-liners<a class="anchor-link" href="#install-flags-oneliners" aria-label="Link to this section">#</a></h3>
+        <div class="tabs" id="flags-oneliner-tabs">
+          <div role="tablist" aria-label="Operating system">
+            <button role="tab" id="tab-fl-unix" aria-controls="panel-fl-unix">macOS / Linux</button>
+            <button role="tab" id="tab-fl-win" aria-controls="panel-fl-win">Windows (PowerShell)</button>
+          </div>
+          <div role="tabpanel" id="panel-fl-unix" aria-labelledby="tab-fl-unix">
+            <h3 class="panel-label">macOS / Linux</h3>
+            <div class="code-wrap">
+              <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy macOS / Linux flags example">Copy</button></div>
+              <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh -s -- --no-wizard --provider native</code></pre>
+            </div>
+          </div>
+          <div role="tabpanel" id="panel-fl-win" aria-labelledby="tab-fl-win">
+            <h3 class="panel-label">Windows (PowerShell)</h3>
+            <div class="code-wrap">
+              <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy Windows flags example">Copy</button></div>
+              <pre><code>&amp; ([scriptblock]::Create((irm https://agentfleet.wecansync.com/install.ps1))) --no-wizard --provider native</code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="lanes">
+        <h2 class="anchor-heading">Lanes<a class="anchor-link" href="#lanes" aria-label="Link to this section">#</a></h2>
+        <p>Each lane is a native Claude Code subagent generated from <code class="il">~/.claude/fleet.json</code>. All lanes run in the background with <code class="il">omitClaudeMd: true</code>. No lane has the <code class="il">Agent</code> tool, so none can spawn nested agents. The main agent owns integration and every outward-facing action.</p>
+        <p>Read-only lanes have no <code class="il">Bash</code>, <code class="il">Edit</code>, or <code class="il">Write</code> tools, so they cannot change files, commit, or push. Writable lanes have those tools; their instructions forbid committing, pushing, deploying, or publishing, but that rule lives in the prompt, not in the tool list.</p>
+        <h3 id="lanes-task" class="anchor-heading">Task lanes<a class="anchor-link" href="#lanes-task" aria-label="Link to this section">#</a></h3>
+        <div class="lane-grid">
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-plan</span><span class="tag tag-ro">Read-only</span></div>
+            <p class="lane-desc">Planning and architecture. Read-only design, multi-file approach comparisons. Tier: deep.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-implement</span><span class="tag tag-rw">Writable</span></div>
+            <p class="lane-desc">General implementation: building features, fixing bugs, refactoring, migrations. Tier: balanced.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-review</span><span class="tag tag-ro">Read-only</span></div>
+            <p class="lane-desc">Code review: defect review, correctness checking, regression auditing. Tier: deep.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-tests</span><span class="tag tag-rw">Writable</span></div>
+            <p class="lane-desc">Test writing, test execution, investigating flaky suites. Tier: balanced.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-ui</span><span class="tag tag-rw">Writable</span></div>
+            <p class="lane-desc">UI and frontend work: components, layout, styling, accessibility, frontend polish. Tier: balanced.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-docs</span><span class="tag tag-rw">Writable</span></div>
+            <p class="lane-desc">Documentation: READMEs, developer guides, API docs, runbooks, changelogs. Tier: balanced.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-security-review</span><span class="tag tag-ro">Read-only</span></div>
+            <p class="lane-desc">Security review: auth, secrets, validation, trust boundaries, injection, credentials. Tier: deep.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-diagnose-static</span><span class="tag tag-ro">Read-only</span></div>
+            <p class="lane-desc">Static diagnosis: root-cause analysis from source, crash tracing, failure isolation. Tier: deep.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-explore-narrow</span><span class="tag tag-ro">Read-only</span></div>
+            <p class="lane-desc">Bounded exploration: targeted code search, finding a symbol, file, config, or call site. Tier: fast.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-triage-static</span><span class="tag tag-ro">Read-only</span></div>
+            <p class="lane-desc">Issue triage: ownership, blast radius, actionable next step for an issue. Tier: fast.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-research-codebase</span><span class="tag tag-ro">Read-only</span></div>
+            <p class="lane-desc">Repository research: broad codebase sweeping and architectural mapping. No web tools. Long-context preferred. Tier: balanced.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-research-web</span><span class="tag tag-ro">Read-only</span></div>
+            <p class="lane-desc">Web research: public documentation, library evaluation, external tool assessment. Uses <code class="il">WebSearch</code> and <code class="il">WebFetch</code>. Tier: balanced.</p>
+          </div>
+        </div>
+        <h3 id="lanes-variant" class="anchor-heading">Variant lanes<a class="anchor-link" href="#lanes-variant" aria-label="Link to this section">#</a></h3>
+        <p>Variant names describe a capability, never a model, so they survive provider changes.</p>
+        <div class="lane-grid">
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-plan-alt</span><span class="tag tag-ro">Read-only</span></div>
+            <p class="lane-desc">Second planning opinion from an independent model. Use when cross-checking a plan or when the primary plan lane must be avoided. Tier: deep.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-implement-alt</span><span class="tag tag-rw">Writable</span></div>
+            <p class="lane-desc">Implementation on an independent model. Use for an independent attempt or when the primary implement lane has failed twice. Tier: balanced.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-implement-fast</span><span class="tag tag-rw">Writable</span></div>
+            <p class="lane-desc">Low-latency implementation for small, well-specified edits where speed matters more than depth. Tier: fast.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-implement-deep</span><span class="tag tag-rw">Writable</span></div>
+            <p class="lane-desc">Reasoning-capable implementation for multi-file changes, tricky algorithms, or migrations that need deep reasoning. Tier: deep.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-implement-cheap</span><span class="tag tag-rw">Writable</span></div>
+            <p class="lane-desc">Budget or free-tier implementation: mechanical edits, boilerplate, and large repetitive changes. Tier: cheap.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-review-alt</span><span class="tag tag-ro">Read-only</span></div>
+            <p class="lane-desc">Independent second reviewer on a different model. Use for risky changes that deserve two reviews. Tier: deep.</p>
+          </div>
+          <div class="lane-card">
+            <div class="lane-name-row"><span class="lane-name">fleet-review-deep</span><span class="tag tag-ro">Read-only</span></div>
+            <p class="lane-desc">Frontier reviewer for the hardest reviews: security boundaries, installer/migration/concurrency paths, data-loss risk, or conflicting primary findings. Tier: deep.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="tiers">
+        <h2 class="anchor-heading">Tiers<a class="anchor-link" href="#tiers" aria-label="Link to this section">#</a></h2>
+        <p>Every discovered model gets a capability tier: <code class="il">cheap</code>, <code class="il">fast</code>, <code class="il">balanced</code>, or <code class="il">deep</code>. The tier is determined in priority order:</p>
+        <ol class="step-list">
+          <li><h4>Explicit label</h4><p>A label you set with <code class="il">claude-fleet-setup --tier MODEL=TIER</code> always wins.</p></li>
+          <li><h4>Keywords in the model ID</h4><p>
+            <code class="il">cheap</code>: <code class="il">free</code>, <code class="il">cheap</code>, <code class="il">budget</code>, <code class="il">auto</code><br>
+            <code class="il">fast</code>: <code class="il">haiku</code>, <code class="il">flash</code>, <code class="il">mini</code>, <code class="il">lite</code>, <code class="il">nano</code>, <code class="il">fast</code>, <code class="il">small</code>, <code class="il">instant</code><br>
+            <code class="il">deep</code>: <code class="il">opus</code>, <code class="il">pro</code>, <code class="il">max</code>, <code class="il">ultra</code>, <code class="il">large</code>, <code class="il">sol</code>, <code class="il">astra</code>, <code class="il">o1</code>, <code class="il">o3</code>, <code class="il">reasoner</code>
+          </p></li>
+          <li><h4>Keywords in the catalog description</h4><p>
+            <code class="il">cheap</code>: "free", "cheapest", "budget", "low cost", "low-cost"<br>
+            <code class="il">fast</code>: "fastest", "low latency", "low-latency", "quick", "fast"<br>
+            <code class="il">deep</code>: "strongest", "deep reasoning", "deeper reasoning", "frontier", "most capable"
+          </p></li>
+          <li><h4>Default</h4><p><code class="il">balanced</code> when no keyword matches.</p></li>
+        </ol>
+        <p>Catalogs report context size but not price or speed — that is why explicit labels exist for models whose names do not signal their tier.</p>
+        <h3 id="tiers-ranking" class="anchor-heading">Ranking rules<a class="anchor-link" href="#tiers-ranking" aria-label="Link to this section">#</a></h3>
+        <p>At startup the reconcile step ranks all live models for each lane. Tier fit dominates the score. Among equal-tier candidates:</p>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Models that support reasoning rank higher for read-only lanes and <code class="il">deep</code>-tier lanes.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Models with at least 800K context rank higher. Long-context lanes (<code class="il">fleet-research-codebase</code>) give a larger bonus to 800K+ models.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> The current model receives a stability bonus, so a settled fleet does not reshuffle on every startup.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Models already serving as another lane's primary lose a small penalty, spreading equally capable models across lanes.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> An <code class="il">-alt</code> lane never shares its sibling's model. This is a hard rule: the sibling's model receives a very large penalty, so the alt picks a different model unless nothing else is live.</li>
+        </ul>
+        <p>The next-best ranked models become each lane's fallbacks (at most 3 entries per lane), so every live model can serve somewhere regardless of how many lanes exist.</p>
+        <h3 id="tiers-native" class="anchor-heading">Native alias mapping<a class="anchor-link" href="#tiers-native" aria-label="Link to this section">#</a></h3>
+        <p>With a Claude subscription, no catalog discovery runs. Tiers map directly to aliases:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tier</th><th>Alias used</th></tr></thead>
+            <tbody>
+              <tr><td><code class="il">deep</code></td><td><code class="il">opus</code></td></tr>
+              <tr><td><code class="il">balanced</code></td><td><code class="il">sonnet</code></td></tr>
+              <tr><td><code class="il">fast</code></td><td><code class="il">haiku</code></td></tr>
+              <tr><td><code class="il">cheap</code></td><td><code class="il">haiku</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tuning">
+        <h2 class="anchor-heading">Tuning<a class="anchor-link" href="#tuning" aria-label="Link to this section">#</a></h2>
+        <p>Use <code class="il">claude-fleet-setup</code> to pin models to lanes, label model tiers, and re-rank the fleet.</p>
+        <h3 id="tuning-prefer" class="anchor-heading">Pinning a lane to a model<a class="anchor-link" href="#tuning-prefer" aria-label="Link to this section">#</a></h3>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy prefer examples">Copy</button></div>
+          <pre><code># Pin fleet-implement to a specific model:
+claude-fleet-setup --prefer fleet-implement=my-model-id
+
+# Pin with an ordered fallback list:
+claude-fleet-setup --prefer fleet-implement=my-primary-model,my-fallback-model
+
+# Clear the pin so the lane returns to tier ranking:
+claude-fleet-setup --prefer fleet-implement=</code></pre>
+        </div>
+        <aside class="callout note"><span class="callout-label">Note</span><p>On a Claude subscription only <code class="il">opus</code>, <code class="il">sonnet</code>, and <code class="il">haiku</code> can be used as preferred model values.</p></aside>
+        <h3 id="tuning-tier" class="anchor-heading">Labelling a model's tier<a class="anchor-link" href="#tuning-tier" aria-label="Link to this section">#</a></h3>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy tier label examples">Copy</button></div>
+          <pre><code># Label a model as fast:
+claude-fleet-setup --tier my-model-id=fast
+
+# Clear a label (returns to keyword inference):
+claude-fleet-setup --tier my-model-id=</code></pre>
+        </div>
+        <h3 id="tuning-reconcile" class="anchor-heading">Re-ranking now<a class="anchor-link" href="#tuning-reconcile" aria-label="Link to this section">#</a></h3>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy reconcile command">Copy</button></div>
+          <pre><code>claude-fleet-setup --reconcile</code></pre>
+        </div>
+        <p>Fetches live provider models, runs the full ranking pass, and regenerates all agent files. Run this after changing tier labels or after a provider catalog update.</p>
+        <aside class="callout tip"><span class="callout-label">Tip</span><p>Run <code class="il">/fleet-setup</code> inside Claude Code for an interactive wizard that walks you through all tuning options, including profile switching, tier labels, and agent curation.</p></aside>
+      </section>
+
+      <section id="custom-lanes">
+        <h2 class="anchor-heading">Custom lanes<a class="anchor-link" href="#custom-lanes" aria-label="Link to this section">#</a></h2>
+        <p>Add a custom lane by editing <code class="il">~/.claude/fleet.json</code> directly. The lane name must start with <code class="il">fleet-</code>. Required fields:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Field</th><th>Value</th></tr></thead>
+            <tbody>
+              <tr><td><code class="il">implementer</code></td><td>Must be <code class="il">"claude"</code>.</td></tr>
+              <tr><td><code class="il">tier</code></td><td>One of <code class="il">"cheap"</code>, <code class="il">"fast"</code>, <code class="il">"balanced"</code>, or <code class="il">"deep"</code>.</td></tr>
+              <tr><td><code class="il">effort</code></td><td>One of <code class="il">"medium"</code>, <code class="il">"high"</code>, or <code class="il">"xhigh"</code>.</td></tr>
+              <tr><td><code class="il">readOnly</code></td><td><code class="il">true</code> to deny Bash/Edit/Write tools; omit or <code class="il">false</code> for a writable lane.</td></tr>
+              <tr><td><code class="il">description</code></td><td>Plain-text description of what the lane does. Used in the agent's brief.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>After editing <code class="il">fleet.json</code>, run reconcile to generate the agent file and assign the model:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy reconcile command">Copy</button></div>
+          <pre><code>claude-fleet-setup --reconcile</code></pre>
+        </div>
+        <p>Custom lanes survive updates and profile switches. A lane marked <code class="il">readOnly: true</code> always receives read-only tools regardless of any other configuration.</p>
+        <aside class="callout tip"><span class="callout-label">Tip</span><p>The <code class="il">/fleet-setup</code> wizard in Claude Code can create a custom lane interactively — it asks for the name, description, read-only setting, and tier, then runs reconcile for you.</p></aside>
+      </section>
+
+      <section id="profiles">
+        <h2 class="anchor-heading">Profiles<a class="anchor-link" href="#profiles" aria-label="Link to this section">#</a></h2>
+        <p>Profiles let you switch providers without reinstalling. Lane names stay the same; only the models behind them change.</p>
+        <div class="cmd-ref">
+          <div class="cmd-ref-item"><code class="il">agentfleet profiles</code><p>List saved profiles. The active one is marked with an asterisk.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet use native</code><p>Switch to your Claude subscription or API key login.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet use &lt;name&gt;</code><p>Switch to a saved gateway profile.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet save &lt;name&gt;</code><p>Name and save the current configuration as a profile.</p></div>
+        </div>
+        <p>Switching first saves the current setup, so switching back restores it exactly. Restart Claude Code after switching profiles.</p>
+        <h3 id="profiles-storage" class="anchor-heading">Where profiles are stored<a class="anchor-link" href="#profiles-storage" aria-label="Link to this section">#</a></h3>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Profiles: <code class="il">~/.claude/agentfleet/profiles/</code></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Gateway tokens: <code class="il">~/.claude/agentfleet/secrets/&lt;name&gt;.token</code> (mode 0600, directory mode 0700)</li>
+        </ul>
+        <h3 id="profiles-native" class="anchor-heading">Switching to native<a class="anchor-link" href="#profiles-native" aria-label="Link to this section">#</a></h3>
+        <p>When you switch to <code class="il">native</code>, AgentFleet removes <code class="il">ANTHROPIC_BASE_URL</code>, <code class="il">ANTHROPIC_AUTH_TOKEN</code>, and the <code class="il">ANTHROPIC_DEFAULT_*_MODEL</code> environment overrides from settings, then maps lanes to the <code class="il">opus</code>, <code class="il">sonnet</code>, and <code class="il">haiku</code> aliases.</p>
+        <aside class="callout note"><span class="callout-label">Note</span><p>The name <code class="il">native</code> is reserved and cannot be used as a custom profile name.</p></aside>
+      </section>
+
+      <section id="commands">
+        <h2 class="anchor-heading">Commands<a class="anchor-link" href="#commands" aria-label="Link to this section">#</a></h2>
+        <h3 id="commands-agentfleet" class="anchor-heading">agentfleet<a class="anchor-link" href="#commands-agentfleet" aria-label="Link to this section">#</a></h3>
+        <div class="cmd-ref">
+          <div class="cmd-ref-item"><code class="il">agentfleet profiles</code><p>List saved profiles and the active one (marked with an asterisk).</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet use &lt;name&gt;</code><p>Switch to a saved profile. Use <code class="il">native</code> to switch to your Claude login. Saves the current setup first.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet save &lt;name&gt;</code><p>Save the current configuration as a named profile.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet status</code><p>Show the active profile and run the audit: live models, stale settings, hook health, agents and skills with token cost.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet doctor</code><p>Verify the installation (runs <code class="il">claude-agents-doctor --check</code>).</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet sync</code><p>Regenerate fleet agent files from <code class="il">~/.claude/fleet.json</code>.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet update</code><p>Download and install the latest release. Extra arguments are forwarded to the installer.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet uninstall</code><p>Remove AgentFleet and restore your earlier settings.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet rollback [--backup DIR]</code><p>Restore the files and settings from before the last install or update. Uses the newest backup by default; <code class="il">--backup DIR</code> restores a named snapshot.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet version</code><p>Print the installed version.</p></div>
+        </div>
+        <h3 id="commands-fleet-setup" class="anchor-heading">claude-fleet-setup<a class="anchor-link" href="#commands-fleet-setup" aria-label="Link to this section">#</a></h3>
+        <div class="cmd-ref">
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --show</code><p>Print the effective policy, approved families, and fleet status without changing anything.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --audit</code><p>Scan settings, models, hooks, agents, and skills for health and bloat.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --audit --json</code><p>Same as <code class="il">--audit</code> but outputs results as JSON.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --reconcile</code><p>Fetch live provider models, run bidirectional lane reconciliation, and regenerate agent files.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --fix-settings</code><p>Replace stale models in <code class="il">settings.json</code> and optimize the compaction window.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --fix-settings --advisor &lt;model&gt;</code><p>Same as <code class="il">--fix-settings</code> but sets a specific advisor model.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --prefer LANE=MODEL[,MODEL]</code><p>Pin a lane to one or more preferred models in order. Repeatable. <code class="il">LANE=</code> clears the pin.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --tier MODEL=TIER</code><p>Label a model's capability tier. Repeatable. <code class="il">MODEL=</code> clears the label.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --archive-agents &lt;categories&gt;</code><p>Archive agent files by comma-separated category: <code class="il">engineering</code>, <code class="il">game_dev</code>, <code class="il">niche_ops</code>, <code class="il">other</code>, or <code class="il">all</code>. Also accepts specific filenames.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --restore-agents &lt;categories&gt;</code><p>Restore archived agents by category or filename.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --archive-skills &lt;categories&gt;</code><p>Archive skills by comma-separated category: <code class="il">core</code>, <code class="il">delegates</code>, <code class="il">engineering</code>, <code class="il">other</code>, or <code class="il">all</code>.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --restore-skills &lt;categories&gt;</code><p>Restore archived skills by category.</p></div>
+        </div>
+        <h3 id="commands-sync" class="anchor-heading">claude-fleet-sync<a class="anchor-link" href="#commands-sync" aria-label="Link to this section">#</a></h3>
+        <div class="cmd-ref">
+          <div class="cmd-ref-item"><code class="il">claude-fleet-sync</code><p>Regenerate all <code class="il">~/.claude/agents/fleet-*.md</code> files from the canonical <code class="il">~/.claude/fleet.json</code>. Wraps <code class="il">scripts/generate-claude-agents.mjs</code>.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-sync --check</code><p>Verify that every generated fleet agent matches <code class="il">fleet.json</code> without writing any files. Must pass before fleet agents are dispatched.</p></div>
+        </div>
+        <h3 id="commands-doctor" class="anchor-heading">claude-agents-doctor<a class="anchor-link" href="#commands-doctor" aria-label="Link to this section">#</a></h3>
+        <div class="cmd-ref">
+          <div class="cmd-ref-item"><code class="il">claude-agents-doctor --check</code><p>Verify configuration health, file permissions, and manifest integrity. Reports checksum mismatches, missing agents, and tool-permission violations on read-only lanes.</p></div>
+        </div>
+      </section>
+
+      <section id="fleet-setup">
+        <h2 class="anchor-heading">fleet-setup<a class="anchor-link" href="#fleet-setup" aria-label="Link to this section">#</a></h2>
+        <p>Type <code class="il">/fleet-setup</code> inside Claude Code to run the interactive setup wizard. It audits the live state of your fleet, then walks through five phases:</p>
+        <ol class="step-list">
+          <li><h4>Phase 1: Silent audit</h4><p>Runs <code class="il">claude-fleet-setup --audit --json</code> and <code class="il">agentfleet profiles</code>. Collects: active profile, live model count and tiers, settings health (stale <code class="il">model</code> / <code class="il">advisorModel</code> / <code class="il">ANTHROPIC_*_MODEL</code> values, compaction window), hook health, fleet lane count, and non-fleet agents and skills with their token cost.</p></li>
+          <li><h4>Phase 2: Status and wizard questions</h4><p>Prints a 4–6 line status summary drawn entirely from live audit data, then asks only the questions that apply:</p>
+            <ul class="req-list">
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 1 — Stale settings</strong> (only if found): for each stale key, offers up to three live models of the matching tier, plus "Keep unchanged". Applies with <code class="il">claude-fleet-setup --fix-settings</code>.</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 2 — Provider profile</strong>: stay on the current profile or switch. Options come from <code class="il">agentfleet profiles</code>; <code class="il">native</code> is always included.</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 3 — Fleet tuning</strong>: auto-rank all lanes (recommended), pick models for core roles (planner, implementer, reviewer, triage, researcher), fix model tier labels, or keep current assignments.</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 4 — Agent curation</strong> (only if non-fleet agents exist): keep all, archive entire domains not relevant to your work (e.g. <code class="il">game_dev</code>, <code class="il">niche_ops</code>), or archive one category. Fleet lanes are never archived.</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 5 — Skills and new agents</strong>: archive legacy delegate wrappers, create a custom lane, or do nothing.</li>
+            </ul>
+          </li>
+          <li><h4>Phase 3: Apply, verify, summarize</h4><p>Runs the chosen commands, then verifies with two required gates:</p>
+            <ol class="step-list">
+              <li><h4>Gate 1</h4><p><code class="il">claude-fleet-sync --check</code> must pass.</p></li>
+              <li><h4>Gate 2</h4><p><code class="il">claude-agents-doctor --check</code> must pass.</p></li>
+            </ol>
+            <p>If either gate fails, the wizard shows the error and fixes the cause before finishing. It ends with at most 4 lines summarizing what changed, what was left alone, and whether both gates passed.</p>
+          </li>
+        </ol>
+        <aside class="callout note"><span class="callout-label">Note</span><p>The wizard never shows raw JSON, never edits files by hand, and always writes through <code class="il">claude-fleet-setup</code> and <code class="il">agentfleet</code> to hold the shared lock and keep both fleet mirrors in sync.</p></aside>
+      </section>
+
+      <section id="what-gets-installed">
+        <h2 class="anchor-heading">What gets installed<a class="anchor-link" href="#what-gets-installed" aria-label="Link to this section">#</a></h2>
+        <p>Everything lives under your home directory. No root or admin access is required.</p>
+        <h3 id="wgi-agents" class="anchor-heading">Fleet agents<a class="anchor-link" href="#wgi-agents" aria-label="Link to this section">#</a></h3>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/agents/fleet-*.md</code> — one generated agent file per lane, each with an optional fallback model chain (at most three entries, used only for provider unavailability or overload).</li>
+        </ul>
+        <h3 id="wgi-settings" class="anchor-heading">Settings<a class="anchor-link" href="#wgi-settings" aria-label="Link to this section">#</a></h3>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/settings.json</code> — merged settings. Unrelated permissions, hooks, plugins, and environment values are preserved. Mode 0600 (may contain a gateway token).</li>
+        </ul>
+        <h3 id="wgi-hooks" class="anchor-heading">Hooks and scripts<a class="anchor-link" href="#wgi-hooks" aria-label="Link to this section">#</a></h3>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/route-to-fleet.py</code> — <code class="il">UserPromptSubmit</code> routing hook.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/subagent-statusline.py</code> — native subagent status rendering.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/sync-provider-models.mjs</code> — startup hook for gateway model discovery and fleet reconciliation.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/sync-model-context.py</code> — <code class="il">PostModelSwitch</code> / <code class="il">SessionStart</code> hook that reads the active model's context length and keeps <code class="il">autoCompactWindow</code> and <code class="il">CLAUDE_CODE_AUTO_COMPACT_WINDOW</code> paired and bounded. Fail-open.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/provider_catalog.py</code> and <code class="il">~/.claude/fleet-reconcile.py</code> — provider identity, cache, and reconciliation helpers used by startup hooks.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/fleet-model-drift.py</code> — fail-open drift detector that writes a mode-0600 proposal and emits bounded startup context.</li>
+        </ul>
+        <h3 id="wgi-cli" class="anchor-heading">CLI wrappers<a class="anchor-link" href="#wgi-cli" aria-label="Link to this section">#</a></h3>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.local/bin/agentfleet</code>, <code class="il">claude-fleet-setup</code>, <code class="il">claude-fleet-sync</code>, <code class="il">claude-agents-doctor</code> (POSIX), or equivalent wrappers on Windows.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/claude-fleet-setup.py</code> — the setup and reconfigure tool. Prompts only when running in a TTY; hooks never invoke it interactively.</li>
+        </ul>
+        <h3 id="wgi-fleet" class="anchor-heading">Fleet map, policy, and manifest<a class="anchor-link" href="#wgi-fleet" aria-label="Link to this section">#</a></h3>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/fleet.json</code> — the canonical fleet map. A legacy mirror is kept in sync at <code class="il">~/.config/delegate-skills/config.json</code>.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.config/delegate-skills/provider-policy.json</code> — provider policy. Generic (one catch-all family) on a fresh install; an existing install keeps its provider-specific families and aliases on update.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/CLAUDE.md</code> — the global delegation policy. AgentFleet manages this file and rewrites it on update. Keep your own instructions in <code class="il">~/.claude/rules/*.md</code>, which Claude Code loads in every session and AgentFleet never touches.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/.claude-agents-config-manifest.json</code> — installed-tree verification data. The doctor uses this and does not require the source clone.</li>
+        </ul>
+        <aside class="callout note"><span class="callout-label">Note</span><p>Machine-local marketplace source paths are not copied (they are not portable). Remote marketplace entries, enabled plugin selections, permissions, and model picker descriptions are preserved. <code class="il">agent-brain</code> hooks are guarded with <code class="il">command -v</code> and are inert when that optional tool is absent.</p></aside>
+      </section>
+
+      <section id="context-compaction">
+        <h2 class="anchor-heading">Context compaction<a class="anchor-link" href="#context-compaction" aria-label="Link to this section">#</a></h2>
+        <p>The context-budget hook (<code class="il">sync-model-context.py</code>) runs at <code class="il">SessionStart</code> and <code class="il">PostModelSwitch</code>. It reads the active model's reported <code class="il">context_length</code>, applies 90% headroom, and writes matching values to both <code class="il">CLAUDE_CODE_MAX_CONTEXT_TOKENS</code> (in <code class="il">env</code>) and <code class="il">autoCompactWindow</code> in <code class="il">settings.json</code>.</p>
+        <p>For example, a model reporting a 272K context window produces a budget of 244,800 tokens. An existing lower user budget is never inflated — the hook only adjusts when its own computed value is lower than what is currently set.</p>
+        <p>These are startup-only settings. The hook emits a restart notice when they change, because Claude Code reads them at launch. The hook is fail-open: any error is silently ignored and does not block a session.</p>
+      </section>
+
+      <section id="privacy">
+        <h2 class="anchor-heading">Privacy<a class="anchor-link" href="#privacy" aria-label="Link to this section">#</a></h2>
+        <p>The routing hook writes only to a mode-0600 JSONL log at <code class="il">~/.claude/routing-log.jsonl</code>.</p>
+        <h3 id="privacy-what-stored" class="anchor-heading">What is stored<a class="anchor-link" href="#privacy-what-stored" aria-label="Link to this section">#</a></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Entry type</th><th>Fields stored</th></tr></thead>
+            <tbody>
+              <tr><td>Routed prompt</td><td>Lane, reason, timestamp, character count. <strong>Never the prompt text.</strong></td></tr>
+              <tr><td>No-match entry</td><td>Lane, reason, timestamp, character count, plus up to a 160-character excerpt of the prompt — with any credential-shaped values redacted before storage.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3 id="privacy-retention" class="anchor-heading">Retention and rotation<a class="anchor-link" href="#privacy-retention" aria-label="Link to this section">#</a></h3>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Prompt text excerpts (no-match entries only) are removed after <strong>14 days</strong>.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> All entries are removed after <strong>90 days</strong>.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Purging runs at most once per day.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> The log rotates at 2,000,000 bytes.</li>
+        </ul>
+        <p>The hook is fail-open: a logging failure does not block a prompt. The doctor checks these retention and redaction values in both the packaged and installed hook.</p>
+      </section>
+
+      <section id="safety">
+        <h2 class="anchor-heading">Safety<a class="anchor-link" href="#safety" aria-label="Link to this section">#</a></h2>
+        <div class="cmd-ref">
+          <div class="cmd-ref-item"><code class="il">Backups before every apply</code><p>All managed files are copied to a mode-0700 snapshot under <code class="il">~/.claude/backups/claude-agents-config/</code> before any write. The backup is kept until you remove it.</p></div>
+          <div class="cmd-ref-item"><code class="il">Rollback</code><p><code class="il">agentfleet rollback</code> (or <code class="il">python3 bin/install.py --rollback --apply</code> from a clone) restores the newest pre-change snapshot. <code class="il">agentfleet rollback --backup DIR</code> restores a named one.</p></div>
+          <div class="cmd-ref-item"><code class="il">Idempotent</code><p>Repeated installs produce the same configuration and do not generate duplicate hooks or agents.</p></div>
+          <div class="cmd-ref-item"><code class="il">Non-destructive uninstall</code><p>Uninstall removes only files and hook entries owned by this bundle. Unrelated top-level settings and plugin selections are not touched.</p></div>
+          <div class="cmd-ref-item"><code class="il">No accidental overwrites</code><p>Existing files without the bundle's ownership marker are never overwritten without <code class="il">--force-owned</code>. When conflicts are found, they are listed and the install stops rather than overwriting silently.</p></div>
+          <div class="cmd-ref-item"><code class="il">Credential safety</code><p>The bundle scanner checks for credential-shaped literals before installation. The gateway token is the only secret normally needed; keep it in a protected environment variable, not in version control, shell history, or logs.</p></div>
+          <div class="cmd-ref-item"><code class="il">Settings ownership</code><p>Defaults that a later release stops shipping are taken back on update only if you never changed them. If you edited a value, it is treated as user-owned and preserved.</p></div>
+        </div>
+      </section>
+
+      <section id="upgrading">
+        <h2 class="anchor-heading">Upgrading<a class="anchor-link" href="#upgrading" aria-label="Link to this section">#</a></h2>
+        <p>To upgrade to the latest release:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy update command">Copy</button></div>
+          <pre><code>agentfleet update</code></pre>
+        </div>
+        <aside class="callout warn"><span class="callout-label">Warning</span><p>On versions 2.0.0 and 2.0.1, <code class="il">agentfleet update</code> fails with HTTP 403 because Cloudflare blocks the default Python <code class="il">urllib</code> user agent. This was fixed in 2.0.2. If you are on 2.0.0 or 2.0.1, run the install one-liner once to update past the broken version:</p></aside>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy workaround install command">Copy</button></div>
+          <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh</code></pre>
+        </div>
+        <h3 id="upgrading-1x" class="anchor-heading">Migrating from 1.0.0<a class="anchor-link" href="#upgrading-1x" aria-label="Link to this section">#</a></h3>
+        <p>The installer migrates automatically. Lanes that encoded vendor model names in their names are renamed:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Old lane name</th><th>New lane name</th></tr></thead>
+            <tbody>
+              <tr><td><code class="il">implement-02-gemini-flash</code></td><td><code class="il">fleet-implement-fast</code></td></tr>
+              <tr><td><code class="il">implement-03-agy-opus</code></td><td><code class="il">fleet-implement-deep</code></td></tr>
+              <tr><td><code class="il">implement-04-free-1m</code></td><td><code class="il">fleet-implement-cheap</code></td></tr>
+              <tr><td><code class="il">implement-05-agy-sonnet</code></td><td><code class="il">fleet-implement-alt</code></td></tr>
+              <tr><td><code class="il">review-02-opus</code></td><td><code class="il">fleet-review-alt</code></td></tr>
+              <tr><td><code class="il">review-06-astra</code></td><td><code class="il">fleet-review-deep</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Other numbered lanes from 1.0.0 are retired. The old <code class="il">sync-omniroute-models.mjs</code> hook is removed and replaced by <code class="il">sync-provider-models.mjs</code>. The model cache moved to <code class="il">~/.claude/cache/provider-models-cache.json</code>. The built-in model preferences from 1.0.0 are dropped once during migration. All of this happens inside the same backup/rollback transaction, so the upgrade is reversible.</p>
+        <h3 id="upgrading-carries-over" class="anchor-heading">What carries over<a class="anchor-link" href="#upgrading-carries-over" aria-label="Link to this section">#</a></h3>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Per-lane model choices and explicit preferred lists</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Custom lanes defined in <code class="il">fleet.json</code></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Explicit tier labels</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Saved profiles</li>
+        </ul>
+      </section>
+
+      <section id="uninstall">
+        <h2 class="anchor-heading">Uninstall<a class="anchor-link" href="#uninstall" aria-label="Link to this section">#</a></h2>
+        <p>To remove AgentFleet and restore your earlier settings:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy uninstall command">Copy</button></div>
+          <pre><code>agentfleet uninstall</code></pre>
+        </div>
+        <p>This removes only files and hook entries owned by this bundle. Unrelated top-level settings, plugin selections, and your own rules are left untouched.</p>
+        <h3 id="uninstall-rollback" class="anchor-heading">Rollback<a class="anchor-link" href="#uninstall-rollback" aria-label="Link to this section">#</a></h3>
+        <p>To restore the state from before the last install or update:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy rollback command">Copy</button></div>
+          <pre><code># Use the newest backup:
+agentfleet rollback
+
+# Use a specific named backup:
+agentfleet rollback --backup ~/.claude/backups/claude-agents-config/20240101-120000</code></pre>
+        </div>
+        <p>From a source clone you can also run:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy installer rollback command">Copy</button></div>
+          <pre><code>python3 bin/install.py --rollback --apply [--backup DIR]</code></pre>
+        </div>
+        <p>Backups are stored under <code class="il">~/.claude/backups/claude-agents-config/</code> in mode-0700 directories and are kept until you remove them manually.</p>
+      </section>
+
+      <section id="troubleshooting">
+        <h2 class="anchor-heading">Troubleshooting<a class="anchor-link" href="#troubleshooting" aria-label="Link to this section">#</a></h2>
+
+        <h3 id="ts-path" class="anchor-heading">Commands not found after install<a class="anchor-link" href="#ts-path" aria-label="Link to this section">#</a></h3>
+        <p>The CLI wrappers are installed to <code class="il">~/.local/bin/</code>. If your shell does not include that directory in <code class="il">PATH</code>, add it:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy PATH fix">Copy</button></div>
+          <pre><code>export PATH="$HOME/.local/bin:$PATH"</code></pre>
+        </div>
+        <p>Add this line to your <code class="il">~/.bashrc</code>, <code class="il">~/.zshrc</code>, or equivalent to make it permanent.</p>
+
+        <h3 id="ts-node" class="anchor-heading">Node.js not found<a class="anchor-link" href="#ts-node" aria-label="Link to this section">#</a></h3>
+        <p>Agent generation and gateway model discovery require Node.js 18 or later. Install it from <a href="https://nodejs.org">nodejs.org</a> and ensure <code class="il">node</code> is on your <code class="il">PATH</code>.</p>
+
+        <h3 id="ts-token" class="anchor-heading">Gateway models are not refreshed at startup<a class="anchor-link" href="#ts-token" aria-label="Link to this section">#</a></h3>
+        <p>The startup hook reads the gateway URL and token from <code>ANTHROPIC_BASE_URL</code> and <code>ANTHROPIC_AUTH_TOKEN</code> in <code>~/.claude/settings.json</code>, which the installer and <code>agentfleet use</code> write. It does not read your shell environment. If the gateway is unreachable, the hook uses the cached catalog; if either value is missing from <code>settings.json</code>, it skips discovery and every lane keeps its current model.</p>
+        <p>To restore the credentials, switch back to a saved gateway profile with <code>agentfleet use &lt;name&gt;</code>, or re-run the installer with the gateway flags:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy gateway reinstall example">Copy</button></div>
+          <pre><code># Set the token first, outside shell history.
+curl -fsSL https://agentfleet.wecansync.com/install.sh | sh -s -- --provider gateway \
+  --gateway-url https://gateway.example.com --gateway-token-env MY_GATEWAY_TOKEN</code></pre>
+        </div>
+
+        <h3 id="ts-lock" class="anchor-heading">"another fleet writer is busy"<a class="anchor-link" href="#ts-lock" aria-label="Link to this section">#</a></h3>
+        <p>The error message <code class="il">another fleet writer (installer or startup hook) is busy; try again in a moment</code> means the installer, a startup hook, or another <code class="il">agentfleet</code> command is holding the write lock. Wait a few seconds and retry. If the lock is stale (the owning process has exited), it will be released automatically.</p>
+
+        <h3 id="ts-doctor-readonly" class="anchor-heading">Doctor: "static lane has write or nested-agent tools"<a class="anchor-link" href="#ts-doctor-readonly" aria-label="Link to this section">#</a></h3>
+        <p>A read-only lane's generated agent file contains <code class="il">Bash</code>, <code class="il">Edit</code>, <code class="il">Write</code>, or <code class="il">Agent</code> in its tool list. Re-run reconcile to regenerate the agent correctly:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy reconcile command">Copy</button></div>
+          <pre><code>claude-fleet-setup --reconcile</code></pre>
+        </div>
+
+        <h3 id="ts-checksum" class="anchor-heading">Doctor: "checksum mismatch"<a class="anchor-link" href="#ts-checksum" aria-label="Link to this section">#</a></h3>
+        <p>An installed file no longer matches its recorded checksum. If you edited the file intentionally, you can re-install to restore it. Otherwise run the full doctor to see all mismatches:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy doctor check command">Copy</button></div>
+          <pre><code>agentfleet doctor</code></pre>
+        </div>
+
+        <h3 id="ts-missing-agent" class="anchor-heading">Doctor: generated-agent count mismatch<a class="anchor-link" href="#ts-missing-agent" aria-label="Link to this section">#</a></h3>
+        <p>The number of agent files in <code class="il">~/.claude/agents/</code> does not match the expected count from <code class="il">fleet.json</code>. Run sync to regenerate missing files:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy sync command">Copy</button></div>
+          <pre><code>agentfleet sync</code></pre>
+        </div>
+
+        <h3 id="ts-switch-restart" class="anchor-heading">Changes not visible after profile switch<a class="anchor-link" href="#ts-switch-restart" aria-label="Link to this section">#</a></h3>
+        <p>Claude Code reads settings at launch. After switching profiles with <code class="il">agentfleet use</code>, restart Claude Code to apply the new configuration.</p>
+
+        <h3 id="ts-403" class="anchor-heading">agentfleet update fails with HTTP 403<a class="anchor-link" href="#ts-403" aria-label="Link to this section">#</a></h3>
+        <p>Versions 2.0.0 and 2.0.1 used the default <code class="il">urllib</code> user agent, which Cloudflare rejected. This was fixed in 2.0.2. Run the install one-liner to update past the broken version:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy install one-liner">Copy</button></div>
+          <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh</code></pre>
+        </div>
+      </section>
+
+      <section id="faq">
+        <h2 class="anchor-heading">FAQ<a class="anchor-link" href="#faq" aria-label="Link to this section">#</a></h2>
+        <div class="faq-list">
+          <details class="faq-item"><summary>Does AgentFleet work with a Claude subscription, or only with API keys?</summary><p>It works with all three: a Claude subscription (uses the <code class="il">opus</code>/<code class="il">sonnet</code>/<code class="il">haiku</code> aliases), an Anthropic API key, or any Anthropic-compatible gateway. The provider is chosen during the first-run wizard and can be changed at any time with <code class="il">agentfleet use</code>.</p></details>
+          <details class="faq-item"><summary>Do lane names change when I switch providers?</summary><p>No. Lane names describe roles, not models. <code class="il">fleet-implement</code> is always the general implementation lane regardless of which model is behind it. Only the model changes when you switch profiles.</p></details>
+          <details class="faq-item"><summary>Can I use a lane that is not in the default set?</summary><p>Yes. Add an entry to <code class="il">~/.claude/fleet.json</code> with <code class="il">implementer: "claude"</code>, a <code class="il">tier</code>, <code class="il">effort</code>, optional <code class="il">readOnly</code>, and a <code class="il">description</code>. Then run <code class="il">claude-fleet-setup --reconcile</code> to generate the agent file and assign a model. Custom lanes survive updates and profile switches.</p></details>
+          <details class="faq-item"><summary>What happens if no model matches a lane's tier?</summary><p>The ranking algorithm uses tier distance: if no model exactly matches the required tier, the nearest available tier is used. A fast model is preferred over nothing for a cheap-tier lane when no cheap model is available. Fallback chains (up to 3 entries) cover provider unavailability or overload.</p></details>
+          <details class="faq-item"><summary>Will AgentFleet overwrite my existing Claude Code settings?</summary><p>No. The installer merges into <code class="il">settings.json</code>: unrelated permissions, hooks, plugins, and environment values are preserved. Existing files without the bundle's ownership marker are never overwritten without <code class="il">--force-owned</code>. Every apply runs a backup first.</p></details>
+          <details class="faq-item"><summary>Where should I put my own Claude Code instructions?</summary><p>Put them in <code class="il">~/.claude/rules/*.md</code>. Claude Code loads all files in that directory in every session. AgentFleet manages <code class="il">~/.claude/CLAUDE.md</code> and rewrites it on update, so personal instructions placed there will be lost.</p></details>
+          <details class="faq-item"><summary>How do I revert an update that broke something?</summary><p>Run <code class="il">agentfleet rollback</code>. Every apply operation takes a backup of the managed files first, stored in <code class="il">~/.claude/backups/claude-agents-config/</code>. The rollback restores the newest backup. Use <code class="il">--backup DIR</code> to restore a specific named snapshot.</p></details>
+          <details class="faq-item"><summary>Is root or admin access required?</summary><p>No. Everything is installed under your home directory. The only directories created are under <code class="il">~/.claude/</code>, <code class="il">~/.config/</code>, and <code class="il">~/.local/</code>.</p></details>
+          <details class="faq-item"><summary>Does AgentFleet send prompt data anywhere?</summary><p>No. The routing hook writes only to a local mode-0600 log file. Routed entries contain the lane name, reason code, timestamp, and character count — never the prompt text. No-match entries keep a brief excerpt (max 160 characters, credentials redacted) that is purged after 14 days.</p></details>
+          <details class="faq-item"><summary>Is AgentFleet affiliated with Anthropic?</summary><p>No. AgentFleet is an independent open-source project by WeCanSync, released under the MIT license. Claude and Claude Code are trademarks of Anthropic.</p></details>
+        </div>
+      </section>
+
+      <section id="development">
+        <h2 class="anchor-heading">Development<a class="anchor-link" href="#development" aria-label="Link to this section">#</a></h2>
+        <h3 id="dev-tests" class="anchor-heading">Running tests<a class="anchor-link" href="#dev-tests" aria-label="Link to this section">#</a></h3>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy test command">Copy</button></div>
+          <pre><code>python3 -m unittest discover tests</code></pre>
+        </div>
+        <h3 id="dev-manifest" class="anchor-heading">Updating the manifest<a class="anchor-link" href="#dev-manifest" aria-label="Link to this section">#</a></h3>
+        <p>After editing any bundle file, update the manifest. The installer refuses a bundle whose manifest checksums do not match the actual files:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy update-manifest command">Copy</button></div>
+          <pre><code>python3 packaging/update-manifest.py</code></pre>
+        </div>
+        <h3 id="dev-release" class="anchor-heading">Building a release<a class="anchor-link" href="#dev-release" aria-label="Link to this section">#</a></h3>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy build-release command">Copy</button></div>
+          <pre><code># Build a reproducible release from a git commit:
+python3 packaging/build-release.py --ref &lt;commit&gt;
+# Produces:
+#   dist/releases/&lt;version&gt;/agentfleet-&lt;version&gt;.tar.gz
+#   dist/releases/&lt;version&gt;/agentfleet-&lt;version&gt;.zip
+#   dist/releases/&lt;version&gt;/SHA256SUMS
+#   dist/releases/latest.json</code></pre>
+        </div>
+        <h3 id="dev-deploy" class="anchor-heading">Deploying<a class="anchor-link" href="#dev-deploy" aria-label="Link to this section">#</a></h3>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy deploy commands">Copy</button></div>
+          <pre><code>export AGENTFLEET_DEPLOY_HOST=user@server
+sh packaging/deploy.sh --dry-run   # list every change and deletion first
+sh packaging/deploy.sh             # upload site/, then archives, then latest.json</code></pre>
+        </div>
+        <p><code class="il">deploy.sh</code> mirrors <code class="il">site/</code> with <code class="il">rsync --delete</code> and only syncs into a web root that is empty or already carries the <code class="il">.agentfleet-docroot</code> marker from an earlier deploy. Published release archives are never deleted.</p>
+        <h3 id="dev-layout" class="anchor-heading">Repository layout<a class="anchor-link" href="#dev-layout" aria-label="Link to this section">#</a></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Directory</th><th>Contents</th></tr></thead>
+            <tbody>
+              <tr><td><code class="il">bin/</code></td><td>CLI entry points: <code class="il">install.py</code>, <code class="il">agentfleet</code>, <code class="il">claude-fleet-setup</code>, <code class="il">claude-fleet-sync</code>, <code class="il">claude-agents-doctor</code></td></tr>
+              <tr><td><code class="il">scripts/</code></td><td>Runtime helpers installed to <code class="il">~/.claude/</code>: hooks, reconcile scripts, catalog module</td></tr>
+              <tr><td><code class="il">config/</code></td><td>Bundle configuration: <code class="il">delegate-fleet.json</code>, <code class="il">CLAUDE.md</code>, settings template, provider policy</td></tr>
+              <tr><td><code class="il">skills/</code></td><td>The <code class="il">/fleet-setup</code> skill and other bundled skills</td></tr>
+              <tr><td><code class="il">tests/</code></td><td>Python unit tests</td></tr>
+              <tr><td><code class="il">packaging/</code></td><td>Repo-only: manifest updater, release builder, deploy script, site component guide</td></tr>
+              <tr><td><code class="il">site/</code></td><td>Repo-only: the documentation website source</td></tr>
+              <tr><td><code class="il">dist/</code></td><td>Repo-only: built release archives (generated, not committed)</td></tr>
+              <tr><td><code class="il">.github/</code></td><td>Repo-only: CI workflows</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <aside class="callout note"><span class="callout-label">Note</span><p><code class="il">site/</code>, <code class="il">packaging/</code>, <code class="il">dist/</code>, and <code class="il">.github/</code> are never part of an installed bundle. If the <code class="il">agent-brain</code> CLI is on PATH at install time, agents receive its memory tools and hooks. Otherwise they are omitted with no functional change.</p></aside>
+      </section>
+
+    </div>
+  </div>
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-top">
+      <div class="maker-credit">
+        <span>An open-source project by</span>
+        <a href="https://wecansync.com">
+          <img class="logo-dark" src="/assets/logo-dark.png?v=1" alt="WeCanSync" width="59" height="20">
+          <img class="logo-light" src="/assets/logo-light.png?v=1" alt="WeCanSync" width="59" height="20">
+        </a>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/wecansync/claude-agents-config">GitHub</a>
+        <a href="https://github.com/wecansync/claude-agents-config/blob/main/LICENSE">MIT License</a>
+        <a href="/docs/">Docs</a>
+      </div>
+    </div>
+    <p class="disclaimer">AgentFleet is an independent project by WeCanSync. It is not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
+  </div>
+</footer>
+
+<script src="/assets/site.js?v=1"></script>
+</body>
+</html>

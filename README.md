@@ -127,10 +127,12 @@ changes.
 | `fleet-review-alt` | Independent review model |
 | `fleet-review-deep` | Deep review (security, migration, concurrency, data-loss) |
 
-Read-only lanes receive no `Bash`, `Edit`, or `Write` tools. All lanes are
-background agents with `omitClaudeMd: true` and cannot spawn nested agents,
-commit, push, deploy, or take other outward-facing actions. The main agent owns
-integration, final gates, and all external actions.
+Read-only lanes receive no `Bash`, `Edit`, or `Write` tools, so they cannot
+change files, commit, or push. All lanes are background agents with
+`omitClaudeMd: true`, and none has the `Agent` tool, so none can spawn nested
+agents. Writable lanes are instructed never to commit, push, deploy, or take
+other outward-facing actions (a prompt rule, not a tool restriction). The main
+agent owns integration, final gates, and all external actions.
 
 ---
 
