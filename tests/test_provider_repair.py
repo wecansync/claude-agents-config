@@ -1980,6 +1980,10 @@ class AgentFleetTwoTests(unittest.TestCase):
             self.assertNotIn("sync-omniroute-models.mjs", settings_text)
             lanes = json.loads((home / ".claude/fleet.json").read_text())["lanes"]
             self.assertEqual(lanes["implement-fast"]["model"], "codex-5.5", "the old lane's preference moved to its successor")
+            self.assertEqual(lanes["implement-fast"]["preferred"], ["codex-5.5"], "a user's own preference is kept")
+            pinned = sorted(lane for lane, config in lanes.items() if lane != "implement-fast" and config.get("preferred"))
+            self.assertEqual(pinned, [], "1.0.0's shipped preferences are bundle defaults, not user choices")
+            self.assertEqual([lane for lane, config in lanes.items() if not config.get("fallbacks")], [], "tier ranking gives every lane fallbacks")
             doctor = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], env=env, text=True, capture_output=True)
             self.assertEqual(doctor.returncode, 0, doctor.stdout + doctor.stderr)
             sync = subprocess.run([str(home / ".local/bin/claude-fleet-sync"), "--check"], env=env, text=True, capture_output=True)

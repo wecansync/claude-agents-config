@@ -84,6 +84,71 @@ RETIRED_LANES = {
     "implement-10-sonnet", "implement-11-terra", "implement-12-openclaw-free", "implement-13-grok-no-cache",
     "review-02-opus", "review-03-terra", "review-04-gemini", "review-05-grok", "review-06-astra",
 }
+# Model preferences 1.0.0 shipped (and seeded into every install) per lane,
+# keyed by the 2.0 lane name. An update drops a carried `preferred` list that
+# matches one exactly: it was a bundle default, not the user"s choice, and it
+# would pin the lane to vendor model names instead of tier ranking.
+SHIPPED_1_0_PREFERRED: dict[str, tuple[tuple[str, ...], ...]] = {
+    "diagnose-static": (
+        ("codex-sol-max[1m]", "codex-sol[1m]", "claude-opus-5[1m]",),
+    ),
+    "docs": (
+        ("agy-claude-sonnet[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "explore-narrow": (
+        ("claude-haiku", "cursor-auto",),
+        ("claude-haiku", "cursor-auto", "qwen-3.8-128k-ctx",),
+    ),
+    "implement": (
+        ("codex-luna[1m]", "claude-sonnet-5[1m]", "agy-gemini-flash[1m]",),
+    ),
+    "implement-alt": (
+        ("agy-claude-sonnet[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "implement-cheap": (
+        ("omniroute-free-1m-ctx[1m]", "omniroute-free-256k-ctx",),
+    ),
+    "implement-deep": (
+        ("agy-claude-opus[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "implement-fast": (
+        ("agy-gemini-flash[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "plan": (
+        ("claude-opus-5[1m]", "codex-sol[1m]", "agy-claude-opus[1m]",),
+    ),
+    "plan-alt": (
+        ("codex-sol[1m]", "claude-opus-5[1m]", "agy-claude-opus[1m]",),
+    ),
+    "research-codebase": (
+        ("agy-gemini-pro[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "research-web": (
+        ("agy-gemini-pro[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "review": (
+        ("codex-sol[1m]", "claude-opus-5[1m]", "agy-claude-opus[1m]",),
+    ),
+    "review-alt": (
+        ("claude-opus-5[1m]", "codex-sol[1m]", "agy-claude-opus[1m]",),
+    ),
+    "review-deep": (
+        ("codex-astra[1m]", "codex-sol[1m]", "claude-opus-5[1m]",),
+    ),
+    "security-review": (
+        ("claude-opus-5[1m]", "agy-claude-opus[1m]", "codex-sol-max[1m]",),
+    ),
+    "tests": (
+        ("agy-gemini-flash[1m]", "claude-sonnet-5[1m]",),
+    ),
+    "triage-static": (
+        ("cursor-auto", "claude-haiku",),
+        ("cursor-auto", "qwen-3.8-128k-ctx", "claude-haiku",),
+    ),
+    "ui": (
+        ("agy-claude-opus[1m]", "claude-sonnet-5[1m]",),
+    ),
+}
 # User-owned lane fields carried across an update; everything else comes from
 # the bundle so lane definitions can evolve.
 CARRIED_LANE_FIELDS = ("preferred", "model", "fallbacks")
@@ -1049,6 +1114,8 @@ def carry_lane_choices(bundle_fleet: dict, existing: dict) -> dict:
                 target["model"] = value
             elif field in {"preferred", "fallbacks"} and isinstance(value, list):
                 values = [item for item in value if isinstance(item, str) and item]
+                if field == "preferred" and tuple(values) in SHIPPED_1_0_PREFERRED.get(name, ()):
+                    continue
                 if values:
                     target[field] = values
     # Lanes the user added (e.g. via /fleet-setup) are theirs and stay; the
