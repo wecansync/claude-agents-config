@@ -45,6 +45,8 @@ from provider_catalog import (
     TIER_RANK,
     model_tier,
     native_lane_model,
+    excluded_models,
+    is_excluded,
     tier_overrides,
     context_length,
 )
@@ -462,18 +464,19 @@ def native_fleet(fleet: dict) -> dict:
     result = copy.deepcopy(fleet)
     result.pop("_reconcile", None)
     lanes = result.get("lanes", {})
+    excluded = excluded_models(result)
     for lane in lane_order(lanes):
         config = lanes[lane]
         if not isinstance(config, dict):
             continue
         preferred = config.get("preferred") if isinstance(config.get("preferred"), list) else []
-        pinned = [m for m in preferred if isinstance(m, str) and m.removesuffix("[1m]") in NATIVE_LANE_ALIASES]
+        pinned = [m for m in preferred if isinstance(m, str) and m.removesuffix("[1m]") in NATIVE_LANE_ALIASES and not is_excluded(m, excluded)]
         if pinned:
             config["model"], config["preferred"] = pinned[0], pinned
         else:
             sibling = config.get("altOf")
             avoid = lanes[sibling].get("model") if isinstance(sibling, str) and isinstance(lanes.get(sibling), dict) else None
-            config["model"] = native_lane_model(lane_tier(lane, config), avoid)
+            config["model"] = native_lane_model(lane_tier(lane, config), excluded | ({avoid} if isinstance(avoid, str) else set()))
             config.pop("preferred", None)
         config.pop("fallbacks", None)
     return result
@@ -580,14 +583,19 @@ def resolve_fleet(
     """Resolve live approved candidates while preserving custom lanes/settings.
 
     A lane with an explicit ``preferred`` list keeps the user's order: its
-    first live candidate wins. Every other lane is ranked by capability tier
-    against the whole live catalog, and its next-best models become its
-    fallbacks, so every live model can serve somewhere regardless of how many
-    lanes exist. Primary lanes resolve before their ``altOf`` alternates.
+    first live candidate wins, the rest of the list come next as fallbacks,
+    and any remaining fallback slots are filled by tier ranking. Every other
+    lane is ranked by capability tier against the whole live catalog, and its
+    next-best models become its fallbacks, so every live model can serve
+    somewhere regardless of how many lanes exist. Models listed in
+    ``excludedModels`` never serve a lane (they stay in the model picker).
+    Primary lanes resolve before their ``altOf`` alternates.
     """
     result = copy.deepcopy(fleet)
     result.pop("_reconcile", None)
-    catalog = available_rows(rows, policy)
+    full_catalog = available_rows(rows, policy)
+    excluded = excluded_models(result)
+    catalog = {model: row for model, row in full_catalog.items() if not is_excluded(model, excluded)}
     pending: list[str] = []
     changes: dict[str, dict] = {}
     approved_live = [m for m in catalog if family_approved(m, policy)]
@@ -639,31 +647,35 @@ def resolve_fleet(
             config["model"] = selected
         usage[selected] = usage.get(selected, 0) + 1
 
+        # Rank fallbacks as if the selected model were already current, so
+        # the next run -- where it is current -- yields the same order and a
+        # single reconciliation pass converges.
+        settled = ranked if selected == current else rank_live_candidates(
+            lane, config, selected, approved_live, catalog, policy, avoid=avoid, overrides=overrides, usage=usage,
+        )
+        ranked_fallbacks = [model for model in settled if model != selected and model not in avoid]
         if explicit:
+            # The user's own order first; tier ranking fills the free slots so
+            # a lane pinned to one model still has somewhere to go.
             fallback_values = [
                 model for model in candidates
                 if model != selected and family_approved(model, policy) and model in catalog
             ]
+            fallback_values += [model for model in ranked_fallbacks if model not in fallback_values]
         else:
-            # Rank fallbacks as if the selected model were already current, so
-            # the next run -- where it is current -- yields the same order and
-            # a single reconciliation pass converges.
-            settled = ranked if selected == current else rank_live_candidates(
-                lane, config, selected, approved_live, catalog, policy, avoid=avoid, overrides=overrides, usage=usage,
-            )
-            fallback_values = [model for model in settled if model != selected and model not in avoid]
+            fallback_values = ranked_fallbacks
         fallback_values = fallback_values[: MAX_FALLBACK_CANDIDATES - 1]
         if fallback_values:
             config["fallbacks"] = fallback_values
         else:
             config.pop("fallbacks", None)
     picker: dict[str, dict] = {}
-    for model, row in catalog.items():
+    for model, row in full_catalog.items():
         picker[model] = _row_for_picker(model, row)
     # Only catalog models go in the picker — stale lane fallbacks (models the
     # provider no longer returns) must not be resurrected as picker entries.
-    result["_reconcile"] = {"changes": changes, "catalog_models": sorted(catalog)}
-    return result, {"options": list(picker.values()), "replaceBuiltInOptions": True}, list(dict.fromkeys(pending)), catalog
+    result["_reconcile"] = {"changes": changes, "catalog_models": sorted(full_catalog)}
+    return result, {"options": list(picker.values()), "replaceBuiltInOptions": True}, list(dict.fromkeys(pending)), full_catalog
 
 def reconcile_settings(
     settings: dict,
@@ -706,8 +718,9 @@ def reconcile_settings(
     # If the user's active model was a gateway model removed from provider, fall back to live model
     active_model = result.get("model")
     tiers = tier_overrides(policy, fleet)
+    excluded = excluded_models(fleet)
     def best_for(tier: str) -> str | None:
-        exact = [m for m in incoming_by_model if model_tier(m, incoming_by_model[m], tiers) == tier]
+        exact = [m for m in incoming_by_model if model_tier(m, incoming_by_model[m], tiers) == tier and not is_excluded(m, excluded)]
         return exact[0] if exact else None
     if isinstance(active_model, str) and active_model and active_model not in incoming_by_model:
         desc = str(next((r.get("description", "") for r in existing if isinstance(r, dict) and r.get("model") == active_model), "")).lower()

@@ -393,13 +393,25 @@ def model_tier(model: object, row: object = None, overrides: dict[str, str] | No
 
 def native_lane_model(tier: object, avoid: object = None) -> str:
     """Pick the native alias for a lane tier, stepping to a neighbour when the
-    natural choice is the one an alternate lane must avoid."""
+    natural choice must be avoided (an alternate's sibling, or excluded
+    models). ``avoid`` is one alias or a collection of them."""
+    blocked = {avoid} if isinstance(avoid, str) else {item for item in avoid or () if isinstance(item, str)}
     chosen = NATIVE_TIER_MODELS.get(tier if isinstance(tier, str) else "", "sonnet")
-    if avoid and chosen == avoid:
+    if chosen in blocked:
         for alternative in ("sonnet", "opus", "haiku"):
-            if alternative != avoid:
+            if alternative not in blocked:
                 return alternative
     return chosen
+
+
+def excluded_models(fleet: object) -> set[str]:
+    """Models the user excluded from every lane, suffix-insensitive."""
+    values = fleet.get("excludedModels") if isinstance(fleet, dict) else None
+    return {strip_known_suffix(item) for item in values or () if isinstance(item, str) and item.strip()}
+
+
+def is_excluded(model: object, excluded: set[str]) -> bool:
+    return isinstance(model, str) and strip_known_suffix(model) in excluded
 
 
 def available_rows(rows: list[dict], policy: dict) -> dict[str, dict]:

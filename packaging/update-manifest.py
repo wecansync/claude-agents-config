@@ -18,7 +18,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bin"))
-EXCLUDED = {".ai", ".commandcode", ".kilo", ".github", "site", "packaging", "dist"}
+EXCLUDED = {".ai", ".claude", ".commandcode", ".kilo", ".github", "site", "packaging", "dist"}
 INDEX_FILES = {"manifest.json", "checksums.sha256"}
 
 

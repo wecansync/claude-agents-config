@@ -109,7 +109,7 @@ LEGACY_AUTO_COMPACT_ENV = "950000"
 # file or be copied into a target installation. The website, release tooling,
 # and build output are repository-only as well: releases are built from the
 # manifest's own path list, so none of these directories can leak into one.
-BUNDLE_CONTEXT_DIRS = {".ai", ".commandcode", ".kilo", ".github", "site", "packaging", "dist"}
+BUNDLE_CONTEXT_DIRS = {".ai", ".claude", ".commandcode", ".kilo", ".github", "site", "packaging", "dist"}
 PROVIDER_POLICY_PATH = "config/provider-policy.json"
 PROVIDER_CATALOG_MODULE = "scripts/provider_catalog.py"
 RECONCILE_SCRIPT = "scripts/fleet-reconcile.py"
