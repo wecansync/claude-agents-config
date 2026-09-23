@@ -124,7 +124,7 @@
     },
     {
       "path": "bin/agentfleet",
-      "sha256": "6fc0017953fa6de537c31d0709141e941b1301cf6c4500193e889092c2b61497",
+      "sha256": "bb3518face29f001793fc7325d50c67f5310b06da35d65622e7a2edb8de23274",
       "mode": "0o755"
     },
     {
@@ -144,7 +144,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "f2c41316e6f7b56c723780412c5a977f23e8adde080ca104b4c18cef93c5475c",
+      "sha256": "0cbedf937664d717ee0eafd3a5de18c6022356a825bf033ab6b6e5cf45939a3f",
       "mode": "0o755"
     },
     {

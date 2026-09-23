@@ -2472,6 +2472,8 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
         profile, fleet_bytes, fleet, template, catalog_note = profile_data(
             bundle, gateway_mode, home=home, config_root=config_root, existing=existing,
             gateway_url=args.gateway_url, gateway_token=gateway_token, policy=policy, tier_labels=labels,
+            # One-time migration of 1.0.0's shipped pins. A fresh install
+            # also qualifies, harmlessly: it has no fleet to carry.
             drop_shipped_pins=version_key(previous.get("version")) < (2, 0, 1),
         )
         if catalog_note:

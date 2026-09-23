@@ -194,7 +194,6 @@ def snapshot(paths: Paths, settings: dict, fleet: dict, name: str) -> tuple[dict
         "name": name,
         "kind": current_kind(settings),
         "savedAt": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "agentfleetVersion": installed_version(paths),
         "settings": {key: settings[key] for key in PROFILE_TOP_KEYS if key in settings},
         "env": {key: env[key] for key in PROFILE_ENV_KEYS if key in env},
         "lanes": {
@@ -203,12 +202,18 @@ def snapshot(paths: Paths, settings: dict, fleet: dict, name: str) -> tuple[dict
         },
         "modelTiers": fleet.get("modelTiers", {}) if isinstance(fleet.get("modelTiers"), dict) else {},
     }
+    # The version marks profiles saved after the 2.0.1 migration; without a
+    # known version the profile is treated as older and cleaned on apply.
+    version = installed_version(paths)
+    if version:
+        profile["agentfleetVersion"] = version
     token = env.get("ANTHROPIC_AUTH_TOKEN")
     return profile, token if isinstance(token, str) and token else None
 
 
-def installed_version(paths: Paths) -> str:
-    return str(read_json(paths.claude / ".claude-agents-config-install.json").get("version", "unknown"))
+def installed_version(paths: Paths) -> str | None:
+    version = read_json(paths.claude / ".claude-agents-config-install.json").get("version")
+    return version if isinstance(version, str) and version else None
 
 
 def save_profile(paths: Paths, profile: dict, token: str | None) -> None:
