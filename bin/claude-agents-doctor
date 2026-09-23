@@ -333,7 +333,7 @@ def validate_agents(home: Path, config_root: Path, fleet: dict, settings: dict, 
         if GENERATED_MARKER not in text:
             fail(errors, f"agent is not generator-owned: {path}")
         tools = {part.strip() for part in fm.get("tools", "").split(",")}
-        if (lane in STATIC_ROLES or config.get("readOnly") is True) and tools.intersection({"Bash", "Edit", "Write", "Agent"}):
+        if (lane in STATIC_ROLES or (isinstance(config, dict) and config.get("readOnly") is True)) and tools.intersection({"Bash", "Edit", "Write", "Agent"}):
             fail(errors, f"static lane has write or nested-agent tools: {path}")
         if lane == "research-web" and not {"WebSearch", "WebFetch"}.issubset(tools):
             fail(errors, f"research-web lacks WebSearch/WebFetch: {path}")

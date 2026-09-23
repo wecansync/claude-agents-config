@@ -513,6 +513,8 @@ function laneRole(lane, config) {
   if (lane === "research-web") return "research-web";
   if (lane === "explore-narrow") return "explore";
   if (lane === "triage-static") return "triage";
+  // A lane declared read-only never gets write tools, whatever its name.
+  if (config?.readOnly === true) return "review";
   if (lane === "ui") return "ui";
   if (lane === "tests") return "tests";
   if (lane === "docs") return "docs";

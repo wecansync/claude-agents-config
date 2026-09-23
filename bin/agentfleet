@@ -187,13 +187,14 @@ def fleet_map(paths: Paths) -> tuple[dict, list[Path]]:
     return fleet, present
 
 
-def snapshot(settings: dict, fleet: dict, name: str) -> tuple[dict, str | None]:
+def snapshot(paths: Paths, settings: dict, fleet: dict, name: str) -> tuple[dict, str | None]:
     env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
     profile = {
         "format": PROFILE_FORMAT,
         "name": name,
         "kind": current_kind(settings),
         "savedAt": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "agentfleetVersion": installed_version(paths),
         "settings": {key: settings[key] for key in PROFILE_TOP_KEYS if key in settings},
         "env": {key: env[key] for key in PROFILE_ENV_KEYS if key in env},
         "lanes": {
@@ -204,6 +205,10 @@ def snapshot(settings: dict, fleet: dict, name: str) -> tuple[dict, str | None]:
     }
     token = env.get("ANTHROPIC_AUTH_TOKEN")
     return profile, token if isinstance(token, str) and token else None
+
+
+def installed_version(paths: Paths) -> str:
+    return str(read_json(paths.claude / ".claude-agents-config-install.json").get("version", "unknown"))
 
 
 def save_profile(paths: Paths, profile: dict, token: str | None) -> None:
@@ -297,7 +302,12 @@ def apply_profile(paths: Paths, profile: dict, token: str | None) -> None:
     # top-level one when a profile carries only one of them.
     if isinstance(settings.get("autoCompactWindow"), int):
         env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(settings["autoCompactWindow"])
+    # Profiles saved before 2.0.1 carry the pins 1.0.0 shipped; the update
+    # dropped them from the fleet, so switching back must not restore them.
+    shipped = reconcile_module(paths).is_shipped_1_0_preference if "agentfleetVersion" not in profile else None
     for lane, values in profile.get("lanes", {}).items():
+        if shipped and isinstance(values, dict) and shipped(lane, values.get("preferred")):
+            values = {key: value for key, value in values.items() if key != "preferred"}
         target = fleet.get("lanes", {}).get(lane)
         if not isinstance(target, dict) or not isinstance(values, dict):
             continue
@@ -363,7 +373,7 @@ def cmd_save(paths: Paths, args: argparse.Namespace) -> int:
         if name == "native" and current_kind(settings) != "native":
             die("'native' is reserved for your Claude login; save this gateway under another name")
         fleet, _ = fleet_map(paths)
-        profile, token = snapshot(settings, fleet, name)
+        profile, token = snapshot(paths, settings, fleet, name)
         save_profile(paths, profile, token)
         atomic_write(paths.active, (name + "\n").encode("utf-8"), 0o600)
     finally:
@@ -394,7 +404,7 @@ def cmd_use(paths: Paths, args: argparse.Namespace) -> int:
         if target.get("kind") == "gateway" and not target_token:
             die(f"profile '{name}' has no saved gateway token; switch to that gateway and run: agentfleet save {name}")
         # Save where we are first, so switching back restores it exactly.
-        profile, token = snapshot(settings, fleet, current)
+        profile, token = snapshot(paths, settings, fleet, current)
         save_profile(paths, profile, token)
         apply_profile(paths, target, target_token)
         atomic_write(paths.active, (name + "\n").encode("utf-8"), 0o600)
