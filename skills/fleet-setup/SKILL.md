@@ -1,6 +1,6 @@
 ---
 name: fleet-setup
-description: Interactive AgentFleet wizard: audit live models and settings, repair stale models, validate hooks, switch provider profiles, tune lanes and model tiers, and curate agents/skills.
+description: Interactive AgentFleet wizard: audit live models and settings, repair stale models, validate hooks, switch provider profiles, assign models to lanes model by model, tune model tiers, and curate agents/skills.
 ---
 
 # AgentFleet Setup Wizard
@@ -17,7 +17,8 @@ You are running **/fleet-setup**. Every number, model name, and count you show c
 ## Phase 1: Audit (silent)
 Run `claude-fleet-setup --audit --json` and `agentfleet profiles`. From them, note:
 - **Profile:** the active profile, and whether it is `native` (Claude login) or a gateway.
-- **Live models:** count, and each model's tier (cheap / fast / balanced / deep) and context size. Native profiles have no catalog; lanes use `opus` / `sonnet` / `haiku`.
+- **Live models:** from `live_models.models`: each model's `runtime_id` (the id lanes use; always pass this one to commands), `description`, `tier` (cheap / fast / balanced / deep), `context_length`, `reasoning`, `excluded`, and the lanes it serves (`primary_for`, `fallback_for`). Native profiles have no catalog; use `native_models` (`opus`, `sonnet`, `haiku`).
+- **Lanes:** from `lanes`: each lane's `tier`, `read_only`, `alt_of`, `description`, current `model`, `fallbacks`, and `preferred` pins. Excluded models are in `excluded_models`.
 - **Settings health:** stale `model`, `advisorModel`, or `env.ANTHROPIC_*_MODEL` values, and the compaction window.
 - **Hooks:** any command whose executable or script is missing.
 - **Fleet:** lane count, which lanes carry an explicit `preferred` list, and how many live models serve as a primary or fallback somewhere.
@@ -43,18 +44,27 @@ Then ask only the questions that apply, in this order.
 
 **Step 3: Fleet tuning.** Options:
 - **Auto-rank all lanes (Recommended):** `claude-fleet-setup --reconcile`. Each lane gets the best live model for its tier, and the next best become its fallbacks.
-- **Pick models for core roles:** see below.
+- **Assign models to lanes:** suggest a full fleet, then walk through the models one by one. See below.
 - **Fix model tier labels:** see below.
 - **Keep current assignments.**
 
-*Core roles:* ask one question per role. Offer the three best live models of the role's tier, with the lane's current model marked. Apply each choice with `claude-fleet-setup --prefer <lane>=<model>`.
-- Planner: `plan` (deep)
-- Implementer: `implement` (balanced)
-- Reviewer: `review` (deep)
-- Triage: `triage-static` (fast)
-- Researcher: `research-codebase` (balanced, long context)
+*Assign models to lanes.* Build the fleet with the user in four moves.
+1. **Suggest a fleet.** For every lane, pick the best live, non-excluded model using the model's `description` first, then its `tier`, `reasoning`, and `context_length`, matched against the lane's `description` and `tier`. Cues: "strongest", "reasoning", "frontier" fit deep lanes (`plan`, `review`, `review-deep`, `security-review`, `diagnose-static`); "fastest", "cheapest", "mini", "flash" fit `explore-narrow`, `triage-static`, `implement-fast`; "free" or "budget" fit `implement-cheap`; coding or everyday models fit `implement`, `tests`, `ui`, `docs`; a context of 800K or more suits `research-codebase`. Read-only lanes favor reasoning models. An `-alt` lane must not share its sibling's model. Spread strong models so one outage does not take out every lane. Show the suggestion as one compact table: lane, suggested model, current model (mark rows that change).
+2. **Ask:** "Apply this fleet (Recommended)" (run the apply command from move 4 right away; the table was the confirmation), "Go model by model", or "Cancel".
+3. **Go model by model.** Order models deep → balanced → fast → cheap. Ask about up to 4 models per `AskUserQuestion` call, one question each, `multiSelect: true`. Question text: `<runtime_id>: <description> · <tier> · <context>`; header: a short model name (max 12 characters). Options, in order:
+   - the two lanes that fit it best, the first marked "(Recommended)", each with a one-line reason;
+   - "Skip": no pin; auto-ranking may still use the model as a primary or fallback;
+   - "Don't use this model": exclude it from every lane.
+   The user can type other lane names through "Other". A model may serve several lanes. Keep going until every model is answered.
+4. **Confirm.** Show the resulting fleet: each lane with its chosen model(s), in the order they were assigned, or "auto" when nothing was chosen, plus the excluded models. Ask: "Apply (Recommended)", "Start over" (back to move 1), or "Cancel". To apply, run ONE command so the fleet reconciles once:
+   `claude-fleet-setup --include <m> … --exclude <m> … --prefer <lane>=<model>[,<model>] …`
+   - `--prefer` only lanes whose choice differs from their current `model`; lanes whose suggestion already matches stay on auto-ranking, so the fleet keeps adapting when models change.
+   - Add `--prefer <lane>=` for lanes marked "auto" that currently have a `preferred` pin.
+   - Add `--include` for previously excluded models the user assigned to a lane, and `--exclude` for "Don't use this model" answers.
+   - Always use `runtime_id` values. On the native profile, only `opus`, `sonnet`, and `haiku` can be pinned or excluded.
+   Pinned lanes still get fallbacks: after the user's own models, free fallback slots are filled by tier ranking.
 
-`--prefer <lane>=` clears a pin so the lane goes back to tier ranking.
+`--prefer <lane>=` clears a pin so the lane goes back to tier ranking. `--exclude <model>` keeps a model out of every lane (it stays in Claude Code's `/model` picker); `--include <model>` undoes it.
 
 *Tier labels:* the `-fast`, `-deep`, and `-cheap` lanes depend on them. Catalogs report context size but not price or speed, so tiers are guessed from names. Show the guessed tier of each live model, ask which to correct, and apply with `claude-fleet-setup --tier <model>=<tier>`.
 

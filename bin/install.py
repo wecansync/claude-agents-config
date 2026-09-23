@@ -109,7 +109,7 @@ LEGACY_AUTO_COMPACT_ENV = "950000"
 # file or be copied into a target installation. The website, release tooling,
 # and build output are repository-only as well: releases are built from the
 # manifest's own path list, so none of these directories can leak into one.
-BUNDLE_CONTEXT_DIRS = {".ai", ".commandcode", ".kilo", ".github", "site", "packaging", "dist"}
+BUNDLE_CONTEXT_DIRS = {".ai", ".claude", ".commandcode", ".kilo", ".github", "site", "packaging", "dist"}
 PROVIDER_POLICY_PATH = "config/provider-policy.json"
 PROVIDER_CATALOG_MODULE = "scripts/provider_catalog.py"
 RECONCILE_SCRIPT = "scripts/fleet-reconcile.py"
@@ -703,6 +703,7 @@ def hook_command_for(kind: str, claude_dir: Path, config_root: Path | None = Non
         "model-sync": "sync-provider-models.mjs",
         "model-context": "sync-model-context.py",
         "fleet-reconcile": "fleet-reconcile.py",
+        "auto-update": "agentfleet.py",
     }[kind]
     if kind == "model-sync":
         runtime = node_path(require=True)
@@ -723,6 +724,11 @@ def hook_command_for(kind: str, claude_dir: Path, config_root: Path | None = Non
         parts = [sys.executable, str(script), "--home", str(claude_dir.parent)]
         if config_root is not None:
             parts.extend(["--config-home", str(config_root)])
+        if kind == "auto-update":
+            # --home/--config-home are main-parser options and must precede
+            # the "auto-update" subcommand token; argparse does not accept
+            # them after it once the subparser has taken over.
+            parts.extend(["auto-update", "--hook"])
     if os.name == "nt":
         return windows_command(*parts)
     return " ".join(shlex.quote(str(part)) for part in parts)
@@ -800,6 +806,8 @@ def platform_hook_template(home: Path, config_root: Path, template: dict, enable
                     command = hook_command_for("model-sync", home / ".claude", config_root) + hook_marker("model-sync")
                 elif kind == "model-context":
                     command = hook_command_for("model-context", home / ".claude", config_root) + hook_marker("model-context")
+                elif kind == "auto-update":
+                    command = hook_command_for("auto-update", home / ".claude", config_root) + hook_marker("auto-update")
                 elif kind == "fleet-reconcile":
                     if not enable_discovery:
                         continue

@@ -460,28 +460,365 @@ def current_release(paths: Paths) -> Path | None:
     return release if (release / "bin" / "install.py").is_file() else None
 
 
-def cmd_update(paths: Paths, args: argparse.Namespace) -> int:
-    base = os.environ.get("AGENTFLEET_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
-    windows = os.name == "nt"
-    url = f"{base}/install.ps1" if windows else f"{base}/install.sh"
+def _base_url() -> str:
+    return os.environ.get("AGENTFLEET_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
+
+
+def _validate_url(url: str) -> None:
     if not url.startswith("https://") and urllib.parse.urlparse(url).hostname not in {"127.0.0.1", "localhost"}:
         die("AGENTFLEET_BASE_URL must use https")
+
+
+class DownloadError(Exception):
+    pass
+
+
+def _run_installer(paths: Paths, extra_args: list, version: str | None = None, output=None) -> int:
+    """Download and run install.sh / install.ps1. Shared by cmd_update and
+    auto-update --run; with ``output`` (a file), all installer output goes
+    there. Raises DownloadError when the script cannot be fetched."""
+    base = _base_url()
+    windows = os.name == "nt"
+    url = f"{base}/install.ps1" if windows else f"{base}/install.sh"
+    _validate_url(url)
     with tempfile.TemporaryDirectory(prefix="agentfleet-update-") as temp:
         script = Path(temp) / Path(url).name
-        # Cloudflare rejects urllib's default user agent, so name ourselves.
         request = urllib.request.Request(url, headers={"User-Agent": f"agentfleet/{installed_version(paths) or 'unknown'}"})
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 script.write_bytes(response.read())
         except (urllib.error.URLError, OSError) as exc:
-            die(f"could not download {url}: {exc}")
-        forwarded = ["--home", str(paths.home), "--config-home", str(paths.config), *args.installer_args]
+            raise DownloadError(f"could not download {url}: {exc}") from exc
+        forwarded = ["--home", str(paths.home), "--config-home", str(paths.config), *extra_args]
+        run_env = dict(os.environ)
+        if version:
+            run_env["AGENTFLEET_VERSION"] = version
+        run_env["AGENTFLEET_NONINTERACTIVE"] = "1"
         if windows:
-            shell = shutil.which("pwsh") or shutil.which("powershell") or die("PowerShell is required to update")
+            shell = shutil.which("pwsh") or shutil.which("powershell")
+            if not shell:
+                raise DownloadError("PowerShell is required to update")
             command = [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), *forwarded]
         else:
             command = ["sh", str(script), *forwarded]
-        return subprocess.run(command).returncode
+        return subprocess.run(command, stdout=output, stderr=subprocess.STDOUT if output else None, env=run_env).returncode
+
+
+# ---------------------------------------------------------------------------
+# Auto-update state helpers
+# ---------------------------------------------------------------------------
+
+def _auto_update_state_path(paths: Paths) -> Path:
+    return paths.store / "auto-update.json"
+
+
+def _read_auto_update_state(paths: Paths) -> dict:
+    p = _auto_update_state_path(paths)
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_auto_update_state(paths: Paths, state: dict) -> None:
+    paths.store.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(paths.store, 0o700)
+    except OSError:
+        pass
+    atomic_write(_auto_update_state_path(paths), json_bytes(state), 0o600)
+
+
+def _parse_version(v: str) -> tuple[int, int, int] | None:
+    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", v)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+def _now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _fetch_latest_version(paths: Paths) -> str | None:
+    """Fetch latest.json; return version string or None on any failure."""
+    base = _base_url()
+    url = f"{base}/releases/latest.json"
+    try:
+        _validate_url(url)
+    except SystemExit:
+        return None
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": f"agentfleet/{installed_version(paths) or 'unknown'}"})
+        with urllib.request.urlopen(request, timeout=3) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        if not isinstance(data, dict):
+            return None
+        v = data.get("version")
+        return v if isinstance(v, str) and _parse_version(v) else None
+    except Exception:
+        return None
+
+
+def _auto_update_log(paths: Paths) -> Path:
+    return paths.store / "auto-update.log"
+
+
+def _trim_log_if_needed(log_path: Path) -> None:
+    try:
+        size = log_path.stat().st_size
+        if size > 1_000_000:
+            data = log_path.read_bytes()
+            half = data[len(data) // 2:]
+            atomic_write(log_path, half, 0o600)
+    except OSError:
+        pass
+
+
+def _append_log(log_path: Path, text: str) -> None:
+    paths_parent = log_path.parent
+    paths_parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _trim_log_if_needed(log_path)
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(text)
+        try:
+            os.chmod(log_path, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Auto-update commands
+# ---------------------------------------------------------------------------
+
+def _auto_update_run(paths: Paths, version: str) -> None:
+    """Exclusive-lock, run installer, record result. Called from --run or sync mode."""
+    import time as _time
+    lock_path = paths.store / "auto-update.lock"
+    log_path = _auto_update_log(paths)
+    paths.store.mkdir(parents=True, exist_ok=True)
+
+    def _try_open_lock() -> "tuple[int, bool]":
+        """Return (fd, took_stale). Raises OSError if truly locked."""
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            return fd, False
+        except FileExistsError:
+            pass
+        # Check staleness (> 1 h)
+        try:
+            mtime = lock_path.stat().st_mtime
+            if (_time.time() - mtime) < 3600:
+                raise OSError("lock held by another process")
+            lock_path.unlink(missing_ok=True)
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            return fd, True
+        except FileExistsError:
+            raise OSError("lock held by another process")
+
+    try:
+        fd, took_stale = _try_open_lock()
+    except OSError:
+        _append_log(log_path, f"[{_now_iso()}] auto-update lock held; skipping\n")
+        return
+
+    try:
+        pid_info = f"pid={os.getpid()} time={_now_iso()}\n"
+        os.write(fd, pid_info.encode())
+        os.close(fd)
+        fd = -1
+
+        _append_log(log_path, f"[{_now_iso()}] auto-update starting: {version}\n")
+        try:
+            _trim_log_if_needed(log_path)
+            with open(log_path, "a", encoding="utf-8") as log:
+                log.flush()
+                code = _run_installer(paths, [], version=version, output=log)
+            ok = code == 0
+            _append_log(log_path, f"[{_now_iso()}] auto-update {'succeeded' if ok else 'failed'}: {version} (exit {code})\n")
+        except (DownloadError, OSError) as exc:
+            ok = False
+            _append_log(log_path, f"[{_now_iso()}] auto-update failed: {version}: {exc}\n")
+
+        state = _read_auto_update_state(paths)
+        state["lastResult"] = {"version": version, "ok": ok, "time": _now_iso()}
+        state["reported"] = False
+        _write_auto_update_state(paths, state)
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            lock_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def cmd_auto_update(paths: Paths, args: argparse.Namespace) -> int:
+    """agentfleet auto-update [--hook | --run X.Y.Z | on | off | status]"""
+    subcommand = "--hook" if args.hook else "--run" if args.run else args.action
+    au_version = args.run
+
+    if subcommand == "on":
+        state = _read_auto_update_state(paths)
+        state["enabled"] = True
+        _write_auto_update_state(paths, state)
+        print("AgentFleet auto-update enabled.")
+        return 0
+
+    if subcommand == "off":
+        state = _read_auto_update_state(paths)
+        state["enabled"] = False
+        _write_auto_update_state(paths, state)
+        print("AgentFleet auto-update disabled.")
+        return 0
+
+    if subcommand == "status":
+        state = _read_auto_update_state(paths)
+        enabled = state.get("enabled", True)
+        env_override = os.environ.get("AGENTFLEET_AUTO_UPDATE")
+        if env_override == "0":
+            status_str = "disabled (AGENTFLEET_AUTO_UPDATE=0)"
+        elif enabled:
+            status_str = "enabled"
+        else:
+            status_str = "disabled"
+        print(f"auto-update: {status_str}")
+        print(f"installed version: {installed_version(paths) or 'unknown'}")
+        last_check = state.get("lastCheck")
+        print(f"last check: {last_check or 'never'}")
+        latest = state.get("latestSeen")
+        print(f"latest seen: {latest or 'unknown'}")
+        last_result = state.get("lastResult")
+        if last_result and isinstance(last_result, dict):
+            ok_str = "ok" if last_result.get("ok") else "failed"
+            print(f"last result: {last_result.get('version', '?')} {ok_str} at {last_result.get('time', '?')}")
+        else:
+            print("last result: none")
+        return 0
+
+    if subcommand == "--run":
+        # --run X.Y.Z: background worker
+        version = au_version
+        if not version or not _parse_version(version):
+            print("agentfleet: auto-update --run requires a valid version", file=sys.stderr)
+            return 1
+        _auto_update_run(paths, version)
+        return 0
+
+    if subcommand == "--hook":
+        # SessionStart entry point — always exit 0, never raise
+        try:
+            _auto_update_hook(paths)
+        except Exception:
+            pass
+        return 0
+
+    print("agentfleet: unknown auto-update subcommand", file=sys.stderr)
+    return 1
+
+
+def _auto_update_hook(paths: Paths) -> None:
+    """Core logic for --hook; exceptions are caught by caller."""
+    state = _read_auto_update_state(paths)
+
+    # 1a. Report finished background update
+    last_result = state.get("lastResult")
+    reported = state.get("reported", True)
+    if isinstance(last_result, dict) and not reported:
+        ver = last_result.get("version", "?")
+        ok = last_result.get("ok", False)
+        if ok:
+            print(f"AgentFleet was updated to {ver} automatically.")
+        else:
+            log_path = _auto_update_log(paths)
+            print(f"AgentFleet auto-update to {ver} failed; see {log_path}")
+        state["reported"] = True
+        _write_auto_update_state(paths, state)
+        return
+
+    # 1b. Check disabled
+    if os.environ.get("AGENTFLEET_AUTO_UPDATE") == "0":
+        return
+    if not state.get("enabled", True):
+        return
+
+    # 1c. Skip if not a release install
+    if current_release(paths) is None:
+        return
+
+    # 1d. Throttle: at most once per 24 h
+    last_check = state.get("lastCheck")
+    if last_check:
+        try:
+            last_dt = dt.datetime.fromisoformat(last_check.replace("Z", "+00:00"))
+            now = dt.datetime.now(dt.timezone.utc)
+            if (now - last_dt).total_seconds() < 86400:
+                return
+        except (ValueError, TypeError):
+            pass
+
+    # 1e. Fetch latest.json
+    latest_version = _fetch_latest_version(paths)
+    state["lastCheck"] = _now_iso()
+    if latest_version:
+        state["latestSeen"] = latest_version
+    _write_auto_update_state(paths, state)
+
+    if not latest_version:
+        return
+
+    current_ver = installed_version(paths)
+    if not current_ver:
+        return
+
+    latest_t = _parse_version(latest_version)
+    current_t = _parse_version(current_ver)
+    if not latest_t or not current_t:
+        return
+
+    if latest_t <= current_t:
+        return  # already up to date
+
+    # Different major version: notify once, do not install
+    if latest_t[0] != current_t[0]:
+        major_notified = state.get("majorNotified", "")
+        if major_notified != latest_version:
+            print(f"AgentFleet {latest_t[0]}.0.0 is available; run agentfleet update to upgrade.")
+            state["majorNotified"] = latest_version
+            _write_auto_update_state(paths, state)
+        return
+
+    # Same major, newer: spawn (or run sync for tests)
+    if os.environ.get("AGENTFLEET_AUTO_UPDATE_SYNC") == "1":
+        _auto_update_run(paths, latest_version)
+        return
+
+    # Spawn detached background process
+    agentfleet_script = Path(sys.argv[0]).resolve()
+    cmd = [sys.executable, str(agentfleet_script),
+           "--home", str(paths.home), "--config-home", str(paths.config),
+           "auto-update", "--run", latest_version]
+    if os.name == "nt":
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL,
+                         creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+    else:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def cmd_update(paths: Paths, args: argparse.Namespace) -> int:
+    try:
+        return _run_installer(paths, list(getattr(args, "installer_args", [])))
+    except DownloadError as exc:
+        die(str(exc))
 
 
 def cmd_uninstall(paths: Paths, _args: argparse.Namespace) -> int:
@@ -531,6 +868,10 @@ def main() -> int:
     rollback = sub.add_parser("rollback", help="restore the settings and files from before the last install or update")
     rollback.add_argument("--backup", metavar="DIR", help="restore this backup snapshot instead of the newest")
     sub.add_parser("version", help="print the installed version")
+    au = sub.add_parser("auto-update", help="turn automatic background updates on or off, or show their status")
+    au.add_argument("action", nargs="?", choices=("on", "off", "status"), default="status")
+    au.add_argument("--hook", action="store_true", help=argparse.SUPPRESS)
+    au.add_argument("--run", metavar="VERSION", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -539,7 +880,7 @@ def main() -> int:
     handlers = {
         "profiles": cmd_profiles, "use": cmd_use, "save": cmd_save, "status": cmd_status,
         "doctor": cmd_doctor, "sync": cmd_sync, "update": cmd_update, "uninstall": cmd_uninstall, "rollback": cmd_rollback,
-        "version": cmd_version,
+        "version": cmd_version, "auto-update": cmd_auto_update,
     }
     return handlers[args.command](paths, args)
 

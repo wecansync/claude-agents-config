@@ -445,7 +445,7 @@ curl -fsSL https://agentfleet.wecansync.com/install.sh | \
 
       <section id="tuning">
         <h2 class="anchor-heading">Tuning<a class="anchor-link" href="#tuning" aria-label="Link to this section">#</a></h2>
-        <p>Use <code class="il">claude-fleet-setup</code> to pin models to lanes, label model tiers, and re-rank the fleet.</p>
+        <p>Use <code class="il">claude-fleet-setup</code> to pin models to lanes, keep models out of the fleet, label model tiers, and re-rank the fleet.</p>
         <h3 id="tuning-prefer" class="anchor-heading">Pinning a lane to a model<a class="anchor-link" href="#tuning-prefer" aria-label="Link to this section">#</a></h3>
         <div class="code-wrap">
           <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy prefer examples">Copy</button></div>
@@ -458,7 +458,18 @@ claude-fleet-setup --prefer fleet-implement=my-primary-model,my-fallback-model
 # Clear the pin so the lane returns to tier ranking:
 claude-fleet-setup --prefer fleet-implement=</code></pre>
         </div>
+        <p>A pinned lane uses your models in your order, and any remaining fallback slots are filled by tier ranking, so a lane pinned to one model still has somewhere to go if that model is unavailable.</p>
         <aside class="callout note"><span class="callout-label">Note</span><p>On a Claude subscription only <code class="il">opus</code>, <code class="il">sonnet</code>, and <code class="il">haiku</code> can be used as preferred model values.</p></aside>
+        <h3 id="tuning-exclude" class="anchor-heading">Keeping a model out of the fleet<a class="anchor-link" href="#tuning-exclude" aria-label="Link to this section">#</a></h3>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy exclude examples">Copy</button></div>
+          <pre><code># Never assign this model to any lane, as a primary or a fallback:
+claude-fleet-setup --exclude my-model-id
+
+# Allow it again:
+claude-fleet-setup --include my-model-id</code></pre>
+        </div>
+        <p>An excluded model stays in Claude Code's <code class="il">/model</code> picker; it just never serves a lane. Excluding a model also removes it from any lane pins, and pinning an excluded model is refused until you include it again. Exclusions are stored as <code class="il">excludedModels</code> in <code class="il">~/.claude/fleet.json</code> and survive updates.</p>
         <h3 id="tuning-tier" class="anchor-heading">Labelling a model's tier<a class="anchor-link" href="#tuning-tier" aria-label="Link to this section">#</a></h3>
         <div class="code-wrap">
           <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy tier label examples">Copy</button></div>
@@ -474,7 +485,7 @@ claude-fleet-setup --tier my-model-id=</code></pre>
           <pre><code>claude-fleet-setup --reconcile</code></pre>
         </div>
         <p>Fetches live provider models, runs the full ranking pass, and regenerates all agent files. Run this after changing tier labels or after a provider catalog update.</p>
-        <aside class="callout tip"><span class="callout-label">Tip</span><p>Run <code class="il">/fleet-setup</code> inside Claude Code for an interactive wizard that walks you through all tuning options, including profile switching, tier labels, and agent curation.</p></aside>
+        <aside class="callout tip"><span class="callout-label">Tip</span><p>Run <code class="il">/fleet-setup</code> inside Claude Code for an interactive wizard that walks you through all tuning options, including assigning models to lanes one by one, profile switching, tier labels, and agent curation.</p></aside>
       </section>
 
       <section id="custom-lanes">
@@ -532,6 +543,7 @@ claude-fleet-setup --tier my-model-id=</code></pre>
           <div class="cmd-ref-item"><code class="il">agentfleet doctor</code><p>Verify the installation (runs <code class="il">claude-agents-doctor --check</code>).</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet sync</code><p>Regenerate fleet agent files from <code class="il">~/.claude/fleet.json</code>.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet update</code><p>Download and install the latest release. Extra arguments are forwarded to the installer.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet auto-update [on|off|status]</code><p>Turn automatic background updates on or off, or show whether they are enabled, the installed and latest versions, and the last result.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet uninstall</code><p>Remove AgentFleet and restore your earlier settings.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet rollback [--backup DIR]</code><p>Restore the files and settings from before the last install or update. Uses the newest backup by default; <code class="il">--backup DIR</code> restores a named snapshot.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet version</code><p>Print the installed version.</p></div>
@@ -545,6 +557,8 @@ claude-fleet-setup --tier my-model-id=</code></pre>
           <div class="cmd-ref-item"><code class="il">claude-fleet-setup --fix-settings</code><p>Replace stale models in <code class="il">settings.json</code> and optimize the compaction window.</p></div>
           <div class="cmd-ref-item"><code class="il">claude-fleet-setup --fix-settings --advisor &lt;model&gt;</code><p>Same as <code class="il">--fix-settings</code> but sets a specific advisor model.</p></div>
           <div class="cmd-ref-item"><code class="il">claude-fleet-setup --prefer LANE=MODEL[,MODEL]</code><p>Pin a lane to one or more preferred models in order. Repeatable. <code class="il">LANE=</code> clears the pin.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --exclude MODEL[,MODEL]</code><p>Never assign these models to any lane (they stay in the model picker). Repeatable.</p></div>
+          <div class="cmd-ref-item"><code class="il">claude-fleet-setup --include MODEL[,MODEL]</code><p>Undo <code class="il">--exclude</code> for these models. Repeatable.</p></div>
           <div class="cmd-ref-item"><code class="il">claude-fleet-setup --tier MODEL=TIER</code><p>Label a model's capability tier. Repeatable. <code class="il">MODEL=</code> clears the label.</p></div>
           <div class="cmd-ref-item"><code class="il">claude-fleet-setup --archive-agents &lt;categories&gt;</code><p>Archive agent files by comma-separated category: <code class="il">engineering</code>, <code class="il">game_dev</code>, <code class="il">niche_ops</code>, <code class="il">other</code>, or <code class="il">all</code>. Also accepts specific filenames.</p></div>
           <div class="cmd-ref-item"><code class="il">claude-fleet-setup --restore-agents &lt;categories&gt;</code><p>Restore archived agents by category or filename.</p></div>
@@ -571,7 +585,7 @@ claude-fleet-setup --tier my-model-id=</code></pre>
             <ul class="req-list">
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 1 — Stale settings</strong> (only if found): for each stale key, offers up to three live models of the matching tier, plus "Keep unchanged". Applies with <code class="il">claude-fleet-setup --fix-settings</code>.</li>
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 2 — Provider profile</strong>: stay on the current profile or switch. Options come from <code class="il">agentfleet profiles</code>; <code class="il">native</code> is always included.</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 3 — Fleet tuning</strong>: auto-rank all lanes (recommended), pick models for core roles (planner, implementer, reviewer, triage, researcher), fix model tier labels, or keep current assignments.</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 3 — Fleet tuning</strong>: auto-rank all lanes (recommended), assign models to lanes, fix model tier labels, or keep current assignments.</li>
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 4 — Agent curation</strong> (only if non-fleet agents exist): keep all, archive entire domains not relevant to your work (e.g. <code class="il">game_dev</code>, <code class="il">niche_ops</code>), or archive one category. Fleet lanes are never archived.</li>
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 5 — Skills and new agents</strong>: archive legacy delegate wrappers, create a custom lane, or do nothing.</li>
             </ul>
@@ -583,6 +597,14 @@ claude-fleet-setup --tier my-model-id=</code></pre>
             </ol>
             <p>If either gate fails, the wizard shows the error and fixes the cause before finishing. It ends with at most 4 lines summarizing what changed, what was left alone, and whether both gates passed.</p>
           </li>
+        </ol>
+        <h3 id="fleet-setup-assign" class="anchor-heading">Assigning models to lanes<a class="anchor-link" href="#fleet-setup-assign" aria-label="Link to this section">#</a></h3>
+        <p>Choose <strong>Assign models to lanes</strong> in Step 3 to build the fleet together with the wizard:</p>
+        <ol class="step-list">
+          <li><h4>Suggested fleet</h4><p>The wizard reads every live model's description, tier, reasoning support, and context size from your provider's model list, and proposes a model for each lane. It keeps <code class="il">-alt</code> lanes independent and spreads strong models across lanes.</p></li>
+          <li><h4>Approve or go model by model</h4><p>Apply the suggestion as is, or walk through the models one at a time (up to four per question).</p></li>
+          <li><h4>Pick lanes per model</h4><p>For each model the wizard recommends the lanes that fit it best. Pick one or more lanes, <em>Skip</em> it (auto-ranking decides where it helps), or choose <em>Don't use this model</em> to exclude it.</p></li>
+          <li><h4>Confirm</h4><p>Review the resulting fleet, then apply it or start over. The wizard pins only the lanes whose choice differs from auto-ranking, so the rest keep adapting as your provider's models change.</p></li>
         </ol>
         <aside class="callout note"><span class="callout-label">Note</span><p>The wizard never shows raw JSON, never edits files by hand, and always writes through <code class="il">claude-fleet-setup</code> and <code class="il">agentfleet</code> to hold the shared lock and keep both fleet mirrors in sync.</p></aside>
       </section>
@@ -650,6 +672,7 @@ claude-fleet-setup --tier my-model-id=</code></pre>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> The log rotates at 2,000,000 bytes.</li>
         </ul>
         <p>The hook is fail-open: a logging failure does not block a prompt. The doctor checks these retention and redaction values in both the packaged and installed hook.</p>
+        <p>The automatic update check makes at most one request a day to <code class="il">https://agentfleet.wecansync.com/releases/latest.json</code>, identified only by the user agent <code class="il">agentfleet/&lt;version&gt;</code>; it sends nothing about your projects, prompts, or provider. Turn it off with <code class="il">agentfleet auto-update off</code>.</p>
       </section>
 
       <section id="safety">
@@ -677,6 +700,21 @@ claude-fleet-setup --tier my-model-id=</code></pre>
           <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy workaround install command">Copy</button></div>
           <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh</code></pre>
         </div>
+        <h3 id="upgrading-auto" class="anchor-heading">Automatic updates<a class="anchor-link" href="#upgrading-auto" aria-label="Link to this section">#</a></h3>
+        <p>From 2.0.4 on, AgentFleet keeps itself up to date. Each time Claude Code starts, a quick hook checks at most once a day whether a newer release exists:</p>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> A newer release with the <strong>same major version</strong> is installed in the background, with the same checksum verification, backup, and doctor gate as <code class="il">agentfleet update</code>. New sessions use it, and the next session mentions it in one line.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> A new <strong>major version</strong> is never installed automatically; you get a one-time notice to run <code class="il">agentfleet update</code>.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> The hook never delays startup, prints nothing when there is nothing to report, and is skipped for installs made from a git clone.</li>
+        </ul>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy auto-update commands">Copy</button></div>
+          <pre><code>agentfleet auto-update status   # enabled?, versions, last result
+agentfleet auto-update off      # stop automatic updates
+agentfleet auto-update on       # turn them back on</code></pre>
+        </div>
+        <p><code class="il">AGENTFLEET_AUTO_UPDATE=0</code> also turns them off, for example in CI. The state lives in <code class="il">~/.claude/agentfleet/auto-update.json</code> and each run's output in <code class="il">~/.claude/agentfleet/auto-update.log</code>. Versions before 2.0.4 need one manual update to get the hook.</p>
+
         <h3 id="upgrading-1x" class="anchor-heading">Migrating from 1.0.0<a class="anchor-link" href="#upgrading-1x" aria-label="Link to this section">#</a></h3>
         <p>The installer migrates automatically. Lanes that encoded vendor model names in their names are renamed:</p>
         <div class="table-wrap">
@@ -853,6 +891,9 @@ sh packaging/deploy.sh             # upload site/, then archives, then latest.js
           </table>
         </div>
         <aside class="callout note"><span class="callout-label">Note</span><p><code class="il">site/</code>, <code class="il">packaging/</code>, <code class="il">dist/</code>, and <code class="il">.github/</code> are never part of an installed bundle. If the <code class="il">agent-brain</code> CLI is on PATH at install time, agents receive its memory tools and hooks. Otherwise they are omitted with no functional change.</p></aside>
+        <h3 id="dev-contributing" class="anchor-heading">Contributing and roadmap<a class="anchor-link" href="#dev-contributing" aria-label="Link to this section">#</a></h3>
+        <p>Read <a href="https://github.com/wecansync/claude-agents-config/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> before opening a pull request: it covers setup, the project rules, tests, versioning, and how to report security issues privately.</p>
+        <p>The next phase is support for other agent CLIs besides Claude Code: OpenAI Codex CLI, OpenCode, Kilo Code, and Cline. No design is decided yet; open an issue to discuss it before sending code.</p>
       </section>
 
     </div>

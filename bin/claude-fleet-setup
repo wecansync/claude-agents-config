@@ -184,7 +184,8 @@ def gateway_active(home: Path) -> bool:
     return bool(env.get("ANTHROPIC_BASE_URL") and env.get("ANTHROPIC_AUTH_TOKEN"))
 
 
-def update_fleet_choices(home: Path, config_home: Path, prefer: list[str], tiers: list[str], lock_timeout: float) -> None:
+def update_fleet_choices(home: Path, config_home: Path, prefer: list[str], tiers: list[str], lock_timeout: float,
+                         exclude: list[str] | None = None, include: list[str] | None = None) -> None:
     """Record explicit lane preferences and model tier labels in both fleet
     mirrors. Reconciliation then applies them against the live catalog."""
     from provider_catalog import TIER_RANK
@@ -201,12 +202,44 @@ def update_fleet_choices(home: Path, config_home: Path, prefer: list[str], tiers
         lanes = fleet.get("lanes") if isinstance(fleet, dict) else None
         if not isinstance(lanes, dict):
             raise SystemExit(f"{present[0]} has no lanes")
+        from provider_catalog import excluded_models, strip_known_suffix
+        listed = [item for item in fleet.get("excludedModels") or [] if isinstance(item, str) and item.strip()]
+        for item in include or []:
+            for model in (value.strip() for value in item.split(",") if value.strip()):
+                kept = [value for value in listed if strip_known_suffix(value) != strip_known_suffix(model)]
+                print(f"{model}: {'included again' if len(kept) < len(listed) else 'was not excluded'}")
+                listed = kept
+        for item in exclude or []:
+            for model in (value.strip() for value in item.split(",") if value.strip()):
+                if model.removesuffix("[1m]") not in ("opus", "sonnet", "haiku") and not gateway_active(home):
+                    raise SystemExit(f"the native profile serves only opus, sonnet, and haiku; cannot exclude {model}")
+                if strip_known_suffix(model) not in {strip_known_suffix(value) for value in listed}:
+                    listed.append(model)
+                print(f"{model}: excluded from every lane")
+                for lane, config in lanes.items():
+                    pins = config.get("preferred") if isinstance(config, dict) else None
+                    if isinstance(pins, list):
+                        remaining = [value for value in pins if not (isinstance(value, str) and strip_known_suffix(value) == strip_known_suffix(model))]
+                        if len(remaining) != len(pins):
+                            if remaining:
+                                config["preferred"] = remaining
+                            else:
+                                config.pop("preferred", None)
+                            print(f"  fleet-{lane}: dropped {model} from its preference")
+        if listed:
+            fleet["excludedModels"] = sorted(dict.fromkeys(listed))
+        else:
+            fleet.pop("excludedModels", None)
+        excluded = excluded_models(fleet)
         for item in prefer:
             lane, _, models = item.partition("=")
             lane = lane.strip().removeprefix("fleet-")
             if lane not in lanes:
                 raise SystemExit(f"unknown lane: {lane} (lanes: {', '.join(lanes)})")
             values = [model.strip() for model in models.split(",") if model.strip()]
+            blocked = [model for model in values if strip_known_suffix(model) in excluded]
+            if blocked:
+                raise SystemExit(f"{', '.join(blocked)} is excluded; run --include first")
             foreign = [model for model in values if model.removesuffix("[1m]") not in ("opus", "sonnet", "haiku")]
             if foreign and not gateway_active(home):
                 raise SystemExit(f"the native profile serves only opus, sonnet, and haiku; cannot prefer {', '.join(foreign)}")
@@ -574,6 +607,51 @@ def audit_fleet(home: Path, config_home: Path, policy_file: Path) -> dict:
         if isinstance(lane_cfg, dict) and lane_cfg.get("model"):
             assigned_models.add(clean_model_id(lane_cfg["model"]))
 
+    # Per-model detail for the /fleet-setup interview: the id lanes use, its
+    # capability tier, and where it serves today.
+    from provider_catalog import context_length, effective_model_id, excluded_models, is_excluded, model_tier, supports_reasoning, tier_overrides
+    try:
+        policy = load_policy(policy_file)
+    except CatalogError:
+        policy = {"version": "provider-policy.v1", "provider": "gateway", "families": [{"name": "gateway", "prefixes": [""], "approved": True}]}
+    overrides = tier_overrides(policy, fleet_config if isinstance(fleet_config, dict) else {})
+    excluded = excluded_models(fleet_config)
+    raw_rows = read_json(Path(catalog_info["cache_file"]), {})
+    raw_by_id = {row.get("id"): row for row in (raw_rows.get("models") if isinstance(raw_rows, dict) else None) or [] if isinstance(row, dict)}
+    served: dict[str, dict[str, list[str]]] = {}
+    for lane_id, lane_cfg in lanes.items():
+        if not isinstance(lane_cfg, dict):
+            continue
+        if isinstance(lane_cfg.get("model"), str):
+            served.setdefault(lane_cfg["model"], {"primary": [], "fallback": []})["primary"].append(lane_id)
+            assigned_models.add(clean_model_id(lane_cfg["model"]))
+        for fallback in lane_cfg.get("fallbacks") or []:
+            if isinstance(fallback, str):
+                served.setdefault(fallback, {"primary": [], "fallback": []})["fallback"].append(lane_id)
+                assigned_models.add(clean_model_id(fallback))
+    for model in catalog_info["models"]:
+        row = raw_by_id.get(model["id"], {})
+        runtime = effective_model_id(model["id"], policy, context_length(row)) or model["id"]
+        model["runtime_id"] = runtime
+        model["tier"] = model_tier(runtime, row, overrides)
+        model["reasoning"] = supports_reasoning(row)
+        model["excluded"] = is_excluded(runtime, excluded)
+        model["primary_for"] = served.get(runtime, {}).get("primary", [])
+        model["fallback_for"] = served.get(runtime, {}).get("fallback", [])
+    lane_summary = []
+    for lane_id, lane_cfg in lanes.items():
+        if isinstance(lane_cfg, dict):
+            lane_summary.append({
+                "lane": lane_id,
+                "tier": lane_cfg.get("tier"),
+                "read_only": lane_cfg.get("readOnly") is True,
+                "alt_of": lane_cfg.get("altOf"),
+                "description": lane_cfg.get("description", ""),
+                "model": lane_cfg.get("model"),
+                "fallbacks": lane_cfg.get("fallbacks") or [],
+                "preferred": lane_cfg.get("preferred") or [],
+            })
+
     utilized_live_models = [m for m in catalog_info["models"] if m["clean_id"] in assigned_models or m["id"] in assigned_models]
     unutilized_live_models = [m for m in catalog_info["models"] if m["clean_id"] not in assigned_models and m["id"] not in assigned_models]
 
@@ -614,6 +692,9 @@ def audit_fleet(home: Path, config_home: Path, policy_file: Path) -> dict:
             "by_category": skills_by_cat,
             "archived_total": archived_skills_count
         },
+        "lanes": lane_summary,
+        "excluded_models": sorted(fleet_config.get("excludedModels") or []) if isinstance(fleet_config, dict) else [],
+        "native_models": ["opus", "sonnet", "haiku"] if not bool(env.get("ANTHROPIC_BASE_URL")) else [],
         "fleet_coverage": {
             "total_lanes": len(lanes),
             "utilized_live_models_count": len(utilized_live_models),
@@ -932,6 +1013,8 @@ def main() -> int:
     parser.add_argument("--restore-skills", help="comma-separated skill names or categories to restore from archive")
     parser.add_argument("--prefer", action="append", default=[], metavar="LANE=MODEL[,MODEL]", help="pin a lane's preferred models in order (repeatable); 'LANE=' clears it")
     parser.add_argument("--tier", action="append", default=[], metavar="MODEL=TIER", help="label a model cheap, fast, balanced, or deep (repeatable); 'MODEL=' clears it")
+    parser.add_argument("--exclude", action="append", default=[], metavar="MODEL[,MODEL]", help="never assign these models to any lane (repeatable); they stay in the model picker")
+    parser.add_argument("--include", action="append", default=[], metavar="MODEL[,MODEL]", help="undo --exclude for these models (repeatable)")
     parser.add_argument("--lock-timeout", type=float, default=4.0, help=argparse.SUPPRESS)
     args = parser.parse_args()
     home = resolved_home(args)
@@ -989,8 +1072,8 @@ def main() -> int:
             print(f"  - {item['name']} ({item['category']})")
         did_action = True
 
-    if args.prefer or args.tier:
-        update_fleet_choices(home, config_home, args.prefer, args.tier, args.lock_timeout)
+    if args.prefer or args.tier or args.exclude or args.include:
+        update_fleet_choices(home, config_home, args.prefer, args.tier, args.lock_timeout, args.exclude, args.include)
         run_setup_reconciliation_and_sync(home, config_home, path)
         return 0
 

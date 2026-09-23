@@ -1839,6 +1839,63 @@ class AgentFleetTwoTests(unittest.TestCase):
         relabelled, *_ = ns["resolve_fleet"](labelled, {}, rows, GENERIC_POLICY)
         self.assertEqual(relabelled["lanes"]["implement-fast"]["model"], "claude-sonnet-5[1m]")
 
+    def test_excluded_models_never_serve_and_pins_keep_fallbacks(self):
+        ns = self.reconcile()
+        rows = [
+            {"id": "claude-opus-5", "context_length": 1000000},
+            {"id": "claude-sonnet-5", "context_length": 1000000},
+            {"id": "claude-haiku", "context_length": 200000},
+            {"id": "qwen-3", "context_length": 128000},
+        ]
+        fleet = json.loads((ROOT / "config/delegate-fleet.json").read_text())
+        fleet["excludedModels"] = ["claude-opus-5"]
+        fleet["lanes"]["implement"]["preferred"] = ["claude-sonnet-5[1m]"]
+        resolved, picker, pending, _catalog = ns["resolve_fleet"](fleet, {}, rows, GENERIC_POLICY)
+        serving = {m for c in resolved["lanes"].values() for m in [c["model"], *c.get("fallbacks", [])]}
+        self.assertNotIn("claude-opus-5[1m]", serving, "an excluded model serves no lane, not even as a fallback")
+        self.assertIn("claude-opus-5[1m]", {row["model"] for row in picker["options"]}, "it stays in the model picker")
+        implement = resolved["lanes"]["implement"]
+        self.assertEqual(implement["model"], "claude-sonnet-5[1m]")
+        self.assertTrue(implement.get("fallbacks"), "a lane pinned to one model still gets ranked fallbacks")
+        again, *_ = ns["resolve_fleet"](resolved, {}, rows, GENERIC_POLICY)
+        self.assertEqual(again["_reconcile"]["changes"], {})
+        self.assertEqual(again["lanes"]["implement"].get("fallbacks"), implement.get("fallbacks"), "top-up converges")
+        native = ns["native_fleet"]({**fleet, "excludedModels": ["opus"]})
+        self.assertNotIn("opus", {c["model"] for c in native["lanes"].values()}, "native lanes avoid an excluded alias")
+
+    def test_exclude_and_include_flags(self):
+        with tempfile.TemporaryDirectory(prefix="agentfleet exclude ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config)
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            setup = [str(home / ".local/bin/claude-fleet-setup")]
+            doctor = [str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)]
+            def run(*args, ok=True):
+                result = subprocess.run([*setup, *args], env=env, text=True, capture_output=True)
+                self.assertEqual(result.returncode == 0, ok, result.stderr + result.stdout)
+                return result
+            def lanes():
+                return json.loads((home / ".claude/fleet.json").read_text())
+            run("--prefer", "review=opus")
+            run("--exclude", "opus")
+            fleet = lanes()
+            self.assertEqual(fleet["excludedModels"], ["opus"])
+            self.assertNotIn("opus", {c["model"] for c in fleet["lanes"].values()})
+            self.assertNotIn("preferred", fleet["lanes"]["review"], "excluding a model drops it from lane pins")
+            self.assertEqual(json.loads((config / "delegate-skills/config.json").read_text())["excludedModels"], ["opus"], "both mirrors")
+            self.assertEqual(subprocess.run(doctor, env=env, text=True, capture_output=True).returncode, 0)
+            run("--prefer", "plan=opus", ok=False)
+            run("--exclude", "claude-sonnet-5", ok=False)
+            audit = json.loads(run("--audit", "--json").stdout)
+            self.assertEqual(len(audit["lanes"]), 19)
+            self.assertEqual(audit["excluded_models"], ["opus"])
+            self.assertEqual(audit["native_models"], ["opus", "sonnet", "haiku"])
+            run("--include", "opus")
+            fleet = lanes()
+            self.assertNotIn("excludedModels", fleet)
+            self.assertEqual(fleet["lanes"]["plan"]["model"], "opus")
+
     def test_explicit_preference_wins_and_can_be_cleared(self):
         ns = self.reconcile()
         rows = [{"id": "claude-opus-5", "context_length": 1000000}, {"id": "claude-sonnet-5", "context_length": 1000000}]

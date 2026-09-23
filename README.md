@@ -10,7 +10,7 @@ hook, a privacy-safe status line, a global `CLAUDE.md`, and the `/fleet-setup`
 skill. Everything lives under your home directory; no root or admin access is
 required.
 
-Version: **2.0.3** — MIT license. See [LICENSE](LICENSE).
+Version: **2.0.4** — MIT license. See [LICENSE](LICENSE).
 
 > AgentFleet is an independent project by WeCanSync. It is not affiliated with
 > or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.
@@ -63,6 +63,27 @@ its models?":
    model's tier, and offers to adjust tiers before installing.
 
 Updates never run the wizard; they keep the installed profile.
+
+### Automatic updates
+
+Each time Claude Code starts, a quick hook checks at most once a day whether a
+newer AgentFleet release exists. A newer release with the same major version
+(for example 2.0.3 → 2.1.0) is installed in the background, with the same
+checksum verification and backup as a manual update, so new sessions pick it
+up. The next session mentions it in one line. A new major version is never
+installed automatically; you get a one-time notice to run `agentfleet update`.
+The hook never delays startup, and it is skipped for installs made from a git
+clone.
+
+```bash
+agentfleet auto-update status   # enabled?, installed and latest versions, last result
+agentfleet auto-update off      # stop automatic updates
+agentfleet auto-update on       # turn them back on
+```
+
+`AGENTFLEET_AUTO_UPDATE=0` also turns them off (useful in CI). The state lives in
+`~/.claude/agentfleet/auto-update.json` and each run's output in
+`~/.claude/agentfleet/auto-update.log`.
 
 ### Non-interactive flags
 
@@ -161,7 +182,9 @@ models per lane:
 
 The next-best models become each lane's fallbacks, so every live model can
 serve somewhere regardless of lane count. A lane with an explicit `preferred`
-list respects the user's order.
+list respects the user's order; its remaining fallback slots are still filled
+by tier ranking, so a lane pinned to one model keeps somewhere to go. Models
+you exclude never serve any lane (they stay in Claude Code's `/model` picker).
 
 With a Claude subscription, lanes use `opus` / `sonnet` / `haiku` aliases.
 
@@ -180,13 +203,22 @@ claude-fleet-setup --tier my-model-id=fast
 # Clear a label:
 claude-fleet-setup --tier my-model-id=
 
+# Keep a model out of every lane, and undo it:
+claude-fleet-setup --exclude my-model-id
+claude-fleet-setup --include my-model-id
+
 # Re-rank now:
 claude-fleet-setup --reconcile
 ```
 
 `/fleet-setup` inside Claude Code runs an interactive wizard over all of this:
-stale-setting repair, profile switching, role picks, tier labels, and agent and
-skill curation.
+stale-setting repair, profile switching, tier labels, and agent and skill
+curation. Its **Assign models to lanes** option suggests a complete fleet from
+each model's description, tier, and context size. You can apply it as is, or go
+model by model: for each model it proposes the best-fitting lanes, and you pick
+lanes, skip the model (auto-ranking decides), or exclude it. It shows the final
+fleet for approval, or you can start over, and it pins only the lanes whose choice
+differs from auto-ranking.
 
 ---
 
@@ -223,6 +255,7 @@ maps lanes to the `opus`/`sonnet`/`haiku` aliases.
 | `agentfleet doctor` | Verify the installation (`claude-agents-doctor --check`). |
 | `agentfleet sync` | Regenerate fleet agents from `~/.claude/fleet.json`; pass `--check` to verify without writing. |
 | `agentfleet update` | Re-run the download script to install the latest release. |
+| `agentfleet auto-update [on\|off\|status]` | Turn automatic background updates on or off, or show their status. |
 | `agentfleet uninstall` | Remove AgentFleet and restore earlier settings. |
 | `agentfleet rollback [--backup DIR]` | Restore the files and settings from before the last install or update (the newest backup, or a named one). |
 | `agentfleet version` | Print the installed version. |
@@ -364,8 +397,17 @@ sh packaging/deploy.sh             # upload site/, then archives, then latest.js
 root that is empty or already carries the `.agentfleet-docroot` marker from an
 earlier deploy. Published release archives are never deleted.
 
-`site/`, `packaging/`, `dist/`, and `.github/` are repository-only and are
-never part of an installed bundle.
+`site/`, `packaging/`, `dist/`, `.github/`, and a local `.claude/` are
+repository-only and are never part of an installed bundle.
 
 If the `agent-brain` CLI is on PATH at install time, agents receive its memory
 tools and hooks. Otherwise they are omitted with no functional change.
+
+---
+
+## Contributing and roadmap
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, project rules, tests, and the
+pull request process. The next phase is support for other agent CLIs besides
+Claude Code (OpenAI Codex CLI, OpenCode, Kilo Code, Cline); open an issue to
+discuss the design before sending code.
