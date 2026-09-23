@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -467,8 +468,13 @@ def cmd_update(paths: Paths, args: argparse.Namespace) -> int:
         die("AGENTFLEET_BASE_URL must use https")
     with tempfile.TemporaryDirectory(prefix="agentfleet-update-") as temp:
         script = Path(temp) / Path(url).name
-        with urllib.request.urlopen(url, timeout=30) as response:
-            script.write_bytes(response.read())
+        # Cloudflare rejects urllib's default user agent, so name ourselves.
+        request = urllib.request.Request(url, headers={"User-Agent": f"agentfleet/{installed_version(paths) or 'unknown'}"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                script.write_bytes(response.read())
+        except (urllib.error.URLError, OSError) as exc:
+            die(f"could not download {url}: {exc}")
         forwarded = ["--home", str(paths.home), "--config-home", str(paths.config), *args.installer_args]
         if windows:
             shell = shutil.which("pwsh") or shutil.which("powershell") or die("PowerShell is required to update")

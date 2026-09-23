@@ -1,6 +1,6 @@
 {
   "format": "claude-agents-config.bundle.v1",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "files": [
     {
       "path": ".gitattributes",
@@ -19,12 +19,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "fcb7818a1dd663b702557a780d08f2ae202f767e1e0ef895957c971cfa69104f",
+      "sha256": "949818d568a6d1efc7c98cf2833eabf94eb64ff362fb829111c83093a65da521",
       "mode": "0o644"
     },
     {
       "path": "VERSION",
-      "sha256": "fe840f52fb5578d3f77eb497115eb02c6036601c3a53e60df7995c7276baa77a",
+      "sha256": "b4b16faea52dc04ccfe32f7b342094855923ebf599a3cac1940470a2d6d7c261",
       "mode": "0o644"
     },
     {
@@ -124,7 +124,7 @@
     },
     {
       "path": "bin/agentfleet",
-      "sha256": "bb3518face29f001793fc7325d50c67f5310b06da35d65622e7a2edb8de23274",
+      "sha256": "796f9ffb2ca80e07402313d26f9cd9876bb1f6b2022d29007e90b2df82a6ddcf",
       "mode": "0o755"
     },
     {
@@ -144,7 +144,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "0cbedf937664d717ee0eafd3a5de18c6022356a825bf033ab6b6e5cf45939a3f",
+      "sha256": "c56668eb67fd5347859ac5d258a5deb37b22f8746ecaa79b585afb7cf85b688b",
       "mode": "0o755"
     },
     {
@@ -229,7 +229,7 @@
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "04ac942a8e0d16b97d309f614b067c41caf6848976a02b3e53ec8a062fc07c7f",
+      "sha256": "f07d91ab8004d343f0159e4fd1a583e418c565b79b585bba045a14b31d1b5b0f",
       "mode": "0o755"
     },
     {
