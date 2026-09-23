@@ -98,6 +98,15 @@
             "timeout": 8
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"__CLAUDE_HOME__/agentfleet.py\" auto-update --hook # claude-agents-config:auto-update",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Stop": [

@@ -124,7 +124,7 @@
     },
     {
       "path": "bin/agentfleet",
-      "sha256": "f10d4464b5d62874a41664deebd1ab07a26af6bfa80ac72f537fd3fa3faba4cf",
+      "sha256": "eb5b0a714ead340f974b2ea7f2d1eb090164579eb9305d6d836f04e4c06a3678",
       "mode": "0o755"
     },
     {
@@ -144,7 +144,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "c56668eb67fd5347859ac5d258a5deb37b22f8746ecaa79b585afb7cf85b688b",
+      "sha256": "16330d837189bb0b0eee8d4f3650df6a8651582bcfdd492f445b6ff6c789bd4d",
       "mode": "0o755"
     },
     {
@@ -164,7 +164,7 @@
     },
     {
       "path": "config/settings.template.json",
-      "sha256": "f12fd6ea5a2bdc8358fa1e5bd8e4049b943570a22ab72ca09f5bb0830cfc5f32",
+      "sha256": "d109563756e8e5eb98403dec94b5a8cdc852b5d9e60675dece161ccc204300f0",
       "mode": "0o644"
     },
     {
@@ -225,6 +225,11 @@
     {
       "path": "skills/fleet-setup/SKILL.md",
       "sha256": "b1bd830ec691a0f3e5483c67de8e43e0b721fdb2d72474c5be25a679e434d34e",
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_auto_update.py",
+      "sha256": "c9e8b8b4c3fde17556205f7f5bb3d0adf14f711103ea9788d4835e74949182f3",
       "mode": "0o644"
     },
     {
