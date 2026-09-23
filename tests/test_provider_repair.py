@@ -1971,6 +1971,11 @@ class AgentFleetTwoTests(unittest.TestCase):
             self.assertEqual(old.returncode, 0, old.stderr)
             agents = home / ".claude/agents"
             self.assertEqual(len(list(agents.glob("fleet-*.md"))), 30)
+            # The user changes one of 1.0.0's shipped preferences and leaves the rest.
+            settings_path = home / ".claude/settings.json"
+            legacy_settings = json.loads(settings_path.read_text())
+            legacy_settings["outputStyle"] = "explanatory"
+            settings_path.write_text(json.dumps(legacy_settings, indent=2) + "\n")
             # A choice recorded under a 1.0.0 lane name must follow the rename.
             for fleet_path in (home / ".claude/fleet.json", config / "delegate-skills/config.json"):
                 fleet = json.loads(fleet_path.read_text())
@@ -1993,10 +1998,11 @@ class AgentFleetTwoTests(unittest.TestCase):
             pinned = sorted(lane for lane, config in lanes.items() if lane != "implement-fast" and config.get("preferred"))
             self.assertEqual(pinned, [], "1.0.0's shipped preferences are bundle defaults, not user choices")
             self.assertEqual([lane for lane, config in lanes.items() if not config.get("fallbacks")], [], "tier ranking gives every lane fallbacks")
-            # 1.0.0 shipped personal preferences; 2.0 stops shipping them but
-            # leaves the installed values, which now belong to the user.
+            # 1.0.0 shipped personal preferences. The update takes back the
+            # ones the user left alone and keeps the one they changed.
             upgraded = json.loads((home / ".claude/settings.json").read_text())
-            self.assertEqual((upgraded.get("effortLevel"), upgraded.get("outputStyle")), ("xhigh", "concise"))
+            self.assertNotIn("effortLevel", upgraded)
+            self.assertEqual(upgraded.get("outputStyle"), "explanatory")
             template = json.loads((ROOT / "config/settings.template.json").read_text())
             self.assertFalse({"effortLevel", "outputStyle", "tui", "agentPushNotifEnabled"} & set(template))
             self.assertNotIn("Co-Authored-By", (home / ".claude/CLAUDE.md").read_text())
@@ -2007,7 +2013,7 @@ class AgentFleetTwoTests(unittest.TestCase):
             uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(uninstall.returncode, 0, uninstall.stderr)
             remaining = json.loads((home / ".claude/settings.json").read_text())
-            self.assertEqual(remaining.get("effortLevel"), "xhigh", "uninstall leaves values the bundle no longer ships")
+            self.assertEqual(remaining.get("outputStyle"), "explanatory", "uninstall leaves the user's own value alone")
 
 
     def test_first_run_wizard_gateway_flow_with_tier_edit(self):
@@ -2108,29 +2114,30 @@ class AgentFleetTwoTests(unittest.TestCase):
         self.assertNotEqual(resolved["lanes"]["review-alt"]["model"], resolved["lanes"]["review"]["model"])
 
 
-    def test_dropped_defaults_become_user_owned_and_shipped_bypass_is_retracted(self):
+    def test_dropped_defaults_are_retracted_unless_the_user_changed_them(self):
         spec = importlib.util.spec_from_file_location("agentfleet_install_journal", ROOT / "bin/install.py")
         installer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(installer)
         template = json.loads((ROOT / "config/settings.template.json").read_text())
-        shipped = {"effortLevel": "xhigh", "defaultMode": "bypassPermissions", "skipDangerousModePermissionPrompt": True}
+        shipped = {"effortLevel": "xhigh", "outputStyle": "concise", "defaultMode": "bypassPermissions", "skipDangerousModePermissionPrompt": True}
         previous = {"settingsJournal": [
             {"id": f"value:{key}", "kind": "value", "path": [key], "beforePresent": False, "before": None, "installedPresent": True, "installed": value}
             for key, value in shipped.items()
-        ]}
+        ] + [{"id": "value:tui", "kind": "value", "path": ["tui"], "beforePresent": True, "before": "default", "installedPresent": True, "installed": "fullscreen"}]}
         args = installer.argparse.Namespace(force_owned=False, allow_insecure_http=False)
         with tempfile.TemporaryDirectory(prefix="agentfleet journal ") as raw:
             home = Path(raw)
-            desired, journal, *_ = installer.merge_settings(dict(shipped), template, home, home / ".config", args, False, previous, False, None, set())
+            current = {**shipped, "tui": "fullscreen"}
+            desired, journal, *_ = installer.merge_settings(current, template, home, home / ".config", args, False, previous, False, None, set())
             owned = {entry["id"] for entry in journal} if isinstance(journal, list) else set(journal)
-            self.assertEqual(desired.get("effortLevel"), "xhigh", "an update never deletes a dropped preference")
-            self.assertNotIn("defaultMode", desired, "an unchanged shipped permission bypass is taken back")
-            self.assertNotIn("skipDangerousModePermissionPrompt", desired)
-            self.assertFalse({"value:effortLevel", "value:defaultMode", "value:skipDangerousModePermissionPrompt"} & owned)
-            # A bypass the user set themselves after install is theirs.
-            edited = {**shipped, "defaultMode": "acceptEdits"}
+            for key in shipped:
+                self.assertNotIn(key, desired, f"an unchanged dropped default is taken back: {key}")
+            self.assertEqual(desired.get("tui"), "default", "the user's value from before the install comes back")
+            self.assertFalse({f"value:{key}" for key in (*shipped, "tui")} & owned, "the bundle stops owning dropped defaults")
+            # Values the user changed after install are theirs.
+            edited = {**current, "effortLevel": "high", "defaultMode": "acceptEdits"}
             desired, *_ = installer.merge_settings(edited, template, home, home / ".config", args, False, previous, False, None, set())
-            self.assertEqual(desired.get("defaultMode"), "acceptEdits")
+            self.assertEqual((desired.get("effortLevel"), desired.get("defaultMode")), ("high", "acceptEdits"))
 
     def test_shipped_pins_are_dropped_only_when_migrating(self):
         spec = importlib.util.spec_from_file_location("agentfleet_install_pins", ROOT / "bin/install.py")
@@ -2148,6 +2155,33 @@ class AgentFleetTwoTests(unittest.TestCase):
         self.assertLess(installer.version_key("2.0.0"), (2, 0, 1))
         self.assertLess(installer.version_key(None), (2, 0, 1))
         self.assertFalse(installer.version_key("2.0.1") < (2, 0, 1))
+
+    def test_update_download_sends_an_agentfleet_user_agent(self):
+        class Edge(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                if self.headers.get("User-Agent", "").startswith("Python-urllib"):
+                    self.send_response(403)
+                    self.end_headers()
+                    return
+                body = b'#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/update-args"\n'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = socketserver.TCPServer(("127.0.0.1", 0), Edge)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory(prefix="agentfleet update ") as raw:
+            home = Path(raw)
+            env = self.env_for(home, home / ".config", AGENTFLEET_BASE_URL=f"http://127.0.0.1:{server.server_address[1]}")
+            result = subprocess.run([PYTHON, str(ROOT / "bin/agentfleet"), "--home", str(home), "update"], env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertIn("--home", (home / "update-args").read_text())
 
     def test_doctor_rejects_write_tools_on_read_only_lanes(self):
         with tempfile.TemporaryDirectory(prefix="agentfleet readonly ") as raw:

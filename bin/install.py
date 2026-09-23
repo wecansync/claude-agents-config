@@ -84,8 +84,7 @@ RETIRED_LANES = {
     "implement-10-sonnet", "implement-11-terra", "implement-12-openclaw-free", "implement-13-grok-no-cache",
     "review-02-opus", "review-03-terra", "review-04-gemini", "review-05-grok", "review-06-astra",
 }
-# Permission-mode settings only the first 1.x release shipped; an update
-# retracts them unless the user changed them.
+# Permission-mode settings only the first 1.x release shipped.
 PERMISSION_MODE_KEYS = ("defaultMode", "skipDangerousModePermissionPrompt")
 # User-owned lane fields carried across an update; everything else comes from
 # the bundle so lane definitions can evolve.
@@ -1219,16 +1218,15 @@ def merge_settings(
             record_value_journal(journal, identity, [key], desired[key], value, prior)
             desired[key] = copy.deepcopy(value)
 
-    # A default the bundle no longer ships becomes the user's: forget its
-    # ownership, so later updates and uninstall leave the value alone. The
-    # exception is a permission bypass an early release shipped: if the user
-    # never changed it, the update takes it back instead.
+    # A default the bundle no longer ships is taken back if the user never
+    # changed it; a value they did change is theirs from now on. Either way
+    # the bundle stops owning it.
     for identity in list(journal):
         key = identity.removeprefix("value:")
         if not identity.startswith("value:") or ":" in key or key in template:
             continue
         entry = journal[identity]
-        if key in PERMISSION_MODE_KEYS and entry.get("installedPresent") and key in desired and desired[key] == entry.get("installed"):
+        if entry.get("installedPresent") and key in desired and desired[key] == entry.get("installed"):
             if entry.get("beforePresent"):
                 desired[key] = copy.deepcopy(entry.get("before"))
             else:
