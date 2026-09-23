@@ -2086,6 +2086,31 @@ class AgentFleetTwoTests(unittest.TestCase):
         self.assertNotEqual(resolved["lanes"]["review-alt"]["model"], resolved["lanes"]["review"]["model"])
 
 
+    def test_custom_lane_survives_reinstall(self):
+        with tempfile.TemporaryDirectory(prefix="agentfleet custom ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config)
+            install = [PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)]
+            first = subprocess.run(install, cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
+            lane = {"implementer": "claude", "model": "sonnet", "tier": "fast", "effort": "high", "readOnly": True,
+                    "description": "Database query and schema tuning."}
+            for mirror in (home / ".claude/fleet.json", config / "delegate-skills/config.json"):
+                data = json.loads(mirror.read_text())
+                data["lanes"]["db-tuner"] = lane
+                mirror.write_text(json.dumps(data, indent=2) + "\n")
+            sync = subprocess.run([str(home / ".local/bin/claude-fleet-sync")], env=env, text=True, capture_output=True)
+            self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
+            again = subprocess.run(install, cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(again.returncode, 0, again.stderr + again.stdout)
+            self.assertIn("Keeping custom lane(s): fleet-db-tuner", again.stdout)
+            kept = json.loads((home / ".claude/fleet.json").read_text())["lanes"]["db-tuner"]
+            self.assertEqual((kept["model"], kept["description"]), ("haiku", lane["description"]), "native maps the lane by its tier")
+            self.assertIn("haiku", (home / ".claude/agents/fleet-db-tuner.md").read_text())
+            for gate in (["claude-fleet-sync", "--check"], ["claude-agents-doctor", "--check", "--home", str(home), "--config-home", str(config)]):
+                result = subprocess.run([str(home / ".local/bin" / gate[0]), *gate[1:]], env=env, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
 def stat_mode(path: Path) -> int:
     return path.stat().st_mode & 0o777
 

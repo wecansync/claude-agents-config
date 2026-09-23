@@ -1081,6 +1081,17 @@ def carry_lane_choices(bundle_fleet: dict, existing: dict) -> dict:
                 values = [item for item in value if isinstance(item, str) and item]
                 if values:
                     target[field] = values
+    # Lanes the user added (e.g. via /fleet-setup) are theirs and stay; the
+    # installer renders their agents with the generator after committing.
+    bundle_names = set(bundle_fleet.get("lanes", {}))
+    for name, config in old_lanes.items():
+        if (
+            name in bundle_names or name in LANE_RENAMES or name in RETIRED_LANES
+            or not isinstance(config, dict) or config.get("implementer") != "claude"
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name)
+        ):
+            continue
+        result["lanes"][name] = copy.deepcopy(config)
     tiers = existing.get("modelTiers")
     if isinstance(tiers, dict):
         result["modelTiers"] = {**result.get("modelTiers", {}), **copy.deepcopy(tiers)}
@@ -2256,7 +2267,9 @@ def profile_data(
             template_profile["advisorModel"] = "opus"
             note = "gateway models: unavailable (using Claude aliases until the gateway answers)"
     else:
-        fleet = direct_fleet(fleet_source)
+        # Custom lanes carry over here too; direct_fleet then maps every lane,
+        # custom ones included, to the native alias for its tier.
+        fleet = direct_fleet(carry_lane_choices(fleet_source, existing_fleet_map(home, config_root)))
         template_profile = direct_template(template)
         profile = "direct-anthropic"
     fleet_bytes = json_bytes(fleet)
@@ -2497,9 +2510,13 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
             fleet.get("lanes", {}).get(lane, {}).get("fallbacks"),
             agent_brain=(fleet.get("integrations") or {}).get("agentBrain") is True,
         )
-    expected_agents = len(fleet.get("lanes", {}))
-    if len(agent_bytes) != expected_agents:
-        fail(f"bundle must contain one generated fleet agent per lane ({expected_agents}), found {len(agent_bytes)}")
+    bundle_lanes = set(load_json(bundle / "config/delegate-fleet.json", "fleet configuration").get("lanes", {}))
+    templated = {name.removeprefix("fleet-").removesuffix(".md") for name in agent_bytes}
+    if templated != bundle_lanes:
+        fail(f"bundle must contain one generated fleet agent per bundle lane; missing: {sorted(bundle_lanes - templated)}, extra: {sorted(templated - bundle_lanes)}")
+    custom_lanes = sorted(set(fleet.get("lanes", {})) - bundle_lanes)
+    if custom_lanes:
+        print(f"Keeping custom lane(s): {', '.join('fleet-' + name for name in custom_lanes)}")
     specs = managed_specs(
         bundle, home, config_root, bin_dir, settings_bytes, fleet_bytes, agent_bytes, {}, version, profile,
         journal, gateway_owned, permission_owned,
@@ -2527,6 +2544,18 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
             fsync_dir(path.parent)
         if retired:
             print(f"Removed {len(retired)} retired file(s); copies are kept in {backup}")
+        if custom_lanes:
+            # The generator renders custom lanes exactly as claude-fleet-sync
+            # would. It runs under this installer's lock (--lock-held); a
+            # failure here rolls the install back with everything else.
+            runtime = node_path(require=True)
+            generator = config_root / "delegate-skills" / "generate-claude-agents.mjs"
+            result = subprocess.run(
+                [str(runtime), str(generator), "--home", str(home), "--config-home", str(config_root), "--quiet", "--lock-held"],
+                text=True, capture_output=True,
+            )
+            if result.returncode != 0:
+                raise InstallerError(f"rendering custom lane agents failed: {(result.stderr or result.stdout).strip()}")
         result = run_doctor(bundle, home, config_root, bin_dir, profile)
         if result != 0:
             raise InstallerError(f"post-install doctor failed with exit code {result}")

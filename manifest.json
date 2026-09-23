@@ -144,7 +144,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "b93d8be78e9d5ad95fcf296fc1e5f530dc67802437aa01a3cc18a793689bebd2",
+      "sha256": "35e073006778909028d72b8d86682f0da8d6ad6b75a2eb84aecd99c9a788c5ed",
       "mode": "0o755"
     },
     {
@@ -229,7 +229,7 @@
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "3c771e6e0b2d0fbcab18ac4d0cc39c6e404616cae6a99cced3fe6fcdb9060261",
+      "sha256": "3db260a7d2cccd8b7ac650367902b877386e04ba2eb59ce02c2a3c3c963d139c",
       "mode": "0o755"
     },
     {
