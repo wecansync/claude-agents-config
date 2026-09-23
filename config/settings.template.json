@@ -149,11 +149,7 @@
   },
   "enabledPlugins": {},
   "extraKnownMarketplaces": {},
-  "outputStyle": "concise",
-  "effortLevel": "xhigh",
   "autoCompactWindow": 800000,
   "advisorModel": "opus",
-  "tui": "fullscreen",
-  "autoCompactEnabled": true,
-  "agentPushNotifEnabled": true
+  "autoCompactEnabled": true
 }

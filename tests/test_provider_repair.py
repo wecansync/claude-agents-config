@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socketserver
 import subprocess
@@ -1984,12 +1985,21 @@ class AgentFleetTwoTests(unittest.TestCase):
             pinned = sorted(lane for lane, config in lanes.items() if lane != "implement-fast" and config.get("preferred"))
             self.assertEqual(pinned, [], "1.0.0's shipped preferences are bundle defaults, not user choices")
             self.assertEqual([lane for lane, config in lanes.items() if not config.get("fallbacks")], [], "tier ranking gives every lane fallbacks")
+            # 1.0.0 shipped personal preferences; 2.0 stops shipping them but
+            # leaves the installed values, which now belong to the user.
+            upgraded = json.loads((home / ".claude/settings.json").read_text())
+            self.assertEqual((upgraded.get("effortLevel"), upgraded.get("outputStyle")), ("xhigh", "concise"))
+            template = json.loads((ROOT / "config/settings.template.json").read_text())
+            self.assertFalse({"effortLevel", "outputStyle", "tui", "agentPushNotifEnabled"} & set(template))
+            self.assertNotIn("Co-Authored-By", (home / ".claude/CLAUDE.md").read_text())
             doctor = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], env=env, text=True, capture_output=True)
             self.assertEqual(doctor.returncode, 0, doctor.stdout + doctor.stderr)
             sync = subprocess.run([str(home / ".local/bin/claude-fleet-sync"), "--check"], env=env, text=True, capture_output=True)
             self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
             uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(uninstall.returncode, 0, uninstall.stderr)
+            remaining = json.loads((home / ".claude/settings.json").read_text())
+            self.assertEqual(remaining.get("effortLevel"), "xhigh", "uninstall leaves values the bundle no longer ships")
 
 
     def test_first_run_wizard_gateway_flow_with_tier_edit(self):
@@ -2089,6 +2099,40 @@ class AgentFleetTwoTests(unittest.TestCase):
         resolved, *_ = ns["resolve_fleet"]({"version": "delegate-fleet.v1", "lanes": lanes}, {}, rows, GENERIC_POLICY)
         self.assertNotEqual(resolved["lanes"]["review-alt"]["model"], resolved["lanes"]["review"]["model"])
 
+
+    def test_dropped_defaults_become_user_owned_except_permission_modes(self):
+        spec = importlib.util.spec_from_file_location("agentfleet_install_journal", ROOT / "bin/install.py")
+        installer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(installer)
+        template = json.loads((ROOT / "config/settings.template.json").read_text())
+        existing = {"effortLevel": "xhigh", "defaultMode": "bypassPermissions", "skipDangerousModePermissionPrompt": True}
+        previous = {"settingsJournal": [
+            {"id": f"value:{key}", "kind": "value", "path": [key], "beforePresent": False, "before": None, "installedPresent": True, "installed": value}
+            for key, value in existing.items()
+        ]}
+        with tempfile.TemporaryDirectory(prefix="agentfleet journal ") as raw:
+            home = Path(raw)
+            args = installer.argparse.Namespace(force_owned=False, allow_insecure_http=False)
+            desired, journal, *_ = installer.merge_settings(existing, template, home, home / ".config", args, False, previous, False, None, set())
+        journal = {entry["id"] for entry in journal} if isinstance(journal, list) else set(journal)
+        self.assertEqual(desired.get("effortLevel"), "xhigh", "an update never deletes the value")
+        self.assertNotIn("value:effortLevel", journal, "a default the bundle stopped shipping is the user's now")
+        self.assertIn("value:defaultMode", journal, "a shipped permission bypass stays revertible")
+        self.assertIn("value:skipDangerousModePermissionPrompt", journal)
+
+    def test_doctor_rejects_write_tools_on_read_only_lanes(self):
+        with tempfile.TemporaryDirectory(prefix="agentfleet readonly ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config)
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            agent = home / ".claude/agents/fleet-review-deep.md"
+            text = agent.read_text()
+            self.assertNotIn("Bash", text)
+            agent.write_text(re.sub(r"^tools: (.*)$", r"tools: \1, Bash", text, count=1, flags=re.M))
+            doctor = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], env=env, text=True, capture_output=True)
+            self.assertNotEqual(doctor.returncode, 0)
+            self.assertIn("static lane has write or nested-agent tools", doctor.stdout + doctor.stderr)
 
     def test_custom_lane_survives_reinstall_and_profile_switch(self):
         if shutil.which("node") is None:

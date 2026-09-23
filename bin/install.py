@@ -149,6 +149,8 @@ SHIPPED_1_0_PREFERRED: dict[str, tuple[tuple[str, ...], ...]] = {
         ("agy-claude-opus[1m]", "claude-sonnet-5[1m]",),
     ),
 }
+# Permission-mode settings only the first 1.x release shipped.
+PERMISSION_MODE_KEYS = ("defaultMode", "skipDangerousModePermissionPrompt")
 # User-owned lane fields carried across an update; everything else comes from
 # the bundle so lane definitions can evolve.
 CARRIED_LANE_FIELDS = ("preferred", "model", "fallbacks")
@@ -1068,8 +1070,8 @@ def direct_template(template: dict) -> dict:
         "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
     }
     result["env"] = {key: value for key, value in env.items() if key not in dropped}
-    result.pop("defaultMode", None)
-    result.pop("skipDangerousModePermissionPrompt", None)
+    for key in PERMISSION_MODE_KEYS:
+        result.pop(key, None)
     return result
 
 
@@ -1272,6 +1274,15 @@ def merge_settings(
             # preserving a later user edit to the same setting.
             record_value_journal(journal, identity, [key], desired[key], value, prior)
             desired[key] = copy.deepcopy(value)
+
+    # A default the bundle no longer ships becomes the user's: forget its
+    # ownership, so later updates and uninstall leave the value alone. A
+    # permission bypass an early release shipped stays bundle-owned, so
+    # uninstall still takes it back.
+    for identity in list(journal):
+        key = identity.removeprefix("value:")
+        if identity.startswith("value:") and ":" not in key and key not in template and key not in PERMISSION_MODE_KEYS:
+            del journal[identity]
 
     env = desired.get("env") if isinstance(desired.get("env"), dict) else {}
     env_was_absent = env_before is ABSENT

@@ -19,7 +19,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "c208c6ad4fca61374324c662efed1de73b27cff5b9cd1003e98a4d4c8257d491",
+      "sha256": "fcb7818a1dd663b702557a780d08f2ae202f767e1e0ef895957c971cfa69104f",
       "mode": "0o644"
     },
     {
@@ -129,7 +129,7 @@
     },
     {
       "path": "bin/claude-agents-doctor",
-      "sha256": "38d686a715fb02429d97b09e3d3e4e34892752c6a3b2f4c780f90ce94bb3df64",
+      "sha256": "c576da2c2a80327090703b3196384d9e25f4bfe8406560052537cb31256b92c4",
       "mode": "0o755"
     },
     {
@@ -144,12 +144,12 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "76cba52be8294a61b805cbcc020082f7a4004228440e2708ceff911db38b8bea",
+      "sha256": "cfb2410a64f6e984103cc776b91e4179c4ccdf8a3a812f9b850b2479ead42a65",
       "mode": "0o755"
     },
     {
       "path": "config/CLAUDE.md",
-      "sha256": "305bc1ff5c0c303f676467dda8c77ce3745a3d243eba242c875367faeb960eec",
+      "sha256": "7f7d29dc681657b105703b50a41c7ab2d5cbd8b68be164c0a4a854b81bc56331",
       "mode": "0o644"
     },
     {
@@ -164,7 +164,7 @@
     },
     {
       "path": "config/settings.template.json",
-      "sha256": "beb33922fce4f7915788a3125b7d75015b5f4e5d7af5b1295f6ce80197892c1a",
+      "sha256": "f12fd6ea5a2bdc8358fa1e5bd8e4049b943570a22ab72ca09f5bb0830cfc5f32",
       "mode": "0o644"
     },
     {
@@ -229,7 +229,7 @@
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "9983ae8147548fd1a71eecdeb7400b225bc22b52955c168a9caff24084271c59",
+      "sha256": "956fb9d7580fc56cb5897e056d17279f2c67bbbd9fea78d19eb203c1b42b0854",
       "mode": "0o755"
     },
     {
