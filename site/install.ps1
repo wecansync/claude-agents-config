@@ -90,29 +90,26 @@ function Test-VersionString {
 }
 
 function Get-PythonCommand {
-    $py = Get-Command py -ErrorAction SilentlyContinue
-    if ($py) {
-        return [pscustomobject]@{ Exe = $py.Source; Prefix = @('-3') }
+    # Try each launcher and keep the first that is Python 3.10+: a bare
+    # `python` may be an old install or the Microsoft Store stub.
+    $candidates = @(
+        @{ Name = 'py'; Prefix = @('-3') },
+        @{ Name = 'python3'; Prefix = @() },
+        @{ Name = 'python'; Prefix = @() }
+    )
+    foreach ($candidate in $candidates) {
+        $command = Get-Command $candidate.Name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $command) { continue }
+        $checkArgs = $candidate.Prefix + @('-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)')
+        & $command.Source @checkArgs 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            return [pscustomobject]@{ Exe = $command.Source; Prefix = $candidate.Prefix }
+        }
     }
-    $python = Get-Command python -ErrorAction SilentlyContinue
-    if ($python) {
-        return [pscustomobject]@{ Exe = $python.Source; Prefix = @() }
-    }
-    Write-Host "agentfleet: python (>= 3.10) is required but was not found on PATH." -ForegroundColor Red
-    Write-Host "agentfleet:   install the 'py' launcher or Python from https://www.python.org/downloads/windows/" -ForegroundColor Red
+    Write-Host "agentfleet: Python 3.10 or newer is required but was not found on PATH." -ForegroundColor Red
+    Write-Host "agentfleet:   install it from https://www.python.org/downloads/windows/" -ForegroundColor Red
     Write-Host "agentfleet:   or: winget install Python.Python.3.12" -ForegroundColor Red
-    Fail "python (>= 3.10) is required"
-}
-
-function Test-PythonVersion {
-    param($PythonCmd)
-    $checkArgs = $PythonCmd.Prefix + @('-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)')
-    & $PythonCmd.Exe @checkArgs
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "agentfleet: python >= 3.10 is required (found an older version)." -ForegroundColor Red
-        Write-Host "agentfleet:   install a newer Python from https://www.python.org/downloads/windows/" -ForegroundColor Red
-        Fail "python >= 3.10 is required"
-    }
+    Fail "Python 3.10+ is required"
 }
 
 function Test-Node {
@@ -214,7 +211,6 @@ function Get-AgentFleetHome {
 
 function main {
     $pythonCmd = Get-PythonCommand
-    Test-PythonVersion -PythonCmd $pythonCmd
     Test-Node
     Test-Claude
 
