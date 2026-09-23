@@ -493,6 +493,17 @@ def cmd_uninstall(paths: Paths, _args: argparse.Namespace) -> int:
     return subprocess.run(command).returncode
 
 
+def cmd_rollback(paths: Paths, args: argparse.Namespace) -> int:
+    release = current_release(paths)
+    if release is None:
+        die("no downloaded release found; run install.py --rollback --apply from the bundle you installed with")
+    command = [sys.executable, str(release / "bin" / "install.py"), "--rollback", "--apply",
+               "--home", str(paths.home), "--config-home", str(paths.config)]
+    if args.backup:
+        command += ["--backup", str(Path(args.backup).expanduser())]
+    return subprocess.run(command).returncode
+
+
 def cmd_version(paths: Paths, _args: argparse.Namespace) -> int:
     meta = read_json(paths.claude / ".claude-agents-config-install.json")
     print(f"AgentFleet {meta.get('version', 'unknown')} ({meta.get('profile', 'not installed')})")
@@ -517,6 +528,8 @@ def main() -> int:
     update = sub.add_parser("update", help="download and install the latest release")
     update.add_argument("installer_args", nargs=argparse.REMAINDER, help="extra arguments for the installer")
     sub.add_parser("uninstall", help="remove AgentFleet and restore your earlier settings")
+    rollback = sub.add_parser("rollback", help="restore the settings and files from before the last install or update")
+    rollback.add_argument("--backup", metavar="DIR", help="restore this backup snapshot instead of the newest")
     sub.add_parser("version", help="print the installed version")
     args = parser.parse_args()
     if not args.command:
@@ -525,7 +538,7 @@ def main() -> int:
     paths = Paths(args)
     handlers = {
         "profiles": cmd_profiles, "use": cmd_use, "save": cmd_save, "status": cmd_status,
-        "doctor": cmd_doctor, "sync": cmd_sync, "update": cmd_update, "uninstall": cmd_uninstall,
+        "doctor": cmd_doctor, "sync": cmd_sync, "update": cmd_update, "uninstall": cmd_uninstall, "rollback": cmd_rollback,
         "version": cmd_version,
     }
     return handlers[args.command](paths, args)
