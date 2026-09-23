@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import http.server
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -19,7 +20,127 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 PYTHON = sys.executable
-POLICY = json.loads((ROOT / "config/provider-policy.json").read_text())
+GENERIC_POLICY = json.loads((ROOT / "config/provider-policy.json").read_text())
+# A provider-specific policy as an existing install carries it: named model
+# families, a namespace alias, and runtime aliases. Family-approval, alias, and
+# upgrade-preservation tests run against it; the shipped default is a single
+# catch-all family and has nothing to revoke.
+OMNIROUTE_POLICY = json.loads(r'''{
+  "version": "provider-policy.v1",
+  "provider": "omniroute",
+  "cacheTtlSeconds": 21600,
+  "oneMContextThreshold": 872000,
+  "contextSuffix": "[1m]",
+  "discoveryApproved": false,
+  "autoApproveProposals": true,
+  "namespaceAliases": [
+    "wecansync"
+  ],
+  "runtimeAliases": {
+    "claude-opus-5": "claude-opus-5",
+    "claude-sonnet-5": "claude-sonnet-5",
+    "agy-claude-opus": "agy-claude-opus",
+    "agy-claude-sonnet": "agy-claude-sonnet",
+    "agy-gemini-flash": "agy-gemini-flash",
+    "agy-gemini-pro": "agy-gemini-pro",
+    "codex-sol": "codex-sol",
+    "codex-sol-max": "codex-sol-max",
+    "codex-luna": "codex-luna",
+    "codex-terra": "codex-terra",
+    "codex-astra": "codex-astra",
+    "omniroute-free-1m-ctx": "omniroute-free-1m-ctx"
+  },
+  "families": [
+    {
+      "name": "claude",
+      "prefixes": [
+        "claude-"
+      ],
+      "approved": true,
+      "fallbackFamilies": []
+    },
+    {
+      "name": "codex",
+      "prefixes": [
+        "codex-"
+      ],
+      "approved": true,
+      "fallbackFamilies": [
+        "claude"
+      ]
+    },
+    {
+      "name": "antigravity",
+      "prefixes": [
+        "agy-"
+      ],
+      "approved": true,
+      "fallbackFamilies": [
+        "claude"
+      ]
+    },
+    {
+      "name": "cursor",
+      "prefixes": [
+        "cursor-"
+      ],
+      "approved": true,
+      "fallbackFamilies": [
+        "claude"
+      ]
+    },
+    {
+      "name": "omniroute",
+      "prefixes": [
+        "omniroute-"
+      ],
+      "approved": true,
+      "fallbackFamilies": [
+        "claude"
+      ]
+    },
+    {
+      "name": "openclaw",
+      "prefixes": [
+        "openclaw-"
+      ],
+      "approved": true,
+      "fallbackFamilies": [
+        "claude"
+      ]
+    },
+    {
+      "name": "qwen",
+      "prefixes": [
+        "qwen-"
+      ],
+      "approved": true,
+      "fallbackFamilies": [
+        "claude"
+      ]
+    },
+    {
+      "name": "named-custom",
+      "exact": [
+        "custom-auto",
+        "Atria"
+      ],
+      "approved": true,
+      "fallbackFamilies": [
+        "claude"
+      ]
+    }
+  ]
+}''')
+POLICY = OMNIROUTE_POLICY
+
+
+def seed_policy(config: Path, policy: dict | None = None) -> Path:
+    """Write a provider-specific policy where an installer update finds it."""
+    path = config / "delegate-skills" / "provider-policy.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(policy or OMNIROUTE_POLICY, indent=2) + "\n")
+    return path
 
 
 def load_catalog():
@@ -145,9 +266,14 @@ class ProviderRepairTests(unittest.TestCase):
             with self.assertRaises(CatalogError):
                 load_policy(path)
 
-            path.write_text(json.dumps({"version": "provider-policy.v1", "provider": "not-omniroute", "families": []}))
+            path.write_text(json.dumps({"version": "provider-policy.v1", "provider": "Not A Label!", "families": []}))
             with self.assertRaises(CatalogError):
                 load_policy(path)
+
+            # Any well-formed provider label is accepted: the label never gates
+            # which endpoint is used.
+            path.write_text(json.dumps({"version": "provider-policy.v1", "provider": "my-gateway", "families": []}))
+            self.assertEqual(load_policy(path)["provider"], "my-gateway")
 
             path.write_text(json.dumps({"version": "provider-policy.v1", "provider": "omniroute"}))
             with self.assertRaises(CatalogError):
@@ -195,6 +321,10 @@ class ProviderRepairTests(unittest.TestCase):
             env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config), "PYTHONDONTWRITEBYTECODE": "1"}
             install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(install.returncode, 0, install.stderr)
+            # Family-approval flows need named families, which only a provider-
+            # specific policy defines. It stands in for the policy an earlier
+            # install wrote for the user's provider; updates must keep it.
+            seed_policy(config)
             doctor = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(doctor.returncode, 0, doctor.stderr)
             sync = subprocess.run([str(home / ".local/bin/claude-fleet-sync")], cwd=ROOT, env=env, text=True, capture_output=True)
@@ -230,6 +360,10 @@ class ProviderRepairTests(unittest.TestCase):
             env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config), "PYTHONDONTWRITEBYTECODE": "1"}
             install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(install.returncode, 0, install.stderr)
+            # Family-approval flows need named families, which only a provider-
+            # specific policy defines. It stands in for the policy an earlier
+            # install wrote for the user's provider; updates must keep it.
+            seed_policy(config)
             policy_path = config / "delegate-skills" / "provider-policy.json"
 
             decisions = root / "decisions-claude-only.json"
@@ -295,6 +429,10 @@ class ProviderRepairTests(unittest.TestCase):
             install_args = [PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)]
             install = subprocess.run(install_args, cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(install.returncode, 0, install.stderr)
+            # Family-approval flows need named families, which only a provider-
+            # specific policy defines. It stands in for the policy an earlier
+            # install wrote for the user's provider; updates must keep it.
+            seed_policy(config)
 
             policy_path = config / "delegate-skills" / "provider-policy.json"
             settings_path = home / ".claude" / "settings.json"
@@ -362,15 +500,15 @@ class ProviderRepairTests(unittest.TestCase):
     def test_installed_fake_gateway_sessionstart_update_uninstall(self):
         if shutil.which("node") is None:
             self.skipTest("Node.js is required for gateway SessionStart integration")
-        fleet = json.loads((ROOT / "config/delegate-fleet.json").read_text())
-        rows_by_id = {}
-        for config in fleet["lanes"].values():
-            for model in [config.get("model"), *(config.get("fallbacks") or [])]:
-                if not isinstance(model, str):
-                    continue
-                base = model.rsplit("[", 1)[0] if model.endswith("]") else model
-                rows_by_id[base] = {"id": base, "context_length": 272000 if base == "codex-5.5" else (872000 if model.endswith("]") else 200000)}
-        FakeProvider.rows = list(rows_by_id.values())
+        # A gateway catalog with one model per tier plus a second balanced
+        # model; the installer discovers it and ranks lanes by tier.
+        FakeProvider.rows = [
+            {"id": "claude-opus-5", "context_length": 1000000},
+            {"id": "claude-sonnet-5", "context_length": 1000000},
+            {"id": "claude-haiku", "context_length": 200000},
+            {"id": "codex-luna", "context_length": 872000},
+            {"id": "codex-5.5", "context_length": 272000},
+        ]
         FakeProvider.mode = "ok"
         FakeProvider.requests = 0
         server = socketserver.TCPServer(("127.0.0.1", 0), FakeProvider)
@@ -389,7 +527,7 @@ class ProviderRepairTests(unittest.TestCase):
                 installed_settings = json.loads((home / ".claude/settings.json").read_text())
                 installed_settings["model"] = "codex-5.5"
                 (home / ".claude/settings.json").write_text(json.dumps(installed_settings, indent=2) + "\n")
-                sync = subprocess.run([shutil.which("node"), str(home / ".claude/sync-omniroute-models.mjs"), "--home", str(home), "--config-home", str(config), "--quiet", "--drift"], cwd=ROOT, env=env, text=True, capture_output=True)
+                sync = subprocess.run([shutil.which("node"), str(home / ".claude/sync-provider-models.mjs"), "--home", str(home), "--config-home", str(config), "--quiet", "--drift"], cwd=ROOT, env=env, text=True, capture_output=True)
                 self.assertEqual(sync.returncode, 0, sync.stderr)
                 settings_after_start = json.loads((home / ".claude/settings.json").read_text())
                 self.assertEqual(settings_after_start["autoCompactWindow"], 244800)
@@ -402,13 +540,25 @@ class ProviderRepairTests(unittest.TestCase):
                 self.assertEqual(switched["autoCompactWindow"], 244800)
                 self.assertEqual(switched["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "244800")
                 self.assertIn("Restart Claude Code", post_switch.stdout)
-                cache = json.loads((home / ".claude/cache/omniroute-models-cache.json").read_text())
+                cache = json.loads((home / ".claude/cache/provider-models-cache.json").read_text())
                 self.assertEqual(cache["endpoint"], endpoint)
                 self.assertEqual(cache["account"], hashlib.sha256(b"fake-token").hexdigest()[:24])
-                first_agent = home / ".claude/agents/fleet-implement.md"
-                self.assertIn('model: "codex-luna[1m]"', first_agent.read_text())
+                agents = home / ".claude/agents"
+                # Tier ranking: balanced implement, deep plan, fast explore; the
+                # alternate lane stays off its sibling's model.
+                def lane_model(lane):
+                    text = (agents / f"fleet-{lane}.md").read_text()
+                    return json.loads(next(line for line in text.splitlines() if line.startswith("model: "))[len("model: "):])
+                self.assertIn(lane_model("implement"), {"claude-sonnet-5[1m]", "codex-luna[1m]"}, "implement takes a balanced model")
+                self.assertEqual(lane_model("plan"), "claude-opus-5[1m]", "plan takes the deep model")
+                self.assertEqual(lane_model("explore-narrow"), "claude-haiku", "explore takes the fast model")
+                self.assertNotEqual(lane_model("implement-alt"), lane_model("implement"), "an alternate never shares its sibling's model")
+                self.assertEqual(len(list(agents.glob("fleet-*.md"))), len(json.loads((ROOT / "config/delegate-fleet.json").read_text())["lanes"]))
+                picker_models = {row["model"] for row in json.loads((home / ".claude/settings.json").read_text())["modelPicker"]["options"]}
+                self.assertEqual(picker_models, {"claude-opus-5[1m]", "claude-sonnet-5[1m]", "claude-haiku", "codex-luna[1m]", "codex-5.5"}, "the picker mirrors the discovered catalog")
+                self.assertIn("gateway models: 5 (live)", install.stdout)
                 manifest_before = json.loads((home / ".claude/.claude-agents-config-manifest.json").read_text())
-                repeat = subprocess.run([shutil.which("node"), str(home / ".claude/sync-omniroute-models.mjs"), "--home", str(home), "--config-home", str(config), "--quiet", "--drift"], cwd=ROOT, env=env, text=True, capture_output=True)
+                repeat = subprocess.run([shutil.which("node"), str(home / ".claude/sync-provider-models.mjs"), "--home", str(home), "--config-home", str(config), "--quiet", "--drift"], cwd=ROOT, env=env, text=True, capture_output=True)
                 self.assertEqual(repeat.returncode, 0, repeat.stderr)
                 doctor = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
                 self.assertEqual(doctor.returncode, 0, doctor.stderr)
@@ -493,7 +643,7 @@ class ProviderRepairTests(unittest.TestCase):
             shutil.copy(ROOT / "bin/claude-fleet-setup", setup_script)
             policy_dir = config / "delegate-skills"
             policy_dir.mkdir(parents=True)
-            (policy_dir / "provider-policy.json").write_text((ROOT / "config/provider-policy.json").read_text())
+            (policy_dir / "provider-policy.json").write_text(json.dumps(OMNIROUTE_POLICY, indent=2))
             proposal_file = claude_dir / "fleet-model-proposal.json"
             proposal_file.write_text(json.dumps({"models_hash": "abc123"}))
             decisions_ok = root / "decisions-approve.json"
@@ -530,7 +680,7 @@ class ProviderRepairTests(unittest.TestCase):
             policy_dir = config / "delegate-skills"
             policy_dir.mkdir(parents=True)
             policy_path = policy_dir / "provider-policy.json"
-            policy_path.write_text((ROOT / "config/provider-policy.json").read_text())
+            policy_path.write_text(json.dumps(OMNIROUTE_POLICY, indent=2))
             proposal_file = claude_dir / "fleet-model-proposal.json"
             proposal_file.write_text(json.dumps({"models_hash": "abc123"}))
 
@@ -591,7 +741,7 @@ class ProviderRepairTests(unittest.TestCase):
             policy_dir = config / "delegate-skills"
             policy_dir.mkdir(parents=True)
             policy_path = policy_dir / "provider-policy.json"
-            policy_path.write_text((ROOT / "config/provider-policy.json").read_text())
+            policy_path.write_text(json.dumps(OMNIROUTE_POLICY, indent=2))
             proposal_file = claude_dir / "fleet-model-proposal.json"
             proposal_file.write_text(json.dumps({"models_hash": "abc123"}))
 
@@ -672,7 +822,7 @@ class ProviderRepairTests(unittest.TestCase):
             }
             (home / ".claude" / "settings.json").write_text(json.dumps(settings))
             cache = self.catalog["cache_payload"]([{"id": "codex-5.5", "context_length": 272000}], "https://gateway.test/api", "fake-token", fetched_at=int(__import__("time").time()))
-            (home / ".claude" / "cache" / "omniroute-models-cache.json").write_text(json.dumps(cache))
+            (home / ".claude" / "cache" / "provider-models-cache.json").write_text(json.dumps(cache))
             result = subprocess.run(
                 [PYTHON, str(ROOT / "scripts/sync-model-context.py"), "--home", str(home), "--config-home", str(config)],
                 input=json.dumps({"hook_event_name": "PostModelSwitch", "to_model": "codex-5.5"}),
@@ -699,7 +849,7 @@ class ProviderRepairTests(unittest.TestCase):
             (home / ".claude").mkdir(parents=True)
             (config_home / "delegate-skills").mkdir(parents=True)
             policy_path = config_home / "delegate-skills" / "provider-policy.json"
-            policy_path.write_text((ROOT / "config/provider-policy.json").read_text())
+            policy_path.write_text(json.dumps(OMNIROUTE_POLICY, indent=2))
             fleet_path = config_home / "delegate-skills" / "config.json"
             fleet_path.write_text(json.dumps({
                 "version": "delegate-fleet.v1",
@@ -739,7 +889,7 @@ class ProviderRepairTests(unittest.TestCase):
         namespace = {}
         sys.path.insert(0, str(ROOT / "scripts"))
         exec(compile((ROOT / "scripts/fleet-reconcile.py").read_text(), "fleet-reconcile.py", "exec"), namespace)
-        policy = json.loads((ROOT / "config/provider-policy.json").read_text())
+        policy = OMNIROUTE_POLICY
         settings = {
             "model": "agy-gemini-flash[1m]",
             "modelPicker": {
@@ -772,6 +922,13 @@ class ProviderRepairTests(unittest.TestCase):
         self.assertNotIn("codex-astra[1m]", models, "removed gateway model must be pruned")
         self.assertNotIn("claude-opus-5[1m]", models, "removed gateway model must be pruned")
 
+        # A generic gateway policy approves everything through one catch-all
+        # family; that must not make hand-added rows look provider-owned.
+        generic = namespace["reconcile_settings"](settings, picker, fleet, GENERIC_POLICY)
+        generic_models = [row["model"] for row in generic["modelPicker"]["options"]]
+        self.assertIn("my-custom-model", generic_models, "a catch-all family must not claim user rows")
+        self.assertNotIn("deepseek-openrouter[1m]", generic_models, "marker-bearing gateway rows are still pruned")
+
     def test_resolve_fleet_prunes_removed_candidates_from_lane_fallbacks(self):
         namespace = {}
         sys.path.insert(0, str(ROOT / "scripts"))
@@ -794,8 +951,9 @@ class ProviderRepairTests(unittest.TestCase):
         ]
         resolved, picker, pending, catalog = namespace["resolve_fleet"](fleet, {}, rows, policy)
         lane = resolved["lanes"]["review-06-astra"]
-        self.assertEqual(lane["model"], "claude-opus-5[1m]")
-        self.assertNotIn("fallbacks", lane, "stale codex-astra must not remain as a fallback")
+        self.assertEqual(lane["model"], "claude-opus-5[1m]", "a vanished model hands over to the lane's own live fallback")
+        self.assertNotIn("codex-astra[1m]", lane.get("fallbacks", []), "stale codex-astra must not remain as a fallback")
+        self.assertTrue(set(lane.get("fallbacks", [])) <= set(catalog), "fallbacks come only from the live catalog")
 
     def test_resolve_fleet_dynamically_assigns_live_candidate_when_all_lane_models_removed(self):
         namespace = {}
@@ -835,14 +993,14 @@ class ProviderRepairTests(unittest.TestCase):
             (config / "delegate-skills").mkdir(parents=True)
             (config / "delegate-skills" / "provider-policy.json").write_text(json.dumps({"version": "provider-policy.v1", "provider": "omniroute"}))
             (claude_dir / "settings.json").write_text(json.dumps({"env": {"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"}}))
-            (claude_dir / "cache" / "omniroute-models-cache.json").write_text("{}")
+            (claude_dir / "cache" / "provider-models-cache.json").write_text("{}")
             # A reconcile child that always fails; the hook must not swallow
             # this into a silent null response.
             (claude_dir / "fleet-reconcile.py").write_text("import sys\nsys.exit(3)\n")
-            shutil.copy(ROOT / "scripts/sync-omniroute-models.mjs", claude_dir / "sync-omniroute-models.mjs")
+            shutil.copy(ROOT / "scripts/sync-provider-models.mjs", claude_dir / "sync-provider-models.mjs")
             env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home)}
             result = subprocess.run(
-                [shutil.which("node"), str(claude_dir / "sync-omniroute-models.mjs"), "--home", str(home), "--config-home", str(config), "--quiet"],
+                [shutil.which("node"), str(claude_dir / "sync-provider-models.mjs"), "--home", str(home), "--config-home", str(config), "--quiet"],
                 cwd=ROOT, env=env, text=True, capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -1208,7 +1366,9 @@ class ProviderRepairTests(unittest.TestCase):
             # Modify a lane in the installed config.json
             fleet_path = config / "delegate-skills/config.json"
             fleet_data = json.loads(fleet_path.read_text())
-            fleet_data["lanes"]["implement"]["model"] = "claude-sonnet-5[1m]"
+            # A direct install maps lanes to native aliases; move implement
+            # from its default (sonnet) to another alias the picker offers.
+            fleet_data["lanes"]["implement"]["model"] = "opus"
             fleet_path.write_text(json.dumps(fleet_data, indent=2) + "\n")
             new_fleet_hash = hashlib.sha256(fleet_path.read_bytes()).hexdigest()
 
@@ -1272,7 +1432,7 @@ class ProviderRepairTests(unittest.TestCase):
         changes2 = promoted.get("_reconcile", {}).get("changes", {})
         self.assertEqual(changes2.get("implement"), {"from": "claude-sonnet-5[1m]", "to": "codex-luna[1m]"})
 
-    def test_reconcile_home_seeds_canonical_preferred_hierarchy(self):
+    def test_reconcile_home_ranks_by_tier_without_seeding_preferences(self):
         namespace = {}
         sys.path.insert(0, str(ROOT / "scripts"))
         exec(compile((ROOT / "scripts/fleet-reconcile.py").read_text(), "fleet-reconcile.py", "exec"), namespace)
@@ -1315,12 +1475,18 @@ class ProviderRepairTests(unittest.TestCase):
             result = namespace["reconcile_home"](home, config_home, policy_path, rows, catalog_valid=True)
             self.assertEqual(result["status"], "applied")
             reconciled_fleet = json.loads((config_home / "delegate-skills" / "config.json").read_text())
-            # implement must have promoted to codex-luna and retained preferred
-            self.assertEqual(reconciled_fleet["lanes"]["implement"]["model"], "codex-luna[1m]")
-            self.assertIn("preferred", reconciled_fleet["lanes"]["implement"])
-            # review must have promoted to codex-sol and retained preferred
+            # A balanced lane already on a live balanced model stays put: the
+            # current-model bonus keeps a settled fleet from reshuffling.
+            self.assertEqual(reconciled_fleet["lanes"]["implement"]["model"], "claude-sonnet-5[1m]")
+            # A read-only lane asks for the deep tier and leaves its balanced model.
             self.assertEqual(reconciled_fleet["lanes"]["review"]["model"], "codex-sol[1m]")
-            self.assertIn("preferred", reconciled_fleet["lanes"]["review"])
+            # Preferences are only ever explicit user choices, never seeded.
+            for lane in ("implement", "review"):
+                self.assertNotIn("preferred", reconciled_fleet["lanes"][lane])
+                self.assertTrue(reconciled_fleet["lanes"][lane].get("fallbacks"), "ranking fills fallbacks from the live catalog")
+            # A second run is a no-op.
+            again = namespace["reconcile_home"](home, config_home, policy_path, rows, catalog_valid=True)
+            self.assertEqual(again["status"], "unchanged")
 
     def test_fleet_model_drift_auto_approves_when_policy_enabled(self):
         with tempfile.TemporaryDirectory(prefix="fleet-drift-test-") as temp_dir:
@@ -1362,7 +1528,7 @@ class ProviderRepairTests(unittest.TestCase):
                     {"id": "codex-sol", "context_length": 872000},
                 ],
             }
-            (home / ".claude" / "cache" / "omniroute-models-cache.json").write_text(json.dumps(cache, indent=2))
+            (home / ".claude" / "cache" / "provider-models-cache.json").write_text(json.dumps(cache, indent=2))
 
             env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
             drift_script = ROOT / "scripts/fleet-model-drift.py"
@@ -1403,7 +1569,7 @@ class FleetSetupComprehensiveTests(unittest.TestCase):
             {"id": "codex-5.5", "display_name": "Codex 5.5", "context_length": 272000},
         ]
         self.catalog_data = cache_payload(self.models_list, self.endpoint, self.token)
-        (self.cache_dir / "omniroute-models-cache.json").write_text(json.dumps(self.catalog_data, indent=2))
+        (self.cache_dir / "provider-models-cache.json").write_text(json.dumps(self.catalog_data, indent=2))
 
         self.settings_data = {
             "model": "agy-gemini-flash[1m]",
@@ -1572,7 +1738,7 @@ class FleetSetupComprehensiveTests(unittest.TestCase):
         models_256k = list(self.models_list)
         models_256k.append({"id": "omniroute-free-256k-ctx", "display_name": "Free 256K", "context_length": 262144})
         catalog_with_256k = cache_payload(models_256k, self.endpoint, self.token)
-        (self.cache_dir / "omniroute-models-cache.json").write_text(json.dumps(catalog_with_256k, indent=2))
+        (self.cache_dir / "provider-models-cache.json").write_text(json.dumps(catalog_with_256k, indent=2))
 
         proc_256k = subprocess.run(
             [sys.executable, str(sync_script), "--home", str(self.home), "--config-home", str(self.home / ".config")],
@@ -1609,6 +1775,378 @@ class FleetSetupComprehensiveTests(unittest.TestCase):
         self.assertEqual(settings_claude["autoCompactWindow"], 800000)
         self.assertEqual(settings_claude["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "800000")
         self.assertEqual(settings_claude["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "800000")
+
+
+# The last 1.0.0 release, which shipped 30 model-named lanes. Upgrade tests
+# install it first and then this bundle on top, the path every existing user
+# takes; they skip when the commit is unavailable (e.g. in a release archive).
+LEGACY_BUNDLE_REF = "0f5ee7d"
+
+
+def export_legacy_bundle(target: Path) -> Path | None:
+    if shutil.which("git") is None or not (ROOT / ".git").exists():
+        return None
+    probe = subprocess.run(["git", "-C", str(ROOT), "cat-file", "-e", f"{LEGACY_BUNDLE_REF}^{{commit}}"], capture_output=True)
+    if probe.returncode != 0:
+        return None
+    archive = subprocess.run(["git", "-C", str(ROOT), "archive", "--format=tar", LEGACY_BUNDLE_REF], capture_output=True, check=True)
+    target.mkdir(parents=True)
+    subprocess.run(["tar", "-x", "-C", str(target)], input=archive.stdout, check=True)
+    # git archive honours the umask; a release archive carries manifest modes.
+    manifest = json.loads((target / "manifest.json").read_text())
+    for item in manifest["files"]:
+        os.chmod(target / item["path"], int(item["mode"], 8))
+    for name in ("manifest.json", "checksums.sha256"):
+        os.chmod(target / name, 0o644)
+    return target
+
+
+class AgentFleetTwoTests(unittest.TestCase):
+    """Provider-agnostic lanes, upgrades from 1.0.0, and profile switching."""
+
+    def env_for(self, home: Path, config: Path, **extra: str) -> dict:
+        return {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config),
+                "PYTHONDONTWRITEBYTECODE": "1", "AGENTFLEET_NONINTERACTIVE": "1", **extra}
+
+    def reconcile(self):
+        namespace = {}
+        sys.path.insert(0, str(ROOT / "scripts"))
+        exec(compile((ROOT / "scripts/fleet-reconcile.py").read_text(), "fleet-reconcile.py", "exec"), namespace)
+        return namespace
+
+    def test_tier_ranking_on_a_generic_catalog(self):
+        ns = self.reconcile()
+        fleet = json.loads((ROOT / "config/delegate-fleet.json").read_text())
+        rows = [
+            {"id": "claude-opus-5", "max_input_tokens": 1000000, "created_at": "2026-07-24T00:00:00Z", "capabilities": {"thinking": {"supported": True}}},
+            {"id": "claude-sonnet-5", "max_input_tokens": 1000000, "created_at": "2026-05-01T00:00:00Z", "capabilities": {"thinking": {"supported": True}}},
+            {"id": "claude-haiku-4-5", "max_input_tokens": 200000, "created_at": "2025-10-01T00:00:00Z"},
+        ]
+        resolved, _picker, pending, catalog = ns["resolve_fleet"](fleet, {}, rows, GENERIC_POLICY)
+        lanes = {name: config["model"] for name, config in resolved["lanes"].items()}
+        self.assertEqual(pending, [])
+        self.assertEqual(lanes["plan"], "claude-opus-5[1m]")
+        self.assertEqual(lanes["implement"], "claude-sonnet-5[1m]")
+        self.assertEqual(lanes["implement-fast"], "claude-haiku-4-5")
+        self.assertEqual(lanes["implement-cheap"], "claude-haiku-4-5", "with no budget model, cheap falls back to fast")
+        for alt, sibling in (("plan-alt", "plan"), ("implement-alt", "implement"), ("review-alt", "review")):
+            self.assertNotEqual(lanes[alt], lanes[sibling], f"{alt} must be independent of {sibling}")
+        again, *_ = ns["resolve_fleet"](resolved, {}, rows, GENERIC_POLICY)
+        self.assertEqual(again["_reconcile"]["changes"], {}, "a single pass converges")
+        # Explicit tier labels outrank name heuristics.
+        labelled = {**fleet, "modelTiers": {"claude-sonnet-5[1m]": "fast"}}
+        relabelled, *_ = ns["resolve_fleet"](labelled, {}, rows, GENERIC_POLICY)
+        self.assertEqual(relabelled["lanes"]["implement-fast"]["model"], "claude-sonnet-5[1m]")
+
+    def test_explicit_preference_wins_and_can_be_cleared(self):
+        ns = self.reconcile()
+        rows = [{"id": "claude-opus-5", "context_length": 1000000}, {"id": "claude-sonnet-5", "context_length": 1000000}]
+        fleet = {"version": "delegate-fleet.v1", "lanes": {
+            "implement": {"implementer": "claude", "model": "sonnet", "tier": "balanced", "preferred": ["claude-opus-5[1m]"]}}}
+        resolved, *_ = ns["resolve_fleet"](fleet, {}, rows, GENERIC_POLICY)
+        self.assertEqual(resolved["lanes"]["implement"]["model"], "claude-opus-5[1m]")
+        del fleet["lanes"]["implement"]["preferred"]
+        ranked, *_ = ns["resolve_fleet"](fleet, {}, rows, GENERIC_POLICY)
+        self.assertEqual(ranked["lanes"]["implement"]["model"], "claude-sonnet-5[1m]")
+
+    def test_fresh_native_install_uses_aliases_and_passes_doctor(self):
+        with tempfile.TemporaryDirectory(prefix="agentfleet native ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config)
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            settings = json.loads((home / ".claude/settings.json").read_text())
+            self.assertNotIn("ANTHROPIC_BASE_URL", settings.get("env", {}))
+            self.assertEqual(settings["model"], "default")
+            lanes = json.loads((home / ".claude/fleet.json").read_text())["lanes"]
+            self.assertEqual({config["model"] for config in lanes.values()}, {"opus", "sonnet", "haiku"})
+            self.assertTrue((home / ".local/bin/agentfleet").is_file())
+            self.assertIn("agentfleet use native", install.stdout)
+
+    def test_provider_flag_validation(self):
+        with tempfile.TemporaryDirectory(prefix="agentfleet flags ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config)
+            missing = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "gateway", "--dry-run", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("--gateway-url", missing.stderr)
+            mixed = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--gateway-url", "https://gw.example.com", "--dry-run", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertNotEqual(mixed.returncode, 0)
+
+    def serve(self, rows):
+        FakeProvider.rows = rows
+        FakeProvider.mode = "ok"
+        FakeProvider.requests = 0
+        server = socketserver.TCPServer(("127.0.0.1", 0), FakeProvider)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_address[1]}"
+
+    GATEWAY_ROWS = [
+        {"id": "claude-opus-5", "context_length": 1000000},
+        {"id": "claude-sonnet-5", "context_length": 1000000},
+        {"id": "claude-haiku", "context_length": 200000},
+        {"id": "codex-5.5", "context_length": 272000},
+    ]
+
+    def test_profile_switch_to_native_and_back(self):
+        if shutil.which("node") is None:
+            self.skipTest("Node.js is required for the agent generator")
+        endpoint = self.serve(self.GATEWAY_ROWS)
+        with tempfile.TemporaryDirectory(prefix="agentfleet profiles ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config, FAKE_GATEWAY_TOKEN="fake-token")
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "gateway", "--gateway-url", endpoint, "--allow-insecure-http", "--gateway-token-env", "FAKE_GATEWAY_TOKEN", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            agentfleet = str(home / ".local/bin/agentfleet")
+            doctor = [str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)]
+            gateway_lanes = json.loads((home / ".claude/fleet.json").read_text())["lanes"]
+
+            saved = subprocess.run([agentfleet, "save", "work"], env=env, text=True, capture_output=True)
+            self.assertEqual(saved.returncode, 0, saved.stderr)
+            token_file = home / ".claude/agentfleet/secrets/work.token"
+            self.assertEqual(token_file.read_text(), "fake-token")
+            self.assertEqual(stat_mode(token_file), 0o600)
+            self.assertEqual(stat_mode(home / ".claude/agentfleet/secrets"), 0o700)
+
+            native = subprocess.run([agentfleet, "use", "native"], env=env, text=True, capture_output=True)
+            self.assertEqual(native.returncode, 0, native.stderr)
+            settings = json.loads((home / ".claude/settings.json").read_text())
+            self.assertNotIn("ANTHROPIC_BASE_URL", settings["env"])
+            self.assertNotIn("ANTHROPIC_AUTH_TOKEN", settings["env"])
+            self.assertNotIn("ANTHROPIC_DEFAULT_OPUS_MODEL", settings["env"])
+            self.assertEqual(settings["env"]["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"], "0")
+            native_lanes = json.loads((home / ".claude/fleet.json").read_text())["lanes"]
+            self.assertEqual(set(native_lanes), set(gateway_lanes), "lanes keep their names across a switch")
+            self.assertTrue({config["model"] for config in native_lanes.values()} <= {"opus", "sonnet", "haiku"})
+            self.assertIn('model: "opus"', (home / ".claude/agents/fleet-plan.md").read_text())
+            self.assertEqual(subprocess.run(doctor, env=env, text=True, capture_output=True).returncode, 0)
+
+            back = subprocess.run([agentfleet, "use", "work"], env=env, text=True, capture_output=True)
+            self.assertEqual(back.returncode, 0, back.stderr)
+            restored = json.loads((home / ".claude/settings.json").read_text())
+            self.assertEqual(restored["env"]["ANTHROPIC_BASE_URL"], endpoint)
+            self.assertEqual(restored["env"]["ANTHROPIC_AUTH_TOKEN"], "fake-token")
+            self.assertEqual({lane: config["model"] for lane, config in json.loads((home / ".claude/fleet.json").read_text())["lanes"].items()},
+                             {lane: config["model"] for lane, config in gateway_lanes.items()}, "switching back restores every lane")
+            result = subprocess.run(doctor, env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            listing = subprocess.run([agentfleet, "profiles"], env=env, text=True, capture_output=True)
+            self.assertIn("* work", listing.stdout)
+            self.assertNotIn("fake-token", listing.stdout + native.stdout + back.stdout)
+            reserved = subprocess.run([agentfleet, "save", "native"], env=env, text=True, capture_output=True)
+            self.assertNotEqual(reserved.returncode, 0, "'native' is reserved for the Claude login")
+            # A stale marker (settings changed behind agentfleet's back) is ignored.
+            (home / ".claude/agentfleet/active").write_text("native\n")
+            stale = subprocess.run([agentfleet, "use", "native"], env=env, text=True, capture_output=True)
+            self.assertEqual(stale.returncode, 0, stale.stderr)
+            self.assertNotIn("Already using", stale.stdout)
+            self.assertNotIn("ANTHROPIC_AUTH_TOKEN", json.loads((home / ".claude/settings.json").read_text())["env"])
+            uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(uninstall.returncode, 0, uninstall.stderr + uninstall.stdout)
+            self.assertFalse((home / ".claude/agentfleet").exists(), "uninstall removes saved profiles and tokens")
+
+    def test_upgrade_from_1_0_0_prunes_retired_lanes_and_carries_choices(self):
+        if shutil.which("node") is None:
+            self.skipTest("Node.js is required for gateway discovery")
+        with tempfile.TemporaryDirectory(prefix="agentfleet upgrade ") as raw:
+            legacy = export_legacy_bundle(Path(raw) / "legacy")
+            if legacy is None:
+                self.skipTest("the 1.0.0 reference commit is unavailable")
+            endpoint = self.serve(self.GATEWAY_ROWS)
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config, FAKE_GATEWAY_TOKEN="fake-token")
+            gateway = ["--gateway-url", endpoint, "--allow-insecure-http", "--gateway-token-env", "FAKE_GATEWAY_TOKEN", "--enable-model-discovery"]
+            old = subprocess.run([PYTHON, str(legacy / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config), *gateway], cwd=legacy, env=env, text=True, capture_output=True)
+            self.assertEqual(old.returncode, 0, old.stderr)
+            agents = home / ".claude/agents"
+            self.assertEqual(len(list(agents.glob("fleet-*.md"))), 30)
+            # A choice recorded under a 1.0.0 lane name must follow the rename.
+            for fleet_path in (home / ".claude/fleet.json", config / "delegate-skills/config.json"):
+                fleet = json.loads(fleet_path.read_text())
+                fleet["lanes"]["implement-02-gemini-flash"]["preferred"] = ["codex-5.5"]
+                fleet_path.write_text(json.dumps(fleet, indent=2) + "\n")
+
+            new = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config), *gateway], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(new.returncode, 0, new.stderr + new.stdout)
+            names = sorted(path.stem.removeprefix("fleet-") for path in agents.glob("fleet-*.md"))
+            self.assertEqual(names, sorted(json.loads((ROOT / "config/delegate-fleet.json").read_text())["lanes"]))
+            self.assertFalse((agents / "fleet-implement-02-gemini-flash.md").exists())
+            self.assertFalse((home / ".claude/sync-omniroute-models.mjs").exists(), "the renamed hook script is retired")
+            self.assertIn("remove:", new.stdout)
+            settings_text = (home / ".claude/settings.json").read_text()
+            self.assertIn("sync-provider-models.mjs", settings_text)
+            self.assertNotIn("sync-omniroute-models.mjs", settings_text)
+            lanes = json.loads((home / ".claude/fleet.json").read_text())["lanes"]
+            self.assertEqual(lanes["implement-fast"]["model"], "codex-5.5", "the old lane's preference moved to its successor")
+            doctor = subprocess.run([str(home / ".local/bin/claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)], env=env, text=True, capture_output=True)
+            self.assertEqual(doctor.returncode, 0, doctor.stdout + doctor.stderr)
+            sync = subprocess.run([str(home / ".local/bin/claude-fleet-sync"), "--check"], env=env, text=True, capture_output=True)
+            self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
+            uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(uninstall.returncode, 0, uninstall.stderr)
+
+
+    def test_first_run_wizard_gateway_flow_with_tier_edit(self):
+        try:
+            import pty
+            import select
+        except ImportError:
+            self.skipTest("a pseudo-terminal is required")
+        if shutil.which("node") is None:
+            self.skipTest("Node.js is required for gateway discovery")
+        endpoint = self.serve(self.GATEWAY_ROWS)
+        with tempfile.TemporaryDirectory(prefix="agentfleet wizard ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config), "PYTHONDONTWRITEBYTECODE": "1"}
+            pid, fd = pty.fork()
+            if pid == 0:
+                os.execve(PYTHON, [PYTHON, str(ROOT / "bin/install.py"), "--allow-insecure-http", "--home", str(home), "--config-home", str(config)], env)
+            answers = [(b"Choose 1-3", b"3\n"), (b"Gateway URL", endpoint.encode() + b"\n"), (b"holds the gateway token", b"\n"),
+                       (b"input hidden", b"wizard-token\n"), (b"Adjust model tiers", b"y\n"), (b"[deep]", b"\n"),
+                       (b"claude-sonnet-5[1m] [balanced]", b"\n"), (b"claude-haiku [fast]", b"\n"), (b"codex-5.5 [balanced]", b"cheap\n"),
+                       (b"Adjust model tiers", b"n\n")]
+            output, step, position, deadline = b"", 0, 0, time.time() + 90
+            while time.time() < deadline:
+                ready, _, _ = select.select([fd], [], [], 0.5)
+                if ready:
+                    try:
+                        chunk = os.read(fd, 4096)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    output += chunk
+                while step < len(answers) and answers[step][0] in output[position:]:
+                    position = output.index(answers[step][0], position) + len(answers[step][0])
+                    os.write(fd, answers[step][1])
+                    step += 1
+            _, status = os.waitpid(pid, 0)
+            text = output.decode(errors="replace")
+            self.assertEqual(os.waitstatus_to_exitcode(status), 0, text[-2000:])
+            self.assertEqual(step, len(answers), text[-2000:])
+            self.assertNotIn("wizard-token", text, "the hidden token prompt must not echo")
+            self.assertIn("Fleet plan:", text)
+            fleet = json.loads((home / ".claude/fleet.json").read_text())
+            self.assertEqual(fleet["modelTiers"], {"codex-5.5": "cheap"})
+            self.assertEqual(fleet["lanes"]["implement-cheap"]["model"], "codex-5.5", "a tier edit re-plans before installing")
+            settings = json.loads((home / ".claude/settings.json").read_text())
+            self.assertEqual(settings["env"]["ANTHROPIC_BASE_URL"], endpoint)
+            self.assertEqual(settings["env"]["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"], "1")
+
+    def test_explicit_native_provider_ignores_exported_gateway_credentials(self):
+        with tempfile.TemporaryDirectory(prefix="agentfleet env creds ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config, ANTHROPIC_BASE_URL="https://gateway.example.com", ANTHROPIC_AUTH_TOKEN="shell-token-value")
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            text = (home / ".claude/settings.json").read_text()
+            self.assertNotIn("shell-token-value", text, "an explicit native install must not persist a shell token")
+            self.assertNotIn("ANTHROPIC_BASE_URL", json.loads(text).get("env", {}))
+
+    def test_read_only_original_file_stays_restorable(self):
+        with tempfile.TemporaryDirectory(prefix="agentfleet readonly ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config)
+            original = home / ".claude" / "CLAUDE.md"
+            original.parent.mkdir(parents=True)
+            original.write_text("# my own instructions\n")
+            os.chmod(original, 0o444)
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--force-owned", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            rollback = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--rollback", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(rollback.returncode, 0, rollback.stderr + rollback.stdout)
+            self.assertEqual(original.read_text(), "# my own instructions\n")
+            self.assertEqual(stat_mode(original), 0o444)
+
+    def test_pruning_never_touches_unowned_user_agents(self):
+        spec = importlib.util.spec_from_file_location("agentfleet_install_prune", ROOT / "bin/install.py")
+        installer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(installer)
+        with tempfile.TemporaryDirectory(prefix="agentfleet prune ") as raw:
+            home = Path(raw)
+            agents = home / ".claude" / "agents"
+            agents.mkdir(parents=True)
+            marker = f"<!-- {installer.GENERATED_MARKER}; source-sha256: 0 -->\n"
+            (agents / "fleet-review-06-astra.md").write_text("retired bundle lane\n" + marker)
+            (agents / "fleet-my-helper.md").write_text("copied by the user\n" + marker)
+            (agents / "fleet-plan.md").write_text("current lane\n" + marker)
+            found = installer.obsolete_paths({}, {agents / "fleet-plan.md": (b"", 0o644, "x")}, home, home / ".local/bin", home / ".config")
+            self.assertEqual(found, [agents / "fleet-review-06-astra.md"])
+
+    def test_release_dates_and_alternate_independence_are_robust(self):
+        ns = self.reconcile()
+        self.assertEqual(ns["_release_time"]({"created_at": "2023.01.01"}), 20230101)
+        self.assertEqual(ns["_release_time"]({"created_at": "not a date"}), 0)
+        rows = [{"id": "big-opus", "context_length": 1000000, "capabilities": {"thinking": True}}, {"id": "tiny-free", "context_length": 100000}]
+        lanes = {name: {"implementer": "claude", "model": "x", "tier": "deep", "readOnly": True, "longContext": True, "strongest": True} for name in ("review", "review-alt")}
+        lanes["review-alt"]["altOf"] = "review"
+        resolved, *_ = ns["resolve_fleet"]({"version": "delegate-fleet.v1", "lanes": lanes}, {}, rows, GENERIC_POLICY)
+        self.assertNotEqual(resolved["lanes"]["review-alt"]["model"], resolved["lanes"]["review"]["model"])
+
+
+    def test_custom_lane_survives_reinstall_and_profile_switch(self):
+        if shutil.which("node") is None:
+            self.skipTest("Node.js is required for the agent generator")
+        endpoint = self.serve(self.GATEWAY_ROWS)
+        # The /fleet-setup "create a custom lane" flow: no model, just a tier.
+        lane = {"implementer": "claude", "tier": "fast", "effort": "high", "readOnly": True,
+                "description": "Database query and schema tuning."}
+        providers = {
+            "native": (["--provider", "native"], "haiku"),
+            "gateway": (["--provider", "gateway", "--gateway-url", endpoint, "--allow-insecure-http", "--gateway-token-env", "FAKE_GATEWAY_TOKEN"], "claude-haiku"),
+        }
+        for provider, (flags, expected) in providers.items():
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory(prefix=f"agentfleet custom {provider} ") as raw:
+                home, config = Path(raw) / "home", Path(raw) / "config"
+                env = self.env_for(home, config, FAKE_GATEWAY_TOKEN="fake-token")
+                bindir = home / ".local/bin"
+                install = [PYTHON, str(ROOT / "bin/install.py"), *flags, "--home", str(home), "--config-home", str(config)]
+                gates = ([str(bindir / "claude-fleet-sync"), "--check"],
+                         [str(bindir / "claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)])
+
+                def run(command):
+                    result = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 0, f"{command[:2]}: {result.stderr}{result.stdout}")
+                    return result
+
+                def custom_model():
+                    kept = json.loads((home / ".claude/fleet.json").read_text())["lanes"]["db-tuner"]
+                    self.assertEqual(kept["description"], lane["description"])
+                    self.assertIn(f'model: "{kept["model"]}"', (home / ".claude/agents/fleet-db-tuner.md").read_text())
+                    for gate in gates:
+                        run(gate)
+                    return kept["model"]
+
+                run(install)
+                for mirror in (home / ".claude/fleet.json", config / "delegate-skills/config.json"):
+                    data = json.loads(mirror.read_text())
+                    data["lanes"]["db-tuner"] = lane
+                    mirror.write_text(json.dumps(data, indent=2) + "\n")
+                setup = str(bindir / "claude-fleet-setup")
+                run([setup, "--reconcile"])
+                self.assertEqual(custom_model(), expected, "reconcile gives the new lane a model for its tier")
+                again = run(install)
+                self.assertIn("Keeping custom lane(s): fleet-db-tuner", again.stdout)
+                self.assertEqual(custom_model(), expected)
+                if provider == "native":
+                    run([setup, "--prefer", "db-tuner=sonnet"])
+                    run(install)
+                    self.assertEqual(custom_model(), "sonnet", "a native pin survives a reinstall")
+                    refused = subprocess.run([setup, "--prefer", "db-tuner=claude-sonnet-5"], env=env, text=True, capture_output=True)
+                    self.assertNotEqual(refused.returncode, 0, "a native profile cannot pin a gateway model")
+                    run([setup, "--prefer", "db-tuner="])
+                    self.assertEqual(custom_model(), expected, "clearing the pin returns the lane to its tier")
+                if provider == "gateway":
+                    run([str(bindir / "agentfleet"), "save", "work"])
+                    run([str(bindir / "agentfleet"), "use", "native"])
+                    self.assertEqual(custom_model(), "haiku")
+                    run([str(bindir / "agentfleet"), "use", "work"])
+                    self.assertEqual(custom_model(), expected)
+
+def stat_mode(path: Path) -> int:
+    return path.stat().st_mode & 0o777
 
 
 if __name__ == "__main__":

@@ -1,265 +1,364 @@
-# Portable Claude Code Fleet Bundle
+# AgentFleet
 
-Version `1.0.0` packages the portable parts of the global Claude Code setup: the
-30-lane delegate fleet, generated native agents, routing hook, privacy-safe status
-line, global delegation policy, model picker, conservative permissions/plugins
-defaults, provider-aware discovery, and explicit setup policy command. The
-directory can be copied or cloned anywhere and run from its new location; the
-canonical build path is not required at install time.
+AgentFleet installs a fleet of native Claude Code subagents ("lanes") under
+`~/.claude/agents/fleet-*.md` and maps each lane to whatever models your
+provider offers: a Claude subscription, an Anthropic API key, or any
+Anthropic-compatible gateway whose models are discovered from `GET /v1/models`.
 
-## Platform support and prerequisites
+It also installs a routing hook, a model-sync startup hook, a context-budget
+hook, a privacy-safe status line, a global `CLAUDE.md`, and the `/fleet-setup`
+skill. Everything lives under your home directory; no root or admin access is
+required.
 
-| Platform / launcher | Status | Prerequisites and notes |
+Version: **2.0.0** — MIT license. See [LICENSE](LICENSE).
+
+> AgentFleet is an independent project by WeCanSync. It is not affiliated with
+> or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.
+
+---
+
+## Requirements
+
+- Claude Code
+- Python 3.10+
+- Node.js 18+
+
+---
+
+## Install
+
+**macOS / Linux:**
+
+```bash
+curl -fsSL https://agentfleet.wecansync.com/install.sh | sh
+```
+
+**Windows PowerShell:**
+
+```powershell
+irm https://agentfleet.wecansync.com/install.ps1 | iex
+```
+
+The download script fetches `releases/latest.json`, downloads the pinned
+release archive, verifies its SHA-256, extracts it to
+`~/.local/share/agentfleet/releases/<version>` (Windows:
+`%LOCALAPPDATA%\AgentFleet\releases\<version>`), then runs `bin/install.py`.
+
+Pin a version with `AGENTFLEET_VERSION=2.0.0`. Override the host with
+`AGENTFLEET_BASE_URL` (https only; http is accepted only for localhost).
+
+From a clone, `./install.sh` (or `install.ps1` / `install.cmd`) does the same.
+
+### First-run wizard
+
+On a fresh interactive install the wizard asks "How should Claude Code reach
+its models?":
+
+1. **Claude subscription** (default) — uses Claude Code's own login; lanes map
+   to `opus`, `sonnet`, `haiku`.
+2. **Anthropic API key** — reads `ANTHROPIC_API_KEY` from the environment.
+3. **Custom gateway** — asks for an https URL and the name of the environment
+   variable that holds the token (default `AGENTFLEET_GATEWAY_TOKEN`); if
+   unset, prompts with hidden input. It then discovers models, shows each
+   model's tier, and offers to adjust tiers before installing.
+
+Updates never run the wizard; they keep the installed profile.
+
+### Non-interactive flags
+
+```bash
+# Gateway example (set the token first, outside shell history):
+export MY_GATEWAY_TOKEN=…
+curl -fsSL https://agentfleet.wecansync.com/install.sh | \
+  sh -s -- --provider gateway \
+            --gateway-url https://gateway.example.com \
+            --gateway-token-env MY_GATEWAY_TOKEN
+```
+
+| Flag | Effect |
+|---|---|
+| `--provider native\|anthropic-api\|gateway` | Set the provider without the wizard. `gateway` also turns on startup model discovery. |
+| `--gateway-url URL` | Gateway base URL (https required outside loopback). |
+| `--gateway-token-env NAME` | Environment variable that holds the gateway token. |
+| `--enable-model-discovery` | Turn on startup model discovery for a bare `--gateway-url` install (implied by `--provider gateway`). |
+| `--no-wizard` | Never prompt; keep or infer the provider. |
+| `--wizard` | Force the wizard even on an existing install. |
+| `--dry-run` | Show changes without writing anything. |
+| `--check` | Run the bundle doctor without changing files. |
+| `--uninstall --apply` | Remove setup-owned files. |
+| `--rollback --apply [--backup DIR]` | Restore the newest (or a named) backup. |
+| `--home`, `--config-home`, `--prefix` | Override path roots. |
+
+`AGENTFLEET_NONINTERACTIVE=1` disables all prompts.
+
+---
+
+## The 19 lanes
+
+### Task lanes (12)
+
+| Lane | Role | Writable |
 |---|---|---|
-| Native Ubuntu/Linux | Supported | Python 3.10+; Node.js 18+ is required for fleet sync or explicit model discovery; Bash launchers are optional. |
-| macOS | Supported | Python 3.10+; Node.js 18+ is required for fleet sync or explicit model discovery; use `install.sh` or Python. |
-| Native Windows PowerShell | Supported | Python 3.10+; Node.js 18+ for fleet sync/discovery; use `install.ps1`, `update.ps1`, or `uninstall.ps1`. |
-| Native Windows CMD | Supported | Python 3.10+ (`py -3` or `python`); Node.js 18+ for sync/discovery; use the matching `.cmd` wrapper. |
-| Git Bash on Windows | Supported as POSIX compatibility mode | Requires Python 3.10+ and Node.js 18+ on PATH; native PowerShell/CMD entrypoints are preferred. |
-| WSL | Supported as Linux | Uses the Linux installation and Linux home/config paths; native Windows and WSL targets are separate. |
+| `fleet-plan` | Planning and architecture | No |
+| `fleet-implement` | General implementation | Yes |
+| `fleet-review` | Code review | No |
+| `fleet-tests` | Test writing | Yes |
+| `fleet-ui` | UI/frontend work | Yes |
+| `fleet-docs` | Documentation | Yes |
+| `fleet-security-review` | Security review | No |
+| `fleet-diagnose-static` | Static diagnosis | No |
+| `fleet-explore-narrow` | Bounded exploration | No |
+| `fleet-triage-static` | Issue triage | No |
+| `fleet-research-codebase` | Repository research (no web tools) | No |
+| `fleet-research-web` | Web research (`WebSearch`, `WebFetch`) | No |
 
-The native Windows and POSIX entrypoints dispatch to the same Python installer. The
-bundle root is inferred from the resolved installer file, so cloning into a path
-with spaces or invoking through a symlink is supported. Python is authoritative;
-Bash, PowerShell, and CMD files are only quoting-safe dispatchers. No Windows
-runtime was available for execution in this validation environment, so the
-PowerShell/CMD claims are backed by static syntax-safe entrypoints and path
-construction tests, not a native Windows run.
+### Variant lanes (7)
 
-## One-command installation
+Variants are named for a capability, never a model, so names survive provider
+changes.
 
-To install on a new device, simply clone and run `./install.sh`:
+| Lane | Capability |
+|---|---|
+| `fleet-plan-alt` | Alternate planning model |
+| `fleet-implement-alt` | Alternate implementation model |
+| `fleet-implement-fast` | Low-latency implementation |
+| `fleet-implement-deep` | Reasoning-capable implementation |
+| `fleet-implement-cheap` | Budget or free-tier implementation |
+| `fleet-review-alt` | Independent review model |
+| `fleet-review-deep` | Deep review (security, migration, concurrency, data-loss) |
+
+Read-only lanes receive no `Bash`, `Edit`, or `Write` tools. All lanes are
+background agents with `omitClaudeMd: true` and cannot spawn nested agents,
+commit, push, deploy, or take other outward-facing actions. The main agent owns
+integration, final gates, and all external actions.
+
+---
+
+## How lanes get models
+
+Every discovered model gets a **capability tier**: `cheap`, `fast`, `balanced`,
+or `deep`. The tier comes from, in priority order:
+
+1. An explicit label set by the user.
+2. Keywords in the model ID (e.g. `haiku`/`flash`/`mini` → fast;
+   `opus`/`pro`/`max` → deep; `free`/`auto` → cheap).
+3. Keywords in the catalog description.
+4. `balanced` as the default.
+
+Catalogs report context size but not price or speed, which is why explicit
+labels exist.
+
+Each lane has a required tier. At startup the reconcile step ranks all live
+models per lane:
+
+- Tier fit first; then reasoning support and 1M-context models rank higher.
+- Staying on the current model is preferred, so a settled fleet does not
+  reshuffle on every startup.
+- Equally good models are spread across lanes; an `-alt` lane never shares its
+  sibling's model.
+
+The next-best models become each lane's fallbacks, so every live model can
+serve somewhere regardless of lane count. A lane with an explicit `preferred`
+list respects the user's order.
+
+With a Claude subscription, lanes use `opus` / `sonnet` / `haiku` aliases.
+
+---
+
+## Tuning
 
 ```bash
-git clone https://github.com/wecansync/claude-agents-config.git
-cd claude-agents-config
-./install.sh
+# Pin a lane to a specific model (or list of fallbacks):
+claude-fleet-setup --prefer fleet-implement=my-model-id
+# Clear a pin:
+claude-fleet-setup --prefer fleet-implement=
+
+# Label a model's tier:
+claude-fleet-setup --tier my-model-id=fast
+# Clear a label:
+claude-fleet-setup --tier my-model-id=
+
+# Re-rank now:
+claude-fleet-setup --reconcile
 ```
 
-The installer runs preflight integrity checks, sets up all 30 delegate fleet agents (`~/.claude/agents/fleet-*.md`), creates backups, and verifies system health:
-- If your environment already exports `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, it automatically configures the provider gateway profile.
-- Without gateway credentials, it automatically configures the `direct-anthropic` profile for use with standard Claude login.
+`/fleet-setup` inside Claude Code runs an interactive wizard over all of this:
+stale-setting repair, profile switching, role picks, tier labels, and agent and
+skill curation.
 
-To preview changes without writing, pass `--dry-run`:
+---
+
+## Switching providers (profiles)
+
+Profiles let you switch providers without reinstalling. Lanes keep their names;
+only the models behind them change.
 
 ```bash
-./install.sh --dry-run
+agentfleet profiles          # list saved profiles (* = active)
+agentfleet use native        # switch to your Claude login
+agentfleet use <name>        # switch to a saved gateway profile
+agentfleet save <name>       # name the current setup
 ```
 
-For Linux/macOS, `XDG_CONFIG_HOME` is honored; use `--config-home DIR` when an
-explicit configuration root is needed. A `--prefix DIR` sandbox is self-contained
-and uses `DIR/.config` unless `--config-home` is supplied.
+Switching first saves the current setup, so switching back restores it exactly.
+Restart Claude Code after switching.
 
-Enable the gateway only when both URL and a non-empty token are supplied. The
-recommended non-interactive form reads the token from an environment variable and
-never prints its value:
+Gateway tokens are stored at `~/.claude/agentfleet/secrets/<name>.token`
+(mode 0600, directory mode 0700). Profiles are stored under
+`~/.claude/agentfleet/profiles/`.
 
-```bash
-export MY_CLAUDE_GATEWAY_TOKEN='set this outside shell history when possible'
-./install.sh --apply \
-  --gateway-url 'https://gateway.example.invalid' \
-  --gateway-token-env MY_CLAUDE_GATEWAY_TOKEN
-```
+To switch to `native`, AgentFleet removes `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_AUTH_TOKEN`, and the `ANTHROPIC_DEFAULT_*_MODEL` overrides, then
+maps lanes to the `opus`/`sonnet`/`haiku` aliases.
 
-If `--gateway-url` is supplied without `--gateway-token-env`, the installer asks
-for the token with hidden input only when both stdin and stderr are real TTYs. A
-non-interactive invocation fails rather than reading piped data or writing an
-enabled gateway without a token. A token environment variable without a URL is
-rejected. Gateway URLs must use HTTPS, may not contain embedded credentials, and
-HTTP is accepted only for loopback (`localhost`, `127.0.0.1`, or `::1`) with the
-explicit `--allow-insecure-http` flag.
+---
 
-Model discovery is not installed as a SessionStart hook by default. To opt in,
-provide gateway credentials and `--enable-model-discovery`; the script itself also
-requires `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`. Once the environment
-value is enabled in installed settings that also carry a gateway URL and token,
-either by this installer or by the user directly, subsequent installs and
-updates preserve it in every profile; a fresh install still defaults to
-disabled. For the same reason, the direct profile's first-party model
-enforcement applies only when the installed settings carry no gateway
-credentials. Discovery fetches and validates through the shared Python
-provider catalog, scopes caches to endpoint/account, accepts successful empty
-catalogs, and refuses incomplete pagination or stale caches. The ordered hook
-then serializes drift reporting and fleet reconciliation under the shared lock.
-Use `claude-fleet-setup --show` to inspect policy or pass a reviewed
-`provider-policy-decisions.v1` JSON file to approve families/discovery; startup
-never prompts. Discovery writes cache and settings files atomically with mode
-0600 and re-reads under an exclusive lock.
-
-For a disposable sandbox, `--prefix DIR` is a complete target home when `--home`
-is omitted: configuration goes under `DIR/.claude` and `DIR/.config`, and command
-wrappers under `DIR/bin`. When both are supplied, `--home` owns configuration and
-`--prefix/bin` owns command wrappers. Relative paths are resolved from the current
-working directory.
-
-### Context compaction safety
-
-The bundle keeps the top-level `autoCompactWindow` and the
-`CLAUDE_CODE_AUTO_COMPACT_WINDOW` environment setting paired and bounded. The
-initial direct/gateway template uses `800000` as a conservative budget for the
-advertised 872K route, below the observed 876273-token request envelope. At
-SessionStart and PostModelSwitch, discovery reports the active model's supported
-context and applies 90% headroom (for example, 272K becomes 244800); both paired
-controls are written to the same value. An existing lower user budget is never
-inflated. These are startup-only settings, so the hook emits a restart notice.
-
-Claude Code still exposes one global auto-compact window rather than a native
-model-conditional expression. The hooks therefore maintain a conservative paired
-budget for the active verified route; they do not claim to change a running
-session's limit. Unsupported or stale provider context leaves existing settings
-unchanged, and later user-owned values remain authoritative through installer
-updates.
-
-The requested canonical destination is checked when this bundle is built or copied.
-If the destination's parent is unavailable or unwritable, creation fails clearly;
-the installer itself remains relocatable and does not require that canonical path.
-
-## Actions
+## Commands
 
 | Command | Effect |
 |---|---|
-| `./install.sh --dry-run` | Show creates, updates, conflicts, and gateway state; writes nothing and never prompts for a token. |
-| `./install.sh --apply` | Install/update the bundle, taking a backup snapshot first. |
-| `./update.sh --apply` | Explicit update alias; forwards installer options. |
-| `./install.sh --check` | Run the doctor without changing files. |
-| `./bin/claude-agents-doctor --check` | Check the bundle and the default target home. |
-| `./uninstall.sh --dry-run` | Preview removal of setup-owned files and settings entries. |
-| `./uninstall.sh --apply` | Remove setup-owned files while preserving unrelated settings. |
-| `./install.sh --rollback --dry-run` | Preview the newest backup restore. |
-| `./install.sh --rollback --apply` | Restore the newest backup, or pass `--backup DIR`. |
+| `agentfleet status` | Show the active profile and run the audit (live models, stale settings, hook health, agents and skills with token cost). |
+| `agentfleet doctor` | Verify the installation (`claude-agents-doctor --check`). |
+| `agentfleet sync` | Regenerate fleet agents from `~/.claude/fleet.json`; pass `--check` to verify without writing. |
+| `agentfleet update` | Re-run the download script to install the latest release. |
+| `agentfleet uninstall` | Remove AgentFleet and restore earlier settings. |
+| `agentfleet version` | Print the installed version. |
+| `claude-fleet-setup --audit` | Scan models, settings, hooks, agents, and skills for health and bloat. |
+| `claude-fleet-setup --archive-agents <categories>` | Archive agent files by category. |
+| `claude-fleet-setup --restore-agents <categories>` | Restore archived agents. |
+| `claude-fleet-setup --archive-skills` / `--restore-skills` | Archive or restore skills. |
 
-Existing files without the bundle's ownership marker are not overwritten. Use
-`--force-owned` only after inspecting the dry run; all existing managed files are
-copied to a mode-0700 backup directory before an apply, including unchanged files.
-Repeated installs produce the same configuration and regenerate no duplicate hooks.
-Backups are stored under `<home>/.claude/backups/claude-agents-config/`.
+---
 
-## What is installed
+## What gets installed
 
-* `<home>/.claude/settings.json` — merged settings. Unknown top-level settings,
-  unrelated permissions, hooks, plugins, and environment values survive. The fleet
-  model picker and setup-owned hook entries are refreshed by stable ownership markers.
-  The installed settings file is mode 0600 because it can contain a gateway token.
-* `<home>/.claude/CLAUDE.md` — the global delegation policy. Generated agents omit
-  this file intentionally so each brief must carry the applicable project rules.
-* `<home>/.claude/route-to-fleet.py` — automatic UserPromptSubmit routing.
-* `<home>/.claude/subagent-statusline.py` — native subagent status rendering.
-* `<home>/.claude/sync-omniroute-models.mjs` — optional gateway model discovery. It
-  is disabled by default and does nothing without both a gateway URL and token;
-  when enabled, it delegates exact-ID normalization, pagination, cache scoping,
-  and schema validation to `provider_catalog.py`, preserves every model required
-  by the fleet, and runs drift detection/reconciliation in one ordered SessionStart
-  transaction.
-* `<home>/.claude/provider_catalog.py` and `fleet-reconcile.py` — shared provider
-  identity/cache and approved-family reconciliation helpers. Reconciliation keeps
-  custom lanes and unrelated picker rows, installs at most three fallback candidates,
-  and reports pending decisions instead of silently approving a new family.
-* `<home>/.claude/claude-fleet-setup.py` — explicit setup/reconfigure interview.
-  It may prompt only in a TTY; hooks never invoke an interactive interview. Use
-  `claude-fleet-setup --show` or a reviewed decision JSON for automation.
-* `<home>/.claude/fleet-model-drift.py` — fail-open drift detector that writes a
-  mode-0600 proposal and emits bounded SessionStart context. Approved families may
-  be reconciled automatically when live and policy-approved; new families and
-  proposal remaps require an explicit `claude-fleet-setup` approve/reject/supersede
-  decision. It never silently escalates trust or cost policy.
-* `<home>/.claude/sync-model-context.py` — PostModelSwitch/SessionStart hook that
-  verifies the selected gateway model's real `context_length`, applies 90% headroom
-  to `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, and keeps `autoCompactWindow` paired with
-  `CLAUDE_CODE_AUTO_COMPACT_WINDOW`. It never inflates a lower user budget, emits
-  restart guidance for startup-only settings, never touches `claude-*` IDs, and is
-  fail-open.
-* `<home>/.claude/agents/fleet-*.md` — one generated agent per fleet lane. Each
-  agent carries an optional native `fallbackModel` chain of at most three entries;
-  it is intended for provider unavailability/overload only, not authentication,
-  billing, rate-limit, request-size, transport, or policy-denial failures.
-* `<config-home>/delegate-skills/config.json` and
-  `generate-claude-agents.mjs` — the fleet map and portable generator. The
-  config root is `XDG_CONFIG_HOME` on Linux/macOS, `<home>/.config` otherwise,
-  or the explicit `--config-home` value.
-* `<prefix>/bin/claude-fleet-sync` and `claude-agents-doctor` — POSIX wrappers,
-  plus `.ps1` and `.cmd` native Windows entrypoints.
-* `<home>/.claude/.claude-agents-config-manifest.json` — stable installed-tree
-  verification data, so the installed doctor does not need the source clone.
+- `~/.claude/agents/fleet-*.md` — one generated agent per fleet lane, each with
+  an optional fallback model chain (at most three entries, for provider
+  unavailability or overload only).
+- `~/.claude/settings.json` — merged settings. Unrelated permissions, hooks,
+  plugins, and environment values are preserved. Mode 0600 because it can
+  contain a gateway token.
+- `~/.claude/CLAUDE.md` — the global delegation policy.
+- `~/.claude/route-to-fleet.py` — UserPromptSubmit routing hook.
+- `~/.claude/subagent-statusline.py` — native subagent status rendering.
+- `~/.claude/sync-provider-models.mjs` — startup hook for gateway model
+  discovery and fleet reconciliation.
+- `~/.claude/sync-model-context.py` — PostModelSwitch/SessionStart hook that
+  reads the active model's `context_length`, applies 90% headroom to
+  `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, and keeps `autoCompactWindow` paired with
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW`. Never inflates a lower user budget. Fail-open.
+- `~/.claude/provider_catalog.py` and `fleet-reconcile.py` — provider identity,
+  cache, and approved-family reconciliation helpers.
+- `~/.claude/fleet-model-drift.py` — fail-open drift detector that writes a
+  mode-0600 proposal and emits bounded startup context.
+- `~/.claude/claude-fleet-setup.py` — the setup/reconfigure tool. Prompts
+  only in a TTY; hooks never invoke it interactively.
+- `~/.claude/fleet.json` — the canonical fleet map.
+  `~/.config/delegate-skills/config.json` is a legacy mirror kept in sync.
+- `~/.config/delegate-skills/provider-policy.json` — provider policy. Generic
+  (one catch-all family) on a fresh install; an existing install keeps its own
+  provider-specific families and aliases on update.
+- Command wrappers in `~/.local/bin/` (POSIX) or equivalent (Windows).
+- `~/.claude/.claude-agents-config-manifest.json` — installed-tree verification
+  data, so the doctor does not require the source clone.
 
-Machine-local marketplace source paths are intentionally not copied because they
-cannot be portable. Remote marketplace entries, enabled plugin selections,
-permissions, model picker descriptions, and optional agent-brain hook stages are
-retained when applicable.
-Remote marketplace entries, enabled plugin selections, permissions, model picker descriptions, and optional
-agent-brain hook stages are retained. Agent-brain hooks are guarded with
-`command -v`; they are inert when that optional tool is not installed.
+Machine-local marketplace source paths are not copied (they cannot be
+portable). Remote marketplace entries, enabled plugin selections, permissions,
+and model picker descriptions are preserved. `agent-brain` hooks are guarded
+with `command -v` and are inert when that optional tool is absent.
 
-## Fleet behavior and model constraints
+---
 
-The fleet currently has 30 lanes. Counts are derived from the fleet map rather
-than hardcoded in the installer/doctor. `fleet-plan` and `fleet-plan-alt` are read-only planning;
-`fleet-implement` and numbered implement lanes are writable; `fleet-review`, static
-diagnosis, security, repository research, and triage are read-only. `fleet-research-web`
-has `WebSearch` and `WebFetch`; `fleet-research-codebase` is deliberately repository-only
-and has neither web tool. Generated agents are background agents with
-`omitClaudeMd: true`, cannot spawn nested agents, and must not commit, push, merge,
-deploy, publish, or take other outward-facing actions. The main agent owns
-integration, final gates, commits, releases, and deployments.
+## Context compaction
 
-Every lane model must remain a member of `settings.json`'s `modelPicker.options`.
-The doctor checks this invariant and the generator refuses to proceed if it drifts.
-If model discovery runs, it preserves missing lane models as fallback picker rows. The fleet map may also declare an ordered `fallbacks` list; `claude-fleet-sync` uses the first live picker candidate without editing the map. `fleet-review` uses Codex Sol first, Claude Opus 5 second, and `fleet-review-06-astra` is reserved for very hard reviews. Approved families may reconcile automatically when live; a new family or explicit proposal remap remains pending until `claude-fleet-setup` records an approve/reject/supersede decision.
-After changing the fleet map or picker, run:
+The context-budget hook keeps `autoCompactWindow` and
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` paired and bounded. At SessionStart and
+PostModelSwitch it reads the active model's reported context, applies 90%
+headroom (e.g. 272K context → 244800 budget), and writes both controls to the
+same value. An existing lower user budget is never inflated. These are
+startup-only settings; the hook emits a restart notice when they change.
 
-```bash
-claude-fleet-sync --check
-claude-agents-doctor --check
-```
-
-Restart Claude Code or reload its agent registry after installing or changing agent
-files. The generator's stable marker permits it to replace generated files while
-refusing to overwrite hand-authored `fleet-*.md` files.
+---
 
 ## Privacy and routing policy
 
-The routing hook writes only to a mode-0600 JSONL log. Routed entries contain the
-lane, reason, timestamp, and character count, never the prompt text. Only a
-`no-match` entry keeps a maximum 160-character excerpt, after credential-shaped
-values are redacted. Text excerpts are removed after 14 days; entries are removed
-after 90 days. Purging runs at most daily. The active log rotates at 2,000,000 bytes
-and the hook is fail-open: logging failure does not block a prompt. The doctor checks
-these values in the packaged and installed hook.
+The routing hook writes only to a mode-0600 JSONL log. Routed entries contain
+the lane, reason, timestamp, and character count — never the prompt text. Only
+a `no-match` entry keeps a maximum 160-character excerpt, with
+credential-shaped values redacted. Text excerpts are removed after 14 days;
+entries after 90 days. Purging runs at most daily. The log rotates at
+2,000,000 bytes. The hook is fail-open: logging failure does not block a
+prompt. The doctor checks these values in the packaged and installed hook.
 
-## Prerequisites and trust
+---
 
-Python 3.10+ is required on every platform. Node.js 18+ is required before
-fleet sync or explicit model discovery; it is not required for a default direct
-profile apply when the generated agents are already present in the bundle. No
-project npm or Composer dependency is used. Python's standard library and Node
-built-ins are the only runtime libraries. Review `manifest.json`, the scripts, and
-the generated agent frontmatter before applying on a new device. The generator,
-routing hook, statusline, and installer are executable text files; no binaries are
-bundled.
+## Safety guarantees
 
-The gateway token is the only secret this setup normally needs. Keep it in a protected
-environment or provide it through hidden prompt input. Do not put it in this bundle,
-version control, shell history, command output, logs, or a README. Existing settings
-may already contain credentials; the bundle's scanner intentionally scans the bundle,
-not an installed settings file that the user deliberately configured.
+- **Backups before every apply.** All managed files are copied to a mode-0700
+  snapshot under `~/.claude/backups/claude-agents-config/` before any write.
+- **Rollback.** `agentfleet rollback --apply` (or `install.py --rollback
+  --apply [--backup DIR]`) restores the nearest pre-change snapshot. The backup
+  is kept until you remove it.
+- **Idempotent.** Repeated installs produce the same configuration and
+  regenerate no duplicate hooks.
+- **Non-destructive.** Uninstall removes only files and hook entries owned by
+  this bundle. Unrelated top-level settings and plugin selections are not
+  touched.
+- **No accidental overwrites.** Existing files without the bundle's ownership
+  marker are never overwritten without `--force-owned`.
+- **Credential safety.** The scanner checks the bundle for credential-shaped
+  literals. The gateway token is the only secret normally needed; keep it in a
+  protected environment variable, not in version control, shell history, or
+  logs.
 
-## Checks and maintenance
+---
 
-The doctor validates JSON, executable bits, 30-lane fleet shape, model-picker
-membership, generated-agent synchronization, frontmatter, research tool boundaries,
-privacy constants, source-machine path leakage, and credential-shaped literals. It
-also refuses an installed gateway URL without a token. `manifest.json` records SHA-256
-checksums for every bundle file except the manifest itself; `checksums.sha256` is a
-human-friendly copy of those records.
+## Upgrading from 1.0.0
 
-A safe update sequence is:
+The installer migrates automatically. It renames lanes that used to encode
+vendor model names:
+
+| Old lane name | New lane name |
+|---|---|
+| `implement-02-gemini-flash` | `implement-fast` |
+| `implement-03-agy-opus` | `implement-deep` |
+| `implement-04-free-1m` | `implement-cheap` |
+| `implement-05-agy-sonnet` | `implement-alt` |
+| `review-02-opus` | `review-alt` |
+| `review-06-astra` | `review-deep` |
+
+Other numbered lanes are retired. The old `sync-omniroute-models.mjs` hook
+script is removed and replaced by `sync-provider-models.mjs`. The model cache
+is now `~/.claude/cache/provider-models-cache.json`. All of this happens inside
+the same backup/rollback transaction, so the upgrade is reversible.
+
+---
+
+## Development
 
 ```bash
-./install.sh --dry-run --home "$HOME"
-./install.sh --apply --home "$HOME"
-./bin/claude-agents-doctor --check --home "$HOME"
+# Run the test suite:
+python3 -m unittest discover tests
+
+# After editing any bundle file, update the manifest
+# (the installer refuses a bundle whose manifest/checksums do not match):
+python3 packaging/update-manifest.py
+
+# Build a reproducible release from a git commit, then publish it:
+python3 packaging/build-release.py --ref <commit>
+# Produces: dist/releases/<version>/agentfleet-<version>.tar.gz, .zip,
+#           SHA256SUMS, and dist/releases/latest.json
+export AGENTFLEET_DEPLOY_HOST=user@server
+sh packaging/deploy.sh --dry-run   # list every change and deletion first
+sh packaging/deploy.sh             # upload site/, then archives, then latest.json
 ```
 
-Rollback restores the most recent pre-change snapshot. Uninstall removes only files
-and hook/permission entries owned by this bundle; it does not delete unrelated top-level
-settings or plugin selections. A rollback backup is deliberately retained until the
-operator removes it.
+`deploy.sh` mirrors `site/` with `rsync --delete`, so it only syncs into a web
+root that is empty or already carries the `.agentfleet-docroot` marker from an
+earlier deploy. Published release archives are never deleted.
+
+`site/`, `packaging/`, `dist/`, and `.github/` are repository-only and are
+never part of an installed bundle.
+
+If the `agent-brain` CLI is on PATH at install time, agents receive its memory
+tools and hooks. Otherwise they are omitted with no functional change.

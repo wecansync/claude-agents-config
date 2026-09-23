@@ -101,7 +101,7 @@ def _main() -> int:
     token = env.get("ANTHROPIC_AUTH_TOKEN")
     if not isinstance(endpoint, str) or not isinstance(token, str) or not endpoint or not token:
         return 0
-    cache_path = home / ".claude" / "cache" / "omniroute-models-cache.json"
+    cache_path = home / ".claude" / "cache" / "provider-models-cache.json"
     cached = read_json(cache_path)
     rows = cache_rows(cached, endpoint, token, int(policy.get("cacheTtlSeconds", 21600)))
     if rows is None:

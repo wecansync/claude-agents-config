@@ -31,7 +31,10 @@ except Exception:
 
 CACHE_FORMAT = "claude-agents-config.provider-cache.v1"
 POLICY_FORMAT = "provider-policy.v1"
-PROVIDER_NAME = "omniroute"
+# Default provider label for a freshly installed generic gateway. The policy's
+# own "provider" value is authoritative once installed; it is a label only and
+# never gates which endpoint may be used (endpoint/account scoping does that).
+PROVIDER_NAME = "gateway"
 DEFAULT_CACHE_TTL = 6 * 60 * 60
 MAX_FALLBACK_CANDIDATES = 3
 MAX_CATALOG_PAGES = 16
@@ -54,8 +57,9 @@ def load_policy(path: Path) -> dict:
     value = load_json(path)
     if not isinstance(value, dict) or value.get("version") != POLICY_FORMAT:
         raise CatalogError(f"invalid provider policy: {path}")
-    if value.get("provider") != PROVIDER_NAME:
-        raise CatalogError(f"provider policy is not for {PROVIDER_NAME}")
+    provider = value.get("provider")
+    if not isinstance(provider, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", provider):
+        raise CatalogError("provider policy has an invalid provider label")
     if not isinstance(value.get("families"), list):
         raise CatalogError("provider policy has no family list")
     return value
@@ -212,14 +216,14 @@ def now_seconds() -> int:
     return int(time.time())
 
 
-def cache_payload(rows: list[dict], endpoint: str, token: str, fetched_at: int | None = None) -> dict:
+def cache_payload(rows: list[dict], endpoint: str, token: str, fetched_at: int | None = None, provider: str = PROVIDER_NAME) -> dict:
     if not isinstance(rows, list):
         raise CatalogError("cache rows must be a list")
     # Validate before writing, including successful empty catalogs.
     parse_catalog_payload({"data": rows})
     return {
         "format": CACHE_FORMAT,
-        "provider": PROVIDER_NAME,
+        "provider": provider if isinstance(provider, str) and provider else PROVIDER_NAME,
         "endpoint": endpoint_scope(endpoint),
         "account": account_scope(token),
         "fetched_at": int(fetched_at if fetched_at is not None else now_seconds()),
@@ -231,7 +235,9 @@ def cache_rows(value: object, endpoint: str, token: str, ttl: int = DEFAULT_CACH
     """Return validated rows, including ``[]`` for a fresh empty catalog."""
     if not isinstance(value, dict):
         return None
-    if value.get("format") != CACHE_FORMAT or value.get("provider") != PROVIDER_NAME:
+    # The provider label is informational; endpoint and account scoping below
+    # are what bind a cache to the credentials that fetched it.
+    if value.get("format") != CACHE_FORMAT or not isinstance(value.get("provider"), str):
         return None
     try:
         expected_endpoint = endpoint_scope(endpoint)
@@ -269,6 +275,9 @@ def fetch_catalog(endpoint: str, token: str, timeout: float = 2.5) -> tuple[list
     for _ in range(MAX_CATALOG_PAGES):
         query = {"limit": "1000"}
         if cursor:
+            # Anthropic's Models API pages with after_id; some gateways use
+            # after. Sending both is harmless to either.
+            query["after_id"] = cursor
             query["after"] = cursor
         url = base.rstrip("/") + "/v1/models?" + urllib.parse.urlencode(query)
         request = urllib.request.Request(url, headers={
@@ -305,6 +314,94 @@ def fetch_catalog(endpoint: str, token: str, timeout: float = 2.5) -> tuple[list
     return [], False, "provider catalog exceeded the page limit"
 
 
+# Capability tiers describe what a lane needs, never which vendor serves it.
+# Catalogs report context size and capability flags but no price or latency,
+# so a model's tier comes from, in order: an explicit label (the setup wizard
+# writes these), keywords in the model id, keywords in the catalog
+# description, and finally "balanced".
+TIERS = ("cheap", "fast", "balanced", "deep")
+TIER_RANK = {tier: index for index, tier in enumerate(TIERS)}
+TIER_ID_KEYWORDS = (
+    ("cheap", ("free", "cheap", "budget", "auto")),
+    # "turbo" is deliberately absent: gpt-4-turbo is a strong model.
+    ("fast", ("haiku", "flash", "mini", "lite", "nano", "fast", "small", "instant")),
+    ("deep", ("opus", "pro", "max", "ultra", "large", "sol", "astra", "o1", "o3", "reasoner")),
+)
+TIER_DESCRIPTION_KEYWORDS = (
+    ("cheap", ("free", "cheapest", "budget", "low cost", "low-cost")),
+    ("fast", ("fastest", "low latency", "low-latency", "quick", "fast")),
+    ("deep", ("strongest", "deep reasoning", "deeper reasoning", "frontier", "most capable")),
+)
+# Native Claude Code aliases resolve against the user's own login (subscription
+# or API key), so a direct profile never needs catalog discovery.
+NATIVE_TIER_MODELS = {"deep": "opus", "balanced": "sonnet", "fast": "haiku", "cheap": "haiku"}
+NATIVE_MODELS = ("default", "opus", "sonnet", "haiku")
+_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+
+
+def supports_reasoning(row: object) -> bool:
+    """Read a reasoning/thinking flag from either catalog capability shape.
+
+    Gateways commonly report ``{"thinking": true}``; Anthropic reports
+    ``{"thinking": {"supported": true}}``.
+    """
+    caps = row.get("capabilities") if isinstance(row, dict) else None
+    if isinstance(row, dict) and isinstance(row.get("reasoning"), bool) and caps is None:
+        return row["reasoning"]
+    if not isinstance(caps, dict):
+        return False
+    for key in ("thinking", "reasoning", "supportsThinking"):
+        value = caps.get(key)
+        if value is True or (isinstance(value, dict) and value.get("supported") is True):
+            return True
+    return False
+
+
+def tier_overrides(*sources: object) -> dict[str, str]:
+    """Merge ``modelTiers`` maps; later sources win. Invalid entries are ignored."""
+    merged: dict[str, str] = {}
+    for source in sources:
+        values = source.get("modelTiers") if isinstance(source, dict) else None
+        if not isinstance(values, dict):
+            continue
+        for key, tier in values.items():
+            if isinstance(key, str) and key.strip() and tier in TIER_RANK:
+                merged[key.strip()] = tier
+    return merged
+
+
+def model_tier(model: object, row: object = None, overrides: dict[str, str] | None = None) -> str:
+    if not isinstance(model, str) or not model.strip():
+        return "balanced"
+    model = model.strip()
+    base = strip_known_suffix(model)
+    if overrides:
+        for key in (model, base):
+            if overrides.get(key) in TIER_RANK:
+                return overrides[key]
+    tokens = [token for token in _TOKEN_SPLIT.split(base.lower().rsplit("/", 1)[-1]) if token]
+    for tier, keywords in TIER_ID_KEYWORDS:
+        for keyword in keywords:
+            if keyword in tokens or (len(keyword) >= 5 and any(keyword in token for token in tokens)):
+                return tier
+    description = str(row.get("description") or "").lower() if isinstance(row, dict) else ""
+    for tier, keywords in TIER_DESCRIPTION_KEYWORDS:
+        if any(keyword in description for keyword in keywords):
+            return tier
+    return "balanced"
+
+
+def native_lane_model(tier: object, avoid: object = None) -> str:
+    """Pick the native alias for a lane tier, stepping to a neighbour when the
+    natural choice is the one an alternate lane must avoid."""
+    chosen = NATIVE_TIER_MODELS.get(tier if isinstance(tier, str) else "", "sonnet")
+    if avoid and chosen == avoid:
+        for alternative in ("sonnet", "opus", "haiku"):
+            if alternative != avoid:
+                return alternative
+    return chosen
+
+
 def available_rows(rows: list[dict], policy: dict) -> dict[str, dict]:
     result: dict[str, dict] = {}
     for row in rows:
@@ -322,6 +419,7 @@ def available_rows(rows: list[dict], policy: dict) -> dict[str, dict]:
             "advertised_id": str(raw_id),
             "context_length": context,
             "description": str(row.get("description") or "")[:160],
+            "reasoning": supports_reasoning(row),
         })
     return result
 
@@ -350,6 +448,30 @@ def model_family(model: object, policy: dict) -> str | None:
         prefixes = family.get("prefixes") if isinstance(family.get("prefixes"), list) else []
         if isinstance(name, str) and (base in exact or any(isinstance(prefix, str) and base.startswith(prefix) for prefix in prefixes)):
             return name
+    return None
+
+
+def model_family_specific(model: object, policy: dict) -> str | None:
+    """Like model_family, but ignores catch-all families (an empty prefix).
+
+    A generic gateway policy approves every model through one catch-all
+    family, which says nothing about whether a picker row came from the
+    provider or was added by hand, so it must not be used for that decision.
+    """
+    if not isinstance(model, str) or not model.strip():
+        return None
+    base = strip_known_suffix(model.strip())
+    if "/" in base:
+        namespace, candidate = base.split("/", 1)
+        if namespace in namespace_aliases(policy):
+            base = candidate
+    for family in policy.get("families", []):
+        if not isinstance(family, dict) or not isinstance(family.get("name"), str):
+            continue
+        exact = family.get("exact") if isinstance(family.get("exact"), list) else []
+        prefixes = [value for value in (family.get("prefixes") or []) if isinstance(value, str) and value]
+        if base in exact or any(base.startswith(prefix) for prefix in prefixes):
+            return family["name"]
     return None
 
 

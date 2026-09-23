@@ -30,7 +30,7 @@ const configHome = configArgIndex >= 0 && process.argv[configArgIndex + 1]
       : path.join(home, ".config");
 const CLAUDE_DIR = path.join(home, ".claude");
 const SETTINGS_PATH = path.join(CLAUDE_DIR, "settings.json");
-const CACHE_PATH = path.join(CLAUDE_DIR, "cache", "omniroute-models-cache.json");
+const CACHE_PATH = path.join(CLAUDE_DIR, "cache", "provider-models-cache.json");
 const POLICY_PATH = path.join(configHome, "delegate-skills", "provider-policy.json");
 const DRIFT_SCRIPT_PATH = path.join(CLAUDE_DIR, "fleet-model-drift.py");
 const RECONCILE_SCRIPT_PATH = path.join(CLAUDE_DIR, "fleet-reconcile.py");
@@ -43,7 +43,7 @@ const pythonRuntime = pythonArgIndex >= 0 && process.argv[pythonArgIndex + 1]
   : process.env.CLAUDE_FLEET_PYTHON || "python3";
 
 function log(message) {
-  if (!isQuiet) process.stderr.write(`[omniroute-sync] ${message}\n`);
+  if (!isQuiet) process.stderr.write(`[agentfleet-sync] ${message}\n`);
 }
 
 function readJson(file) {
@@ -319,7 +319,7 @@ function response(driftNotice, reconcileResult, extraMessage, syncResult) {
 async function run() {
   const settings = readJson(SETTINGS_PATH);
   const policy = readJson(POLICY_PATH);
-  if (!settings || !policy || policy.version !== "provider-policy.v1" || policy.provider !== "omniroute") return null;
+  if (!settings || !policy || policy.version !== "provider-policy.v1" || typeof policy.provider !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(policy.provider)) return null;
   if (settings.env?.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY !== "1") return null;
 
   // Network work stays outside the writer lock. Only cache persistence,

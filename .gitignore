@@ -1,0 +1,4 @@
+.kilo/
+dist/
+__pycache__/
+*.pyc

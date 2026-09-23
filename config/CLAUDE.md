@@ -3,14 +3,16 @@
 # Global System & Delegation Manual
 
 ## 1. Fleet Commands & Configuration Management
-- `/fleet-setup` — Interactive wizard: scan models & settings, repair stale models, validate hooks, curate agents/skills, and optimize the 30-lane fleet.
+- `/fleet-setup` — Interactive wizard: scan models & settings, repair stale models, validate hooks, curate agents/skills, and tune the fleet.
+- `agentfleet profiles` / `agentfleet use <name>` — List provider profiles and switch between a gateway and your own Claude login (`native`); restart Claude Code after switching.
+- `agentfleet status` / `agentfleet doctor` / `agentfleet update` — Audit, verify, or update the installation.
 - `claude-fleet-setup --audit` — Scan settings.json, models, hooks, agents, and skills for health and bloat.
 - `claude-fleet-setup --fix-settings` — Repair stale models in settings.json and optimize compaction window.
 - `claude-fleet-setup --reconcile` — One-shot CLI reconciliation: fetch live provider models, run bidirectional lane reconciliation, and synchronize agents.
 - `claude-fleet-setup --archive-agents <categories>` — Selectively archive agents (e.g. `game_dev,niche_ops`) to preserve prompt cache.
 - `claude-fleet-setup --show` — Inspect current policy, approved families, and fleet status.
 - `claude-fleet-sync` — Regenerate agent definition files (`~/.claude/agents/fleet-*.md`) from canonical configuration.
-- `claude-fleet-sync --check` — Verify that all 30 delegate agents match `config.json`.
+- `claude-fleet-sync --check` — Verify that every generated fleet agent matches `~/.claude/fleet.json`.
 - `claude-agents-doctor --check` — Verify configuration health, permissions, and manifest integrity.
 
 ## 2. Global Delegation Policy
@@ -37,7 +39,7 @@ Delegate substantive work to the matching `fleet-*` subagent as a standing defau
 
 Do the work inline when it is a single obvious edit, a question already answered by context, a command whose output you need for your next step, or when the user explicitly requests not to use subagents. Dispatch when the task spans several files, needs real digging, or benefits from an independent model.
 
-Chain lanes when the work has stages: plan, then implement, then review. Run a second reviewer on a risky change. The primary `fleet-review` lane handles standard defect review; use `fleet-review-02-opus` as the standard fallback, and reserve `fleet-review-06-astra` for very hard reviews involving security or trust boundaries, installer, migration, concurrency, data-loss risk, or conflicting findings. Model fallbacks are advisory and resolve dynamically from `~/.claude/fleet.json`. Numbered lanes (`fleet-implement-04-*`, `fleet-review-03-*`) are alternates — reach for one when the user names it, when a primary lane has failed twice, or when a genuinely independent model improves the check; state the reason.
+Chain lanes when the work has stages: plan, then implement, then review. Run a second reviewer on a risky change. The primary `fleet-review` lane handles standard defect review; use `fleet-review-alt` for an independent second review, and reserve `fleet-review-deep` for very hard reviews involving security or trust boundaries, installer, migration, concurrency, data-loss risk, or conflicting findings. Variant lanes name a capability, never a model: `-alt` runs on an independent model, `-fast` favors latency, `-deep` favors reasoning, `-cheap` favors budget models. Reach for one when the user names it, when a primary lane has failed twice, or when that capability fits the task; state the reason. Models behind every lane resolve dynamically from `~/.claude/fleet.json`.
 
 ### Behavioral Debugging Over Model Swapping
 When a delegate subagent or task underperforms, do not immediately swap lanes or churn models. Model degradation is almost always a specification problem, not a capability problem. Follow the Behavioral Debugging Loop:
@@ -61,7 +63,7 @@ Reserve lane or model switches strictly for verified structural capability gaps 
 - **Shell & Execution**: `Bash` for building, testing, git operations, and local tooling.
 - **Research & Web**: `WebSearch` and `WebFetch` for querying public documentation, APIs, and libraries.
 - **Durable Memory (`agent-brain`)**: Integrated via `mcp__agent-brain-memory` tools (`memory_search`, `memory_save`, `session_summary`) to retain decisions, conventions, and architectural facts across sessions.
-- **Delegate Fleet (30 Lanes)**: Read-only static review lanes (`plan`, `review`, `diagnose-static`, `security-review`, `explore-narrow`, `triage-static`, `research-*`) run isolated without filesystem side effects; writable lanes (`implement`, `ui`, `tests`, `docs`) implement code changes with automated rollback and self-healing fallback support.
+- **Delegate Fleet**: Read-only static review lanes (`plan`, `review`, `diagnose-static`, `security-review`, `explore-narrow`, `triage-static`, `research-*`) run isolated without filesystem side effects; writable lanes (`implement`, `ui`, `tests`, `docs`) implement code changes with automated rollback and self-healing fallback support.
 
 ## 5. Own the Outcome
 You own decomposition, briefs, integration, independent verification, commits, pushes, pull requests, releases, deployments, and every other outward-facing action.
