@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentFleet</title>
+<meta name="description" content="A provider-agnostic fleet of Claude Code subagents. One command to install. Works with your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway.">
+<meta property="og:title" content="AgentFleet">
+<meta property="og:description" content="A provider-agnostic fleet of Claude Code subagents. One command to install. Works with your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-surface: #f4f5f7;
+  --bg-code: #f0f1f3;
+  --text: #1a1a1a;
+  --text-muted: #555;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --border: #d1d5db;
+  --ring: rgba(37,99,235,0.4);
+  --code-text: #1a1a1a;
+  --table-stripe: #f9fafb;
+  --copied-bg: #16a34a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111218;
+    --bg-surface: #1a1b23;
+    --bg-code: #1e1f2a;
+    --text: #e4e4e7;
+    --text-muted: #a1a1aa;
+    --accent: #60a5fa;
+    --accent-hover: #93bbfd;
+    --border: #2e2f3a;
+    --ring: rgba(96,165,250,0.45);
+    --code-text: #e4e4e7;
+    --table-stripe: #1e1f2a;
+    --copied-bg: #16a34a;
+  }
+}
+*,*::before,*::after{box-sizing:border-box}
+body{
+  margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+  background:var(--bg);color:var(--text);line-height:1.6;-webkit-text-size-adjust:100%;
+}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline;color:var(--accent-hover)}
+a:focus-visible{outline:2px solid var(--ring);outline-offset:2px;border-radius:2px}
+.wrap{max-width:860px;margin:0 auto;padding:0 1.25rem}
+header{padding:3rem 0 2rem;text-align:center}
+header h1{font-size:2.5rem;margin:0 0 .75rem;letter-spacing:-.02em;font-weight:700}
+header p{font-size:1.1rem;max-width:600px;margin:0 auto;color:var(--text-muted)}
+main{padding-bottom:3rem}
+h2{font-size:1.35rem;margin:2.5rem 0 1rem;font-weight:600}
+h3{font-size:1.1rem;margin:1.5rem 0 .5rem;font-weight:600}
+/* Tabs */
+.tabs{margin-bottom:.5rem}
+[role=tablist]{display:flex;gap:0;border-bottom:2px solid var(--border);padding:0;margin:0;list-style:none}
+[role=tab]{background:none;border:none;padding:.5rem 1rem;font:inherit;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:color .15s,border-color .15s}
+[role=tab]:hover{color:var(--text)}
+[role=tab][aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+[role=tab]:focus-visible{outline:2px solid var(--ring);outline-offset:-2px;border-radius:2px}
+[role=tabpanel]{padding:.75rem 0}
+[role=tabpanel][hidden]{display:none}
+/* Code blocks */
+.code-wrap{position:relative;margin:.5rem 0 1rem}
+.code-wrap pre{background:var(--bg-code);border:1px solid var(--border);border-radius:6px;padding:.85rem 3rem .85rem 1rem;overflow-x:auto;margin:0;font-size:.875rem;line-height:1.5;color:var(--code-text)}
+.code-wrap code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,Courier,monospace;white-space:pre}
+.copy-btn{position:absolute;top:.5rem;right:.5rem;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;padding:.3rem .55rem;font-size:.75rem;cursor:pointer;color:var(--text-muted);transition:background .15s,color .15s}
+.copy-btn:hover{background:var(--border);color:var(--text)}
+.copy-btn:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
+.copy-btn[data-copied=true]{background:var(--copied-bg);color:#fff;border-color:var(--copied-bg)}
+/* Details */
+details{margin:1rem 0}
+details summary{cursor:pointer;font-weight:600;color:var(--accent);padding:.25rem 0}
+details summary:focus-visible{outline:2px solid var(--ring);outline-offset:2px;border-radius:2px}
+details summary:hover{color:var(--accent-hover)}
+/* Lane grid */
+.lane-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:.65rem;margin:1rem 0}
+.lane-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:6px;padding:.7rem .85rem}
+.lane-card .lane-name{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,Courier,monospace;font-size:.8rem;font-weight:600;color:var(--accent);margin-bottom:.15rem}
+.lane-card .lane-desc{font-size:.85rem;color:var(--text-muted);margin:0}
+/* Inline code */
+code.il{background:var(--bg-code);border:1px solid var(--border);border-radius:3px;padding:.1em .35em;font-size:.85em;font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,Courier,monospace}
+/* Requirements list */
+.req-list{list-style:none;padding:0;margin:.5rem 0}
+.req-list li{padding:.25rem 0;font-size:.95rem}
+.req-list li::before{content:"\2713 ";color:var(--accent);font-weight:700}
+/* Footer */
+footer{border-top:1px solid var(--border);padding:1.5rem 0;font-size:.85rem;color:var(--text-muted);text-align:center}
+footer p{margin:.35rem 0}
+footer a{color:var(--accent)}
+/* sr-only */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,*::before,*::after{transition-duration:0s!important;animation-duration:0s!important}
+}
+@media (max-width: 480px) {
+  header h1{font-size:1.8rem}
+  header p{font-size:1rem}
+  [role=tab]{padding:.4rem .65rem;font-size:.9rem}
+  .lane-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>AgentFleet</h1>
+    <p>A provider-agnostic fleet of Claude Code subagents. One command to install. Works with your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway.</p>
+  </div>
+</header>
+
+<main>
+<div class="wrap">
+
+<h2>Install</h2>
+<div class="tabs" id="install-tabs">
+  <div role="tablist" aria-label="Operating system">
+    <button role="tab" id="tab-unix" aria-controls="panel-unix" aria-selected="true">macOS / Linux</button>
+    <button role="tab" id="tab-win" aria-controls="panel-win" aria-selected="false" tabindex="-1">Windows (PowerShell)</button>
+  </div>
+  <div role="tabpanel" id="panel-unix" aria-labelledby="tab-unix">
+    <div class="code-wrap">
+      <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh</code></pre>
+      <button class="copy-btn" type="button" aria-label="Copy macOS / Linux install command">Copy</button>
+    </div>
+  </div>
+  <div role="tabpanel" id="panel-win" aria-labelledby="tab-win" hidden>
+    <div class="code-wrap">
+      <pre><code>irm https://agentfleet.wecansync.com/install.ps1 | iex</code></pre>
+      <button class="copy-btn" type="button" aria-label="Copy Windows install command">Copy</button>
+    </div>
+  </div>
+</div>
+<p>The installer downloads a pinned release, verifies its SHA-256 checksum, and installs only under your home directory; it never needs root or admin rights. Read it first: <a href="/install.sh">install.sh</a> &middot; <a href="/install.ps1">install.ps1</a>.</p>
+
+<div aria-live="polite" class="sr-only" id="copy-announce"></div>
+
+<h2>Requirements</h2>
+<ul class="req-list">
+  <li><a href="https://claude.com/claude-code">Claude Code</a></li>
+  <li>Python 3.10+</li>
+  <li>Node.js 18+</li>
+</ul>
+
+<h2>First-run wizard</h2>
+<p>On first install you choose a provider:</p>
+<ul>
+  <li><strong>Claude subscription</strong> &mdash; uses Claude Code's own login; lanes map to opus / sonnet / haiku.</li>
+  <li><strong>Anthropic API key</strong></li>
+  <li><strong>Custom gateway</strong> &mdash; any Anthropic-compatible endpoint; you give the URL and the name of the environment variable that holds the token. Models are discovered from the gateway's <code class="il">/v1/models</code> and each lane gets the best match plus fallbacks.</li>
+</ul>
+
+<details>
+<summary>Non-interactive install</summary>
+
+<h3>macOS / Linux, subscription</h3>
+<div class="code-wrap">
+  <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | sh -s -- --provider native</code></pre>
+  <button class="copy-btn" type="button" aria-label="Copy non-interactive subscription command">Copy</button>
+</div>
+
+<h3>macOS / Linux, gateway</h3>
+<div class="code-wrap">
+  <pre><code>export MY_GATEWAY_TOKEN='…'
+curl -fsSL https://agentfleet.wecansync.com/install.sh | sh -s -- --provider gateway --gateway-url https://gateway.example.com --gateway-token-env MY_GATEWAY_TOKEN</code></pre>
+  <button class="copy-btn" type="button" aria-label="Copy non-interactive gateway command for macOS / Linux">Copy</button>
+</div>
+
+<h3>Windows, gateway</h3>
+<div class="code-wrap">
+  <pre><code>$env:MY_GATEWAY_TOKEN='…'; &amp; ([scriptblock]::Create((irm https://agentfleet.wecansync.com/install.ps1))) --provider gateway --gateway-url https://gateway.example.com --gateway-token-env MY_GATEWAY_TOKEN</code></pre>
+  <button class="copy-btn" type="button" aria-label="Copy non-interactive gateway command for Windows">Copy</button>
+</div>
+
+<h3>Pin a version</h3>
+<div class="code-wrap">
+  <pre><code>curl -fsSL https://agentfleet.wecansync.com/install.sh | AGENTFLEET_VERSION=2.0.0 sh</code></pre>
+  <button class="copy-btn" type="button" aria-label="Copy pin-a-version command">Copy</button>
+</div>
+</details>
+
+<h2>Switch providers any time</h2>
+<div class="code-wrap">
+  <pre><code>agentfleet profiles        # list profiles
+agentfleet use native      # switch to your Claude subscription
+agentfleet use &lt;gateway&gt;   # switch to a gateway</code></pre>
+  <button class="copy-btn" type="button" aria-label="Copy switch-provider commands">Copy</button>
+</div>
+<p>Agents keep their names; only the models behind them change. Restart Claude Code after switching. Gateway tokens are kept in a private file readable only by you.</p>
+
+<h2>The fleet &mdash; 19 lanes</h2>
+<div class="lane-grid">
+  <div class="lane-card"><div class="lane-name">fleet-plan</div><p class="lane-desc">Design and approach before code exists</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-plan-alt</div><p class="lane-desc">Second planning opinion from a different model</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-implement</div><p class="lane-desc">Build features, fix bugs, refactor</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-implement-alt</div><p class="lane-desc">Implementation on an independent model</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-implement-fast</div><p class="lane-desc">Quick, low-latency changes</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-implement-deep</div><p class="lane-desc">Hard, multi-file changes that need deep reasoning</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-implement-cheap</div><p class="lane-desc">Bulk or low-stakes work on budget/free models</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-review</div><p class="lane-desc">Defect review of diffs, branches, plans</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-review-alt</div><p class="lane-desc">Independent second reviewer</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-review-deep</div><p class="lane-desc">Very hard reviews: security, migrations, concurrency, data-loss risk</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-tests</div><p class="lane-desc">Write, fix, investigate tests</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-ui</div><p class="lane-desc">User-facing interface code</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-docs</div><p class="lane-desc">READMEs, guides, changelogs</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-security-review</div><p class="lane-desc">Auth, secrets, injection, trust boundaries</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-diagnose-static</div><p class="lane-desc">Root-cause failures from source</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-explore-narrow</div><p class="lane-desc">Find a symbol, file, or call site</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-triage-static</div><p class="lane-desc">Ownership, scope, next action</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-research-codebase</div><p class="lane-desc">Sweep the repo to explain a system</p></div>
+  <div class="lane-card"><div class="lane-name">fleet-research-web</div><p class="lane-desc">Evaluate external tools and current docs</p></div>
+</div>
+
+<h2>Everyday commands</h2>
+<div class="code-wrap">
+  <pre><code>/fleet-setup              # inside Claude Code: audit models, settings, hooks, agents, skills and tune the fleet
+agentfleet status         # show current profile and lane health
+agentfleet doctor         # diagnose configuration problems
+agentfleet sync           # pull latest lane definitions
+agentfleet update         # update AgentFleet itself
+agentfleet uninstall      # remove AgentFleet cleanly</code></pre>
+  <button class="copy-btn" type="button" aria-label="Copy everyday commands">Copy</button>
+</div>
+
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><a href="https://github.com/wecansync/claude-agents-config">GitHub</a> &middot; MIT License</p>
+    <p>AgentFleet is an independent project by WeCanSync. It is not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  /* --- Tab switching --- */
+  var tablist = document.querySelector('[role=tablist]');
+  var tabs = Array.prototype.slice.call(tablist.querySelectorAll('[role=tab]'));
+  var panels = tabs.map(function(t){ return document.getElementById(t.getAttribute('aria-controls')); });
+
+  function activate(tab){
+    tabs.forEach(function(t,i){
+      var selected = t === tab;
+      t.setAttribute('aria-selected', selected ? 'true' : 'false');
+      t.tabIndex = selected ? 0 : -1;
+      if(selected){ panels[i].removeAttribute('hidden'); } else { panels[i].setAttribute('hidden',''); }
+    });
+    tab.focus();
+  }
+
+  tablist.addEventListener('click', function(e){
+    var t = e.target.closest('[role=tab]');
+    if(t) activate(t);
+  });
+
+  tablist.addEventListener('keydown', function(e){
+    var idx = tabs.indexOf(document.activeElement);
+    if(idx < 0) return;
+    var next = -1;
+    if(e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % tabs.length;
+    else if(e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (idx - 1 + tabs.length) % tabs.length;
+    else if(e.key === 'Home') next = 0;
+    else if(e.key === 'End') next = tabs.length - 1;
+    if(next >= 0){ e.preventDefault(); activate(tabs[next]); }
+  });
+
+  /* Detect OS and preselect tab */
+  try {
+    var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+    if(/win/i.test(ua)) activate(tabs[1]);
+  } catch(e){}
+
+  /* --- Copy buttons --- */
+  var announce = document.getElementById('copy-announce');
+  var btns = Array.prototype.slice.call(document.querySelectorAll('.copy-btn'));
+
+  btns.forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var code = btn.parentNode.querySelector('code');
+      if(!code) return;
+      var text = code.textContent;
+      var done = function(){
+        btn.textContent = 'Copied';
+        btn.setAttribute('data-copied','true');
+        announce.textContent = 'Copied to clipboard';
+        setTimeout(function(){
+          btn.textContent = 'Copy';
+          btn.removeAttribute('data-copied');
+          announce.textContent = '';
+        }, 1500);
+      };
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done).catch(fallback);
+      } else {
+        fallback();
+      }
+      function fallback(){
+        try {
+          var range = document.createRange();
+          range.selectNodeContents(code);
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          document.execCommand('copy');
+          sel.removeAllRanges();
+          done();
+        } catch(e){ btn.textContent = 'Select & copy manually'; setTimeout(function(){ btn.textContent = 'Copy'; },2000); }
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -178,6 +178,57 @@ def apply_family_decisions(path: Path, decisions: dict, approved: list[str]) -> 
     atomic_json(path, latest_policy, 0o644)
 
 
+def update_fleet_choices(home: Path, config_home: Path, prefer: list[str], tiers: list[str], lock_timeout: float) -> None:
+    """Record explicit lane preferences and model tier labels in both fleet
+    mirrors. Reconciliation then applies them against the live catalog."""
+    from provider_catalog import TIER_RANK
+    mirrors = [home / ".claude" / "fleet.json", config_home / "delegate-skills" / "config.json"]
+    present = [path for path in mirrors if path.is_file()]
+    if not present:
+        raise SystemExit("no fleet map found; install AgentFleet first")
+    fd, lock = acquire_lock(home, timeout=lock_timeout)
+    if fd is None:
+        raise SystemExit(f"another fleet writer holds the lock for {home}; try again")
+    try:
+        present.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        fleet = read_json(present[0], {})
+        lanes = fleet.get("lanes") if isinstance(fleet, dict) else None
+        if not isinstance(lanes, dict):
+            raise SystemExit(f"{present[0]} has no lanes")
+        for item in prefer:
+            lane, _, models = item.partition("=")
+            lane = lane.strip().removeprefix("fleet-")
+            if lane not in lanes:
+                raise SystemExit(f"unknown lane: {lane} (lanes: {', '.join(lanes)})")
+            values = [model.strip() for model in models.split(",") if model.strip()]
+            if values:
+                lanes[lane]["preferred"] = values
+                lanes[lane]["model"] = values[0]
+                print(f"fleet-{lane}: prefers {', '.join(values)}")
+            else:
+                lanes[lane].pop("preferred", None)
+                print(f"fleet-{lane}: preference cleared (ranked by tier)")
+        labels = fleet.setdefault("modelTiers", {})
+        for item in tiers:
+            model, _, tier = item.partition("=")
+            model, tier = model.strip(), tier.strip().lower()
+            if not model:
+                raise SystemExit(f"invalid --tier value: {item}")
+            if not tier:
+                labels.pop(model, None)
+                print(f"{model}: tier label cleared")
+            elif tier in TIER_RANK:
+                labels[model] = tier
+                print(f"{model}: tier {tier}")
+            else:
+                raise SystemExit(f"invalid tier '{tier}' (use cheap, fast, balanced, or deep)")
+        for path in mirrors:
+            if path.parent.is_dir():
+                atomic_json(path, fleet, 0o644)
+    finally:
+        release_lock(fd, lock)
+
+
 def run_setup_reconciliation_and_sync(home: Path, config_home: Path, policy_file: Path) -> None:
     settings_file = home / ".claude" / "settings.json"
     settings = read_json(settings_file, {})
@@ -188,14 +239,18 @@ def run_setup_reconciliation_and_sync(home: Path, config_home: Path, policy_file
     env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
     endpoint = env.get("ANTHROPIC_BASE_URL")
     token = env.get("ANTHROPIC_AUTH_TOKEN")
-    catalog_cache = home / ".claude" / "cache" / "omniroute-models-cache.json"
+    catalog_cache = home / ".claude" / "cache" / "provider-models-cache.json"
 
     if isinstance(endpoint, str) and isinstance(token, str) and endpoint and token:
         try:
             from provider_catalog import cache_payload, fetch_catalog
             rows, complete, _ = fetch_catalog(endpoint, token, timeout=5.0)
             if complete and isinstance(rows, list):
-                payload = cache_payload(rows, endpoint, token)
+                try:
+                    provider_label = load_policy(policy_file).get("provider", "gateway")
+                except CatalogError:
+                    provider_label = "gateway"
+                payload = cache_payload(rows, endpoint, token, provider=provider_label)
                 atomic_json(catalog_cache, payload, 0o600)
         except Exception:
             pass
@@ -255,7 +310,7 @@ def clean_model_id(model_id: str | None) -> str:
 
 
 def get_live_catalog_info(home: Path) -> dict:
-    catalog_cache = home / ".claude" / "cache" / "omniroute-models-cache.json"
+    catalog_cache = home / ".claude" / "cache" / "provider-models-cache.json"
     cache_data = read_json(catalog_cache, {})
     models = []
     if isinstance(cache_data, dict) and isinstance(cache_data.get("models"), list):
@@ -336,12 +391,12 @@ def audit_fleet(home: Path, config_home: Path, policy_file: Path) -> dict:
     stale_models = {}
     current_advisor = settings.get("advisorModel")
     if current_advisor:
-        if clean_model_id(current_advisor) not in clean_ids and current_advisor not in live_ids:
+        if not is_alias(current_advisor) and clean_model_id(current_advisor) not in clean_ids and current_advisor not in live_ids:
             stale_models["advisorModel"] = {"current": current_advisor, "reason": "Not in live provider catalog"}
 
     current_model = settings.get("model")
     if current_model:
-        if clean_model_id(current_model) not in clean_ids and current_model not in live_ids:
+        if not is_alias(current_model) and clean_model_id(current_model) not in clean_ids and current_model not in live_ids:
             stale_models["model"] = {"current": current_model, "reason": "Not in live provider catalog"}
 
     env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
@@ -350,7 +405,7 @@ def audit_fleet(home: Path, config_home: Path, policy_file: Path) -> dict:
             "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"
         } or env_key.endswith("_MODEL")) and isinstance(val, str):
-            if clean_model_id(val) not in clean_ids and val not in live_ids:
+            if not is_alias(val) and clean_model_id(val) not in clean_ids and val not in live_ids:
                 stale_models[f"env.{env_key}"] = {"current": val, "reason": "Not in live provider catalog"}
 
     compact_window = env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") or settings.get("autoCompactWindow")
@@ -574,15 +629,57 @@ def print_audit_summary(audit: dict) -> None:
         print(f"[Fleet Coverage] {fc.get('total_lanes')} lanes active · {fc.get('utilized_live_models_count')} models utilized, {fc.get('unutilized_live_models_count')} unutilized.")
 
 
-def fix_settings(home: Path, advisor_override: str | None = None, target_compaction: int = 800000) -> dict:
+NATIVE_ALIASES = {"default", "opus", "sonnet", "haiku"}
+
+
+def is_alias(model: object) -> bool:
+    """Claude Code aliases are always valid: they resolve against the user's
+    login, or through ANTHROPIC_DEFAULT_*_MODEL on a gateway."""
+    return isinstance(model, str) and model.removesuffix("[1m]") in NATIVE_ALIASES
+
+
+def runtime_catalog(home: Path, policy_file: Path | None) -> dict[str, dict]:
+    """Live models under the ids settings.json uses (context suffix applied)."""
+    from provider_catalog import available_rows
+    rows = read_json(home / ".claude" / "cache" / "provider-models-cache.json", {})
+    models = rows.get("models") if isinstance(rows, dict) else None
+    if not isinstance(models, list):
+        return {}
+    try:
+        policy = load_policy(policy_file) if policy_file else {}
+    except CatalogError:
+        policy = {}
+    return available_rows(models, policy or {"families": []})
+
+
+def best_live(catalog: dict[str, dict], tier: str) -> str | None:
+    """The live model that best fits a capability tier: exact tier first,
+    then nearest tier, larger context breaking ties."""
+    from provider_catalog import TIER_RANK, model_tier
+    if not catalog:
+        return None
+    ranked = sorted(
+        catalog,
+        key=lambda model: (
+            abs(TIER_RANK[model_tier(model, catalog[model])] - TIER_RANK[tier]),
+            -(catalog[model].get("context_length") or 0),
+            model,
+        ),
+    )
+    return ranked[0]
+
+
+def fix_settings(home: Path, advisor_override: str | None = None, target_compaction: int = 800000, policy_file: Path | None = None) -> dict:
     settings_file = home / ".claude" / "settings.json"
     settings = read_json(settings_file, {})
     if not isinstance(settings, dict):
         raise SystemExit(f"settings file not found or invalid: {settings_file}")
 
-    catalog_info = get_live_catalog_info(home)
-    live_ids = catalog_info["live_ids"]
-    clean_ids = catalog_info["clean_ids"]
+    catalog = runtime_catalog(home, policy_file)
+    live = set(catalog) | {clean_model_id(model) for model in catalog}
+
+    def stale(model: object) -> bool:
+        return isinstance(model, str) and bool(model) and bool(catalog) and not is_alias(model) and model not in live and clean_model_id(model) not in live
 
     changes = []
 
@@ -590,56 +687,33 @@ def fix_settings(home: Path, advisor_override: str | None = None, target_compact
     if advisor_override:
         settings["advisorModel"] = advisor_override
         changes.append(f"advisorModel: {current_advisor} -> {advisor_override}")
-    elif current_advisor:
-        clean = clean_model_id(current_advisor)
-        if clean not in clean_ids and current_advisor not in live_ids:
-            replacement = None
-            for cand in ["claude-opus-5[1m]", "claude-opus-5", "codex-5.5", "agy-claude-opus[1m]"]:
-                if cand in live_ids or clean_model_id(cand) in clean_ids:
-                    replacement = cand
-                    break
-            if not replacement and catalog_info["models"]:
-                replacement = catalog_info["models"][0]["id"]
-            if replacement:
-                settings["advisorModel"] = replacement
-                changes.append(f"advisorModel: replaced stale '{current_advisor}' with live '{replacement}'")
+    elif stale(current_advisor):
+        replacement = best_live(catalog, "deep")
+        if replacement:
+            settings["advisorModel"] = replacement
+            changes.append(f"advisorModel: replaced stale '{current_advisor}' with live '{replacement}'")
 
     current_model = settings.get("model")
-    if current_model:
-        clean = clean_model_id(current_model)
-        if clean not in clean_ids and current_model not in live_ids:
-            replacement = None
-            for cand in ["claude-sonnet-5[1m]", "claude-sonnet-5", "agy-gemini-flash[1m]", "agy-claude-sonnet[1m]"]:
-                if cand in live_ids or clean_model_id(cand) in clean_ids:
-                    replacement = cand
-                    break
-            if not replacement and catalog_info["models"]:
-                replacement = catalog_info["models"][0]["id"]
-            if replacement:
-                settings["model"] = replacement
-                changes.append(f"model: replaced stale '{current_model}' with live '{replacement}'")
+    if stale(current_model):
+        replacement = best_live(catalog, "balanced")
+        if replacement:
+            settings["model"] = replacement
+            changes.append(f"model: replaced stale '{current_model}' with live '{replacement}'")
 
     env = settings.setdefault("env", {})
     if isinstance(env, dict):
-        env_models = {
-            "ANTHROPIC_DEFAULT_OPUS_MODEL": ["claude-opus-5[1m]", "agy-claude-opus[1m]"],
-            "ANTHROPIC_DEFAULT_SONNET_MODEL": ["claude-sonnet-5[1m]", "agy-claude-sonnet[1m]"],
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL": ["claude-haiku"],
-            "ANTHROPIC_SMALL_FAST_MODEL": ["claude-haiku"],
-        }
-        for env_key, preferred_list in env_models.items():
+        for env_key, tier in (
+            ("ANTHROPIC_DEFAULT_OPUS_MODEL", "deep"),
+            ("ANTHROPIC_DEFAULT_SONNET_MODEL", "balanced"),
+            ("ANTHROPIC_DEFAULT_HAIKU_MODEL", "fast"),
+            ("ANTHROPIC_SMALL_FAST_MODEL", "fast"),
+        ):
             val = env.get(env_key)
-            if isinstance(val, str):
-                clean = clean_model_id(val)
-                if clean not in clean_ids and val not in live_ids:
-                    rep = None
-                    for p in preferred_list:
-                        if p in live_ids or clean_model_id(p) in clean_ids:
-                            rep = p
-                            break
-                    if rep:
-                        env[env_key] = rep
-                        changes.append(f"env.{env_key}: replaced stale '{val}' with live '{rep}'")
+            if stale(val):
+                rep = best_live(catalog, tier)
+                if rep:
+                    env[env_key] = rep
+                    changes.append(f"env.{env_key}: replaced stale '{val}' with live '{rep}'")
 
         if env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") != str(target_compaction):
             old_val = env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
@@ -800,6 +874,8 @@ def main() -> int:
     parser.add_argument("--restore-agents", help="comma-separated agent filenames or categories to restore from archive")
     parser.add_argument("--archive-skills", help="comma-separated skill names or categories (core, delegates, engineering, other, all) to archive")
     parser.add_argument("--restore-skills", help="comma-separated skill names or categories to restore from archive")
+    parser.add_argument("--prefer", action="append", default=[], metavar="LANE=MODEL[,MODEL]", help="pin a lane's preferred models in order (repeatable); 'LANE=' clears it")
+    parser.add_argument("--tier", action="append", default=[], metavar="MODEL=TIER", help="label a model cheap, fast, balanced, or deep (repeatable); 'MODEL=' clears it")
     parser.add_argument("--lock-timeout", type=float, default=4.0, help=argparse.SUPPRESS)
     args = parser.parse_args()
     home = resolved_home(args)
@@ -816,7 +892,7 @@ def main() -> int:
 
     did_action = False
     if args.fix_settings:
-        fix_res = fix_settings(home, advisor_override=args.advisor, target_compaction=args.compaction)
+        fix_res = fix_settings(home, advisor_override=args.advisor, target_compaction=args.compaction, policy_file=path)
         if fix_res["changed"]:
             print("Settings updated:")
             for c in fix_res["changes"]:
@@ -856,6 +932,11 @@ def main() -> int:
         for item in res["files"]:
             print(f"  - {item['name']} ({item['category']})")
         did_action = True
+
+    if args.prefer or args.tier:
+        update_fleet_choices(home, config_home, args.prefer, args.tier, args.lock_timeout)
+        run_setup_reconciliation_and_sync(home, config_home, path)
+        return 0
 
     if args.reconcile:
         run_setup_reconciliation_and_sync(home, config_home, path)

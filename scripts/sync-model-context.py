@@ -82,7 +82,7 @@ def update_context(payload: object, home: Path, config_home: Path) -> dict | Non
     if not isinstance(payload, dict):
         return None
     settings_path = home / ".claude" / "settings.json"
-    cache_path = home / ".claude" / "cache" / "omniroute-models-cache.json"
+    cache_path = home / ".claude" / "cache" / "provider-models-cache.json"
     policy_path = config_home / "delegate-skills" / "provider-policy.json"
     try:
         policy = load_policy(policy_path)

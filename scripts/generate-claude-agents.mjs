@@ -78,7 +78,7 @@ const installManifestPath = join(home, ".claude", ".claude-agents-config-manifes
 // directory: os.tmpdir() honors TMPDIR/TMP/TEMP, which two writers targeting
 // the very same home can have set differently, so a tmp-relative path
 // serializes nothing. Every writer that resolves the same home (this
-// generator, sync-omniroute-models.mjs, and provider_catalog.lock_path in
+// generator, sync-provider-models.mjs, and provider_catalog.lock_path in
 // Python) lands on the same file without needing to agree on an environment
 // variable. This generator never creates home/.claude itself -- only the
 // installer's apply path does, after its own symlink preflight -- so a
@@ -169,7 +169,7 @@ function acquireWriterLock() {
   failIfSymlink(agentsDir, "agents directory");
   failIfSymlink(installMetadataPath, "install metadata");
   failIfSymlink(installManifestPath, "install manifest");
-  // This lock path is derived identically here, in sync-omniroute-models.mjs,
+  // This lock path is derived identically here, in sync-provider-models.mjs,
   // and in provider_catalog.lock_path (Python), so all three writers share
   // one canonical file per resolved home regardless of each process's own
   // TMPDIR/TMP/TEMP. Only the installer's apply path creates home/.claude;
@@ -385,7 +385,12 @@ function commitGeneratedFiles(desired, verification, stale) {
   const files = [];
   for (const [filename, content] of desired) files.push({ path: join(agentsDir, filename), content: Buffer.from(content, "utf8"), mode: 0o644 });
   for (const filename of stale) files.push({ path: join(agentsDir, filename), content: null, mode: null });
-  for (const [path, content] of verification) files.push({ path, content, mode: 0o600 });
+  // Install bookkeeping is private (0600); the fleet map mirrors stay
+  // world-readable (0644) exactly as the installer writes them.
+  for (const [path, content] of verification) {
+    const mode = (path === claudeFleetPath || path === legacyFleetPath) ? 0o644 : 0o600;
+    files.push({ path, content, mode });
+  }
   failIfSymlinkChain(syncTransactionDir, "sync transaction parent");
   mkdirSync(syncTransactionDir, { recursive: true, mode: 0o700 });
   const records = [];
@@ -516,6 +521,12 @@ function laneRole(lane, config) {
 }
 
 const memoryTools = "mcp__agent-brain-memory__memory_search, mcp__agent-brain-memory__memory_save, mcp__agent-brain-memory__session_summary";
+// The optional agent-brain memory integration is recorded in the fleet map by
+// the installer (integrations.agentBrain) rather than detected here, because
+// hooks run with a different PATH than the installer did. Without it, agents
+// carry neither the memory tools nor the lifecycle instruction.
+const MEMORY_TOOLS_SUFFIX = `, ${memoryTools}`;
+const MEMORY_LIFECYCLE = " Project memory search may be unavailable in custom-agent sessions; use it when permitted and continue from the brief and repository evidence when it is not. Before stopping, save only durable project knowledge and write the local session summary required by the agent-brain lifecycle.";
 const staticTools = `Read, Glob, Grep, LSP, ${memoryTools}`;
 const webTools = `Read, Glob, Grep, WebSearch, WebFetch, ${memoryTools}`;
 const writableTools = `Read, Glob, Grep, LSP, Bash, Edit, Write, ${memoryTools}`;
@@ -652,7 +663,9 @@ function renderAgent(lane, config, sourceHash, picker) {
   const agentName = `fleet-${lane}`;
   const fallbacks = candidatesFor(config).slice(1, 4).filter((model) => !picker || picker.has(model));
   const fallbackLine = fallbacks.length ? `fallbackModel: ${yamlString(fallbacks.join(","))}\n` : "";
-  return `---\nname: ${agentName}\ndescription: ${yamlString(descriptionFor(lane, config.model, role, config))}\nmodel: ${yamlString(config.model)}\n${fallbackLine}effort: ${config.effort || "high"}\ntools: ${spec.tools}\nbackground: true\nomitClaudeMd: true\ncolor: ${spec.color}\nmaxTurns: ${spec.maxTurns}\n---\n\n<!-- ${marker}; source-sha256: ${sourceHash} -->\n\n# Fleet lane: ${lane}\n\nYou are the native Claude Code subagent for global fleet lane \`${lane}\`. The main agent owns decomposition, integration, final gates, and outward-facing actions. You own only the bounded assignment in your invocation.\n\n${spec.prompt}\n\nThe main agent must put every applicable project instruction, gate, and handoff requirement in the brief because this generated agent omits CLAUDE.md to keep context bounded and avoid delegated handoff writes. Project memory search may be unavailable in custom-agent sessions; use it when permitted and continue from the brief and repository evidence when it is not. Before stopping, save only durable project knowledge and write the local session summary required by the agent-brain lifecycle. If the brief lacks a decision required to continue safely, stop and report the gap instead of expanding scope.\n`;
+  const tools = agentBrain ? spec.tools : spec.tools.replace(MEMORY_TOOLS_SUFFIX, "");
+  const lifecycle = agentBrain ? MEMORY_LIFECYCLE : "";
+  return `---\nname: ${agentName}\ndescription: ${yamlString(descriptionFor(lane, config.model, role, config))}\nmodel: ${yamlString(config.model)}\n${fallbackLine}effort: ${config.effort || "high"}\ntools: ${tools}\nbackground: true\nomitClaudeMd: true\ncolor: ${spec.color}\nmaxTurns: ${spec.maxTurns}\n---\n\n<!-- ${marker}; source-sha256: ${sourceHash} -->\n\n# Fleet lane: ${lane}\n\nYou are the native Claude Code subagent for global fleet lane \`${lane}\`. The main agent owns decomposition, integration, final gates, and outward-facing actions. You own only the bounded assignment in your invocation.\n\n${spec.prompt}\n\nThe main agent must put every applicable project instruction, gate, and handoff requirement in the brief because this generated agent omits CLAUDE.md to keep context bounded and avoid delegated handoff writes.${lifecycle} If the brief lacks a decision required to continue safely, stop and report the gap instead of expanding scope.\n`;
 }
 
 function candidatesFor(config) {
@@ -686,6 +699,7 @@ if (fleet.version !== "delegate-fleet.v1" || !fleet.lanes || typeof fleet.lanes 
   fail(`${fleetPath} is not a delegate-fleet.v1 map`);
 }
 const picker = new Map((settings.modelPicker?.options || []).map((row) => [row.model, row]));
+const agentBrain = fleet.integrations?.agentBrain === true;
 if (picker.size === 0) fail(`${settingsPath} has no modelPicker options`);
 
 const laneNamePattern = /^[a-z0-9][a-z0-9-]*$/;

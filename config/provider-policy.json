@@ -1,76 +1,22 @@
 {
   "version": "provider-policy.v1",
-  "provider": "omniroute",
+  "provider": "gateway",
   "cacheTtlSeconds": 21600,
   "oneMContextThreshold": 872000,
   "contextSuffix": "[1m]",
   "discoveryApproved": false,
   "autoApproveProposals": true,
-  "namespaceAliases": [
-    "wecansync"
-  ],
-  "runtimeAliases": {
-    "claude-opus-5": "claude-opus-5",
-    "claude-sonnet-5": "claude-sonnet-5",
-    "agy-claude-opus": "agy-claude-opus",
-    "agy-claude-sonnet": "agy-claude-sonnet",
-    "agy-gemini-flash": "agy-gemini-flash",
-    "agy-gemini-pro": "agy-gemini-pro",
-    "codex-sol": "codex-sol",
-    "codex-sol-max": "codex-sol-max",
-    "codex-luna": "codex-luna",
-    "codex-terra": "codex-terra",
-    "codex-astra": "codex-astra",
-    "omniroute-free-1m-ctx": "omniroute-free-1m-ctx"
-  },
+  "namespaceAliases": [],
+  "runtimeAliases": {},
+  "modelTiers": {},
   "families": [
     {
-      "name": "claude",
-      "prefixes": ["claude-"],
+      "name": "gateway",
+      "prefixes": [
+        ""
+      ],
       "approved": true,
       "fallbackFamilies": []
-    },
-    {
-      "name": "codex",
-      "prefixes": ["codex-"],
-      "approved": true,
-      "fallbackFamilies": ["claude"]
-    },
-    {
-      "name": "antigravity",
-      "prefixes": ["agy-"],
-      "approved": true,
-      "fallbackFamilies": ["claude"]
-    },
-    {
-      "name": "cursor",
-      "prefixes": ["cursor-"],
-      "approved": true,
-      "fallbackFamilies": ["claude"]
-    },
-    {
-      "name": "omniroute",
-      "prefixes": ["omniroute-"],
-      "approved": true,
-      "fallbackFamilies": ["claude"]
-    },
-    {
-      "name": "openclaw",
-      "prefixes": ["openclaw-"],
-      "approved": true,
-      "fallbackFamilies": ["claude"]
-    },
-    {
-      "name": "qwen",
-      "prefixes": ["qwen-"],
-      "approved": true,
-      "fallbackFamilies": ["claude"]
-    },
-    {
-      "name": "named-custom",
-      "exact": ["custom-auto", "Atria"],
-      "approved": true,
-      "fallbackFamilies": ["claude"]
     }
   ]
 }

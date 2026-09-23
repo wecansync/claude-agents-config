@@ -1,0 +1,502 @@
+#!/usr/bin/env python3
+"""AgentFleet command line: switch providers and run the fleet tools.
+
+Profiles let one home switch between a custom gateway and the user's own
+Claude login without reinstalling. Lanes keep their names across a switch;
+only the models behind them change. Everything a switch touches is a setting
+this bundle manages, and every write holds the same lock the installer and
+startup hooks use.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.parse
+import urllib.request
+
+# Set before importing provider_catalog so no __pycache__ lands next to the
+# installed scripts (the installer's inventory checks reject stray files).
+sys.dont_write_bytecode = True
+_HERE = Path(__file__).resolve().parent
+SCRIPTS = _HERE if (_HERE / "provider_catalog.py").is_file() else _HERE.parent / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+import provider_catalog  # noqa: E402
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+PROFILE_FORMAT = "agentfleet.profile.v1"
+PROFILE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+DEFAULT_BASE_URL = "https://agentfleet.wecansync.com"
+# Settings a profile owns. Nothing else in settings.json is read or written.
+PROFILE_ENV_KEYS = (
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+)
+PROFILE_TOP_KEYS = ("model", "advisorModel", "modelPicker", "autoCompactWindow")
+LANE_KEYS = ("model", "fallbacks", "preferred")
+NATIVE_PICKER = [
+    {"model": "default", "label": "Default", "description": "Claude Code's default model for your account"},
+    {"model": "opus", "label": "Opus", "description": "Claude Opus through your Claude login"},
+    {"model": "sonnet", "label": "Sonnet", "description": "Claude Sonnet through your Claude login"},
+    {"model": "haiku", "label": "Haiku", "description": "Claude Haiku through your Claude login"},
+]
+NATIVE_COMPACT_WINDOW = 800_000
+
+
+class Paths:
+    def __init__(self, args: argparse.Namespace) -> None:
+        self.home = Path(args.home).expanduser().resolve() if args.home else Path.home().resolve()
+        self.config = (
+            Path(args.config_home).expanduser().resolve() if args.config_home
+            else Path(os.environ.get("XDG_CONFIG_HOME") or self.home / ".config").resolve()
+        )
+        self.prefix = Path(args.prefix).expanduser().resolve() if args.prefix else self.home / ".local"
+        self.claude = self.home / ".claude"
+        self.settings = self.claude / "settings.json"
+        self.fleet = self.claude / "fleet.json"
+        self.legacy_fleet = self.config / "delegate-skills" / "config.json"
+        self.policy = self.config / "delegate-skills" / "provider-policy.json"
+        self.generator = self.config / "delegate-skills" / "generate-claude-agents.mjs"
+        self.store = self.claude / "agentfleet"
+        self.profiles = self.store / "profiles"
+        self.secrets = self.store / "secrets"
+        self.active = self.store / "active"
+        data_home = Path(os.environ.get("XDG_DATA_HOME") or self.home / ".local" / "share")
+        if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+            data_home = Path(os.environ["LOCALAPPDATA"])
+            self.releases = Path(os.environ.get("AGENTFLEET_HOME") or data_home / "AgentFleet")
+        else:
+            self.releases = Path(os.environ.get("AGENTFLEET_HOME") or data_home / "agentfleet")
+
+
+def die(message: str, code: int = 1) -> "NoReturn":  # type: ignore[name-defined]
+    print(f"agentfleet: {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def read_json(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        die(f"cannot read {path}: {exc}")
+    if not isinstance(value, dict):
+        die(f"{path} is not a JSON object")
+    return value
+
+
+def atomic_write(path: Path, data: bytes, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    temp = Path(raw)
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.chmod(temp, mode)
+        os.replace(temp, path)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        temp.unlink(missing_ok=True)
+
+
+def json_bytes(value: object) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+
+def reconcile_module(paths: Paths):
+    candidates = [SCRIPTS / "fleet-reconcile.py", paths.claude / "fleet-reconcile.py"]
+    script = next((path for path in candidates if path.is_file()), None)
+    if script is None:
+        die("fleet-reconcile.py is missing; reinstall AgentFleet")
+    spec = importlib.util.spec_from_file_location("agentfleet_reconcile", script)
+    module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    return module
+
+
+def valid_name(name: str) -> str:
+    if not PROFILE_NAME_RE.fullmatch(name):
+        die("profile names use lowercase letters, digits, and dashes (max 40 characters)")
+    return name
+
+
+def gateway_name(url: str) -> str:
+    """A readable default profile name from a gateway URL's host."""
+    host = (urllib.parse.urlparse(url).hostname or "gateway").lower()
+    labels = [label for label in host.split(".") if label and label not in {"www", "api", "gateway", "llm", "ai"}]
+    name = re.sub(r"[^a-z0-9-]+", "-", labels[0] if labels else "gateway").strip("-") or "gateway"
+    return name[:40]
+
+
+def current_kind(settings: dict) -> str:
+    env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+    return "gateway" if env.get("ANTHROPIC_BASE_URL") else "native"
+
+
+def active_name(paths: Paths, settings: dict) -> str:
+    try:
+        name = paths.active.read_text(encoding="utf-8").strip()
+        if PROFILE_NAME_RE.fullmatch(name):
+            return name
+    except OSError:
+        pass
+    env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+    url = env.get("ANTHROPIC_BASE_URL")
+    return gateway_name(url) if isinstance(url, str) and url else "native"
+
+
+def fleet_map(paths: Paths) -> tuple[dict, list[Path]]:
+    present = [path for path in (paths.fleet, paths.legacy_fleet) if path.is_file()]
+    if not present:
+        die("no fleet map found; install AgentFleet first")
+    present.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    fleet = read_json(present[0])
+    if not isinstance(fleet.get("lanes"), dict):
+        die(f"{present[0]} has no lanes")
+    return fleet, present
+
+
+def snapshot(settings: dict, fleet: dict, name: str) -> tuple[dict, str | None]:
+    env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+    profile = {
+        "format": PROFILE_FORMAT,
+        "name": name,
+        "kind": current_kind(settings),
+        "savedAt": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "settings": {key: settings[key] for key in PROFILE_TOP_KEYS if key in settings},
+        "env": {key: env[key] for key in PROFILE_ENV_KEYS if key in env},
+        "lanes": {
+            lane: {key: config[key] for key in LANE_KEYS if key in config}
+            for lane, config in fleet.get("lanes", {}).items() if isinstance(config, dict)
+        },
+        "modelTiers": fleet.get("modelTiers", {}) if isinstance(fleet.get("modelTiers"), dict) else {},
+    }
+    token = env.get("ANTHROPIC_AUTH_TOKEN")
+    return profile, token if isinstance(token, str) and token else None
+
+
+def save_profile(paths: Paths, profile: dict, token: str | None) -> None:
+    for directory in (paths.store, paths.profiles, paths.secrets):
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(directory, 0o700)
+    atomic_write(paths.profiles / f"{profile['name']}.json", json_bytes(profile), 0o600)
+    secret = paths.secrets / f"{profile['name']}.token"
+    if token:
+        atomic_write(secret, token.encode("utf-8"), 0o600)
+    else:
+        secret.unlink(missing_ok=True)
+
+
+def load_profile(paths: Paths, name: str) -> tuple[dict, str | None]:
+    path = paths.profiles / f"{name}.json"
+    if not path.is_file():
+        return {}, None
+    profile = read_json(path)
+    if profile.get("format") != PROFILE_FORMAT:
+        die(f"{path} is not an AgentFleet profile")
+    token = None
+    secret = paths.secrets / f"{name}.token"
+    if secret.is_file():
+        token = secret.read_text(encoding="utf-8").strip() or None
+    return profile, token
+
+
+def native_profile(fleet: dict, paths: Paths) -> dict:
+    reconcile = reconcile_module(paths)
+    lanes = fleet.get("lanes", {})
+    chosen: dict[str, dict] = {}
+    order = [name for name in lanes if not (isinstance(lanes[name], dict) and lanes[name].get("altOf"))]
+    order += [name for name in lanes if name not in order]
+    for lane in order:
+        config = lanes[lane]
+        if not isinstance(config, dict):
+            continue
+        sibling = config.get("altOf")
+        avoid = chosen.get(sibling, {}).get("model") if isinstance(sibling, str) else None
+        chosen[lane] = {"model": provider_catalog.native_lane_model(reconcile.lane_tier(lane, config), avoid)}
+    return {
+        "format": PROFILE_FORMAT,
+        "name": "native",
+        "kind": "native",
+        "settings": {
+            "model": "default",
+            "advisorModel": "opus",
+            "modelPicker": {"options": NATIVE_PICKER, "replaceBuiltInOptions": True},
+            "autoCompactWindow": NATIVE_COMPACT_WINDOW,
+        },
+        "env": {
+            "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "0",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(NATIVE_COMPACT_WINDOW),
+        },
+        "lanes": chosen,
+        "modelTiers": fleet.get("modelTiers", {}),
+    }
+
+
+def fit_lanes(paths: Paths, fleet: dict, picker_rows: list[dict]) -> dict:
+    """Make every lane point at a model the target picker actually offers."""
+    offered = {row.get("model") for row in picker_rows if isinstance(row, dict)}
+    lanes = fleet.get("lanes", {})
+    if all(isinstance(c, dict) and c.get("model") in offered for c in lanes.values()):
+        return fleet
+    try:
+        policy = provider_catalog.load_policy(paths.policy)
+    except provider_catalog.CatalogError:
+        policy = {"version": "provider-policy.v1", "provider": "gateway", "families": [{"name": "gateway", "prefixes": [""], "approved": True}]}
+    rows = [{"id": row["model"], "description": row.get("description", "")} for row in picker_rows if isinstance(row, dict) and row.get("model")]
+    resolved, _picker, _pending, _catalog = reconcile_module(paths).resolve_fleet(fleet, {}, rows, policy)
+    resolved.pop("_reconcile", None)
+    return resolved
+
+
+def apply_profile(paths: Paths, profile: dict, token: str | None) -> None:
+    settings = read_json(paths.settings)
+    fleet, fleet_paths = fleet_map(paths)
+    env = settings.setdefault("env", {})
+    if not isinstance(env, dict):
+        die("settings.json env is not an object")
+    # Clear every profile-owned key first so nothing from the old provider
+    # leaks into the new one, then write the target's values.
+    for key in PROFILE_ENV_KEYS + ("ANTHROPIC_AUTH_TOKEN",):
+        env.pop(key, None)
+    for key in PROFILE_TOP_KEYS:
+        settings.pop(key, None)
+    env.update({key: value for key, value in profile.get("env", {}).items() if key in PROFILE_ENV_KEYS})
+    settings.update({key: value for key, value in profile.get("settings", {}).items() if key in PROFILE_TOP_KEYS})
+    if profile.get("kind") == "gateway":
+        if not env.get("ANTHROPIC_BASE_URL") or not token:
+            die(f"profile {profile.get('name')} has no saved gateway URL or token; run: agentfleet save {profile.get('name')} while that gateway is active")
+        env["ANTHROPIC_AUTH_TOKEN"] = token
+    # Compaction controls must stay paired; derive the env value from the
+    # top-level one when a profile carries only one of them.
+    if isinstance(settings.get("autoCompactWindow"), int):
+        env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(settings["autoCompactWindow"])
+    for lane, values in profile.get("lanes", {}).items():
+        target = fleet.get("lanes", {}).get(lane)
+        if not isinstance(target, dict) or not isinstance(values, dict):
+            continue
+        # The model always comes from the profile when it has one; fallback
+        # and preference lists are replaced wholesale, never merged.
+        target.pop("fallbacks", None)
+        target.pop("preferred", None)
+        for key in LANE_KEYS:
+            if key in values:
+                target[key] = values[key]
+    if isinstance(profile.get("modelTiers"), dict):
+        fleet["modelTiers"] = profile["modelTiers"]
+    picker = settings.get("modelPicker") if isinstance(settings.get("modelPicker"), dict) else {}
+    fleet = fit_lanes(paths, fleet, picker.get("options") if isinstance(picker.get("options"), list) else [])
+    atomic_write(paths.settings, json_bytes(settings), 0o600)
+    data = json_bytes(fleet)
+    for path in {paths.fleet, paths.legacy_fleet} | set(fleet_paths):
+        if path.parent.is_dir():
+            atomic_write(path, data, 0o644)
+
+
+def run_generator(paths: Paths) -> int:
+    node = shutil.which("node")
+    if not node or not paths.generator.is_file():
+        print("agentfleet: node or the agent generator is missing; run 'claude-fleet-sync' after fixing it", file=sys.stderr)
+        return 1
+    return subprocess.run([node, str(paths.generator), "--home", str(paths.home), "--config-home", str(paths.config), "--quiet"]).returncode
+
+
+def with_lock(paths: Paths):
+    fd, lock = provider_catalog.acquire_lock(paths.home, timeout=10.0)
+    if fd is None:
+        die("another fleet writer (installer or startup hook) is busy; try again in a moment")
+    return fd, lock
+
+
+def cmd_profiles(paths: Paths, _args: argparse.Namespace) -> int:
+    settings = read_json(paths.settings)
+    active = active_name(paths, settings)
+    names = {"native"}
+    if paths.profiles.is_dir():
+        names |= {path.stem for path in paths.profiles.glob("*.json") if PROFILE_NAME_RE.fullmatch(path.stem)}
+    names.add(active)
+    for name in sorted(names):
+        profile, _ = load_profile(paths, name)
+        kind = profile.get("kind") or ("native" if name == "native" else current_kind(settings))
+        where = (profile.get("env") or {}).get("ANTHROPIC_BASE_URL", "") if profile else ""
+        if name == active and current_kind(settings) == "gateway":
+            where = (settings.get("env") or {}).get("ANTHROPIC_BASE_URL", where)
+        marker = "*" if name == active else " "
+        detail = f"gateway {where}" if kind == "gateway" else "Claude login (subscription or API key)"
+        saved = "" if profile or name == active else " (built in)"
+        print(f"{marker} {name:<16} {detail}{saved}")
+    print("\nSwitch with: agentfleet use <name>")
+    return 0
+
+
+def cmd_save(paths: Paths, args: argparse.Namespace) -> int:
+    name = valid_name(args.name)
+    fd, lock = with_lock(paths)
+    try:
+        settings = read_json(paths.settings)
+        fleet, _ = fleet_map(paths)
+        profile, token = snapshot(settings, fleet, name)
+        save_profile(paths, profile, token)
+        atomic_write(paths.active, (name + "\n").encode("utf-8"), 0o600)
+    finally:
+        provider_catalog.release_lock(fd, lock)
+    print(f"Saved the current {profile['kind']} configuration as profile '{name}'.")
+    return 0
+
+
+def cmd_use(paths: Paths, args: argparse.Namespace) -> int:
+    name = valid_name(args.name)
+    fd, lock = with_lock(paths)
+    try:
+        settings = read_json(paths.settings)
+        fleet, _ = fleet_map(paths)
+        current = active_name(paths, settings)
+        if current == name and not args.force:
+            print(f"Already using '{name}'.")
+            return 0
+        # Save where we are first, so switching back restores it exactly.
+        profile, token = snapshot(settings, fleet, current)
+        save_profile(paths, profile, token)
+        target, target_token = load_profile(paths, name)
+        if not target:
+            if name != "native":
+                die(f"no saved profile '{name}'. Saved profiles: agentfleet profiles")
+            target = native_profile(fleet, paths)
+        apply_profile(paths, target, target_token)
+        atomic_write(paths.active, (name + "\n").encode("utf-8"), 0o600)
+    finally:
+        provider_catalog.release_lock(fd, lock)
+    code = run_generator(paths)
+    if code != 0:
+        print("agentfleet: settings switched, but regenerating agents failed; run 'claude-fleet-sync' to retry", file=sys.stderr)
+        return code
+    kind = target.get("kind")
+    via = "your Claude login" if kind == "native" else (target.get("env") or {}).get("ANTHROPIC_BASE_URL", "the gateway")
+    print(f"Switched to '{name}' ({via}). Previous setup saved as '{current}'.")
+    print("Restart Claude Code to apply.")
+    return 0
+
+
+def run_tool(paths: Paths, script: str, extra: list[str]) -> int:
+    path = paths.claude / script
+    if not path.is_file():
+        die(f"{path} is missing; reinstall AgentFleet")
+    command = [sys.executable, str(path), "--home", str(paths.home), "--config-home", str(paths.config), *extra]
+    return subprocess.run(command).returncode
+
+
+def cmd_status(paths: Paths, _args: argparse.Namespace) -> int:
+    settings = read_json(paths.settings)
+    print(f"Active profile: {active_name(paths, settings)} ({current_kind(settings)})")
+    return run_tool(paths, "claude-fleet-setup.py", ["--audit"])
+
+
+def cmd_doctor(paths: Paths, _args: argparse.Namespace) -> int:
+    return run_tool(paths, "claude-agents-doctor.py", ["--check"])
+
+
+def cmd_sync(paths: Paths, _args: argparse.Namespace) -> int:
+    return run_generator(paths)
+
+
+def current_release(paths: Paths) -> Path | None:
+    try:
+        version = (paths.releases / "current").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        return None
+    release = paths.releases / "releases" / version
+    return release if (release / "bin" / "install.py").is_file() else None
+
+
+def cmd_update(paths: Paths, args: argparse.Namespace) -> int:
+    base = os.environ.get("AGENTFLEET_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
+    windows = os.name == "nt"
+    url = f"{base}/install.ps1" if windows else f"{base}/install.sh"
+    if not url.startswith("https://") and urllib.parse.urlparse(url).hostname not in {"127.0.0.1", "localhost"}:
+        die("AGENTFLEET_BASE_URL must use https")
+    with tempfile.TemporaryDirectory(prefix="agentfleet-update-") as temp:
+        script = Path(temp) / Path(url).name
+        with urllib.request.urlopen(url, timeout=30) as response:
+            script.write_bytes(response.read())
+        forwarded = ["--home", str(paths.home), "--config-home", str(paths.config), *args.installer_args]
+        if windows:
+            shell = shutil.which("pwsh") or shutil.which("powershell") or die("PowerShell is required to update")
+            command = [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), *forwarded]
+        else:
+            command = ["sh", str(script), *forwarded]
+        return subprocess.run(command).returncode
+
+
+def cmd_uninstall(paths: Paths, _args: argparse.Namespace) -> int:
+    release = current_release(paths)
+    if release is None:
+        die("no downloaded release found; run uninstall.sh from the bundle you installed with")
+    command = [sys.executable, str(release / "bin" / "install.py"), "--uninstall", "--apply",
+               "--home", str(paths.home), "--config-home", str(paths.config)]
+    return subprocess.run(command).returncode
+
+
+def cmd_version(paths: Paths, _args: argparse.Namespace) -> int:
+    meta = read_json(paths.claude / ".claude-agents-config-install.json")
+    print(f"AgentFleet {meta.get('version', 'unknown')} ({meta.get('profile', 'not installed')})")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="agentfleet", description="Switch providers and manage the AgentFleet subagent fleet.")
+    parser.add_argument("--home", help=argparse.SUPPRESS)
+    parser.add_argument("--prefix", help=argparse.SUPPRESS)
+    parser.add_argument("--config-home", help=argparse.SUPPRESS)
+    sub = parser.add_subparsers(dest="command", metavar="command")
+    sub.add_parser("profiles", help="list saved profiles and the active one")
+    use = sub.add_parser("use", help="switch to a profile ('native' = your Claude login)")
+    use.add_argument("name")
+    use.add_argument("--force", action="store_true", help="re-apply even if already active")
+    save = sub.add_parser("save", help="save the current configuration as a named profile")
+    save.add_argument("name")
+    sub.add_parser("status", help="show the active profile and audit models, settings, hooks, agents, skills")
+    sub.add_parser("doctor", help="verify the installation")
+    sub.add_parser("sync", help="regenerate the fleet agents from the fleet map")
+    update = sub.add_parser("update", help="download and install the latest release")
+    update.add_argument("installer_args", nargs=argparse.REMAINDER, help="extra arguments for the installer")
+    sub.add_parser("uninstall", help="remove AgentFleet and restore your earlier settings")
+    sub.add_parser("version", help="print the installed version")
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        return 0
+    paths = Paths(args)
+    handlers = {
+        "profiles": cmd_profiles, "use": cmd_use, "save": cmd_save, "status": cmd_status,
+        "doctor": cmd_doctor, "sync": cmd_sync, "update": cmd_update, "uninstall": cmd_uninstall,
+        "version": cmd_version,
+    }
+    return handlers[args.command](paths, args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
