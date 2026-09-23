@@ -2086,30 +2086,64 @@ class AgentFleetTwoTests(unittest.TestCase):
         self.assertNotEqual(resolved["lanes"]["review-alt"]["model"], resolved["lanes"]["review"]["model"])
 
 
-    def test_custom_lane_survives_reinstall(self):
-        with tempfile.TemporaryDirectory(prefix="agentfleet custom ") as raw:
-            home, config = Path(raw) / "home", Path(raw) / "config"
-            env = self.env_for(home, config)
-            install = [PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)]
-            first = subprocess.run(install, cwd=ROOT, env=env, text=True, capture_output=True)
-            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
-            lane = {"implementer": "claude", "model": "sonnet", "tier": "fast", "effort": "high", "readOnly": True,
-                    "description": "Database query and schema tuning."}
-            for mirror in (home / ".claude/fleet.json", config / "delegate-skills/config.json"):
-                data = json.loads(mirror.read_text())
-                data["lanes"]["db-tuner"] = lane
-                mirror.write_text(json.dumps(data, indent=2) + "\n")
-            sync = subprocess.run([str(home / ".local/bin/claude-fleet-sync")], env=env, text=True, capture_output=True)
-            self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
-            again = subprocess.run(install, cwd=ROOT, env=env, text=True, capture_output=True)
-            self.assertEqual(again.returncode, 0, again.stderr + again.stdout)
-            self.assertIn("Keeping custom lane(s): fleet-db-tuner", again.stdout)
-            kept = json.loads((home / ".claude/fleet.json").read_text())["lanes"]["db-tuner"]
-            self.assertEqual((kept["model"], kept["description"]), ("haiku", lane["description"]), "native maps the lane by its tier")
-            self.assertIn("haiku", (home / ".claude/agents/fleet-db-tuner.md").read_text())
-            for gate in (["claude-fleet-sync", "--check"], ["claude-agents-doctor", "--check", "--home", str(home), "--config-home", str(config)]):
-                result = subprocess.run([str(home / ".local/bin" / gate[0]), *gate[1:]], env=env, text=True, capture_output=True)
-                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+    def test_custom_lane_survives_reinstall_and_profile_switch(self):
+        if shutil.which("node") is None:
+            self.skipTest("Node.js is required for the agent generator")
+        endpoint = self.serve(self.GATEWAY_ROWS)
+        # The /fleet-setup "create a custom lane" flow: no model, just a tier.
+        lane = {"implementer": "claude", "tier": "fast", "effort": "high", "readOnly": True,
+                "description": "Database query and schema tuning."}
+        providers = {
+            "native": (["--provider", "native"], "haiku"),
+            "gateway": (["--provider", "gateway", "--gateway-url", endpoint, "--allow-insecure-http", "--gateway-token-env", "FAKE_GATEWAY_TOKEN"], "claude-haiku"),
+        }
+        for provider, (flags, expected) in providers.items():
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory(prefix=f"agentfleet custom {provider} ") as raw:
+                home, config = Path(raw) / "home", Path(raw) / "config"
+                env = self.env_for(home, config, FAKE_GATEWAY_TOKEN="fake-token")
+                bindir = home / ".local/bin"
+                install = [PYTHON, str(ROOT / "bin/install.py"), *flags, "--home", str(home), "--config-home", str(config)]
+                gates = ([str(bindir / "claude-fleet-sync"), "--check"],
+                         [str(bindir / "claude-agents-doctor"), "--check", "--home", str(home), "--config-home", str(config)])
+
+                def run(command):
+                    result = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 0, f"{command[:2]}: {result.stderr}{result.stdout}")
+                    return result
+
+                def custom_model():
+                    kept = json.loads((home / ".claude/fleet.json").read_text())["lanes"]["db-tuner"]
+                    self.assertEqual(kept["description"], lane["description"])
+                    self.assertIn(f'model: "{kept["model"]}"', (home / ".claude/agents/fleet-db-tuner.md").read_text())
+                    for gate in gates:
+                        run(gate)
+                    return kept["model"]
+
+                run(install)
+                for mirror in (home / ".claude/fleet.json", config / "delegate-skills/config.json"):
+                    data = json.loads(mirror.read_text())
+                    data["lanes"]["db-tuner"] = lane
+                    mirror.write_text(json.dumps(data, indent=2) + "\n")
+                setup = str(bindir / "claude-fleet-setup")
+                run([setup, "--reconcile"])
+                self.assertEqual(custom_model(), expected, "reconcile gives the new lane a model for its tier")
+                again = run(install)
+                self.assertIn("Keeping custom lane(s): fleet-db-tuner", again.stdout)
+                self.assertEqual(custom_model(), expected)
+                if provider == "native":
+                    run([setup, "--prefer", "db-tuner=sonnet"])
+                    run(install)
+                    self.assertEqual(custom_model(), "sonnet", "a native pin survives a reinstall")
+                    refused = subprocess.run([setup, "--prefer", "db-tuner=claude-sonnet-5"], env=env, text=True, capture_output=True)
+                    self.assertNotEqual(refused.returncode, 0, "a native profile cannot pin a gateway model")
+                    run([setup, "--prefer", "db-tuner="])
+                    self.assertEqual(custom_model(), expected, "clearing the pin returns the lane to its tier")
+                if provider == "gateway":
+                    run([str(bindir / "agentfleet"), "save", "work"])
+                    run([str(bindir / "agentfleet"), "use", "native"])
+                    self.assertEqual(custom_model(), "haiku")
+                    run([str(bindir / "agentfleet"), "use", "work"])
+                    self.assertEqual(custom_model(), expected)
 
 def stat_mode(path: Path) -> int:
     return path.stat().st_mode & 0o777

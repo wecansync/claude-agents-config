@@ -44,6 +44,7 @@ from provider_catalog import (
     supports_reasoning,
     TIER_RANK,
     model_tier,
+    native_lane_model,
     tier_overrides,
     context_length,
 )
@@ -362,6 +363,50 @@ def lane_tier(lane: str, config: dict) -> str:
     return "deep" if config.get("readOnly") is True else "balanced"
 
 
+def lane_order(lanes: dict) -> list[str]:
+    """Map order, except that an alternate always comes right after its
+    sibling so it competes before later lanes have used up the good models."""
+    order: list[str] = []
+    def visit(name: str, trail: tuple[str, ...] = ()) -> None:
+        if name in order or name in trail:
+            return
+        sibling = lanes[name].get("altOf") if isinstance(lanes[name], dict) else None
+        if isinstance(sibling, str) and sibling in lanes:
+            visit(sibling, trail + (name,))
+        if name not in order:
+            order.append(name)
+    for name in lanes:
+        visit(name)
+    return order
+
+
+NATIVE_LANE_ALIASES = ("opus", "sonnet", "haiku")
+
+
+def native_fleet(fleet: dict) -> dict:
+    """Map every lane to the native Claude alias for its tier. There is no
+    catalog behind a Claude login, so gateway fallback chains and gateway-id
+    preferences are dropped; a preference for a native alias is kept."""
+    result = copy.deepcopy(fleet)
+    result.pop("_reconcile", None)
+    lanes = result.get("lanes", {})
+    for lane in lane_order(lanes):
+        config = lanes[lane]
+        if not isinstance(config, dict):
+            continue
+        preferred = config.get("preferred") if isinstance(config.get("preferred"), list) else []
+        pinned = [m for m in preferred if isinstance(m, str) and m.removesuffix("[1m]") in NATIVE_LANE_ALIASES]
+        if pinned:
+            config["model"], config["preferred"] = pinned[0], pinned
+        else:
+            sibling = config.get("altOf")
+            avoid = lanes[sibling].get("model") if isinstance(sibling, str) and isinstance(lanes.get(sibling), dict) else None
+            config["model"] = native_lane_model(lane_tier(lane, config), avoid)
+            config.pop("preferred", None)
+        config.pop("fallbacks", None)
+    return result
+
+
 def _release_time(row: dict) -> int:
     value = row.get("created_at", row.get("created")) if isinstance(row, dict) else None
     if isinstance(value, bool):
@@ -476,21 +521,8 @@ def resolve_fleet(
     approved_live = [m for m in catalog if family_approved(m, policy)]
     overrides = tier_overrides(policy, result)
     lanes = result.get("lanes", {})
-    # Map order, except that an alternate always resolves right after its
-    # sibling so it competes before later lanes have used up the good models.
-    order: list[str] = []
-    def visit(name: str, trail: tuple[str, ...] = ()) -> None:
-        if name in order or name in trail:
-            return
-        sibling_name = lanes[name].get("altOf") if isinstance(lanes[name], dict) else None
-        if isinstance(sibling_name, str) and sibling_name in lanes:
-            visit(sibling_name, trail + (name,))
-        if name not in order:
-            order.append(name)
-    for name in lanes:
-        visit(name)
     usage: dict[str, int] = {}
-    for lane in order:
+    for lane in lane_order(lanes):
         config = lanes[lane]
         if not isinstance(config, dict):
             pending.append(f"{lane}: malformed lane configuration")

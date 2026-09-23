@@ -178,6 +178,12 @@ def apply_family_decisions(path: Path, decisions: dict, approved: list[str]) -> 
     atomic_json(path, latest_policy, 0o644)
 
 
+def gateway_active(home: Path) -> bool:
+    settings = read_json(home / ".claude" / "settings.json", {})
+    env = settings.get("env") if isinstance(settings, dict) and isinstance(settings.get("env"), dict) else {}
+    return bool(env.get("ANTHROPIC_BASE_URL") and env.get("ANTHROPIC_AUTH_TOKEN"))
+
+
 def update_fleet_choices(home: Path, config_home: Path, prefer: list[str], tiers: list[str], lock_timeout: float) -> None:
     """Record explicit lane preferences and model tier labels in both fleet
     mirrors. Reconciliation then applies them against the live catalog."""
@@ -201,6 +207,9 @@ def update_fleet_choices(home: Path, config_home: Path, prefer: list[str], tiers
             if lane not in lanes:
                 raise SystemExit(f"unknown lane: {lane} (lanes: {', '.join(lanes)})")
             values = [model.strip() for model in models.split(",") if model.strip()]
+            foreign = [model for model in values if model.removesuffix("[1m]") not in ("opus", "sonnet", "haiku")]
+            if foreign and not gateway_active(home):
+                raise SystemExit(f"the native profile serves only opus, sonnet, and haiku; cannot prefer {', '.join(foreign)}")
             if values:
                 lanes[lane]["preferred"] = values
                 lanes[lane]["model"] = values[0]
@@ -229,6 +238,40 @@ def update_fleet_choices(home: Path, config_home: Path, prefer: list[str], tiers
         release_lock(fd, lock)
 
 
+def reconcile_native(home: Path, config_home: Path, reconcile_script: Path) -> None:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("agentfleet_fleet_reconcile", reconcile_script)
+    if spec is None or spec.loader is None:
+        return
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    mirrors = [home / ".claude" / "fleet.json", config_home / "delegate-skills" / "config.json"]
+    present = sorted((path for path in mirrors if path.is_file()), key=lambda path: path.stat().st_mtime, reverse=True)
+    if not present:
+        return
+    fd, lock = acquire_lock(home, timeout=10.0)
+    if fd is None:
+        raise SystemExit(f"another fleet writer holds the lock for {home}; try again")
+    try:
+        fleet = read_json(present[0], {})
+        if not isinstance(fleet, dict) or not isinstance(fleet.get("lanes"), dict):
+            return
+        resolved = module.native_fleet(fleet)
+        changed = [f"{lane} ({fleet['lanes'][lane].get('model')} -> {config.get('model')})"
+                   for lane, config in resolved["lanes"].items()
+                   if isinstance(config, dict) and fleet["lanes"][lane] != config]
+        if not changed and len(present) == len(mirrors) and all(read_json(path, None) == fleet for path in present):
+            print("Fleet already matches the native Claude aliases.")
+            return
+        for path in mirrors:
+            if path.parent.is_dir():
+                atomic_json(path, resolved, 0o644)
+        if changed:
+            print(f"Fleet reconciliation applied; adjusted {len(changed)} lane(s): {', '.join(changed)}")
+    finally:
+        release_lock(fd, lock)
+
+
 def run_setup_reconciliation_and_sync(home: Path, config_home: Path, policy_file: Path) -> None:
     settings_file = home / ".claude" / "settings.json"
     settings = read_json(settings_file, {})
@@ -240,8 +283,9 @@ def run_setup_reconciliation_and_sync(home: Path, config_home: Path, policy_file
     endpoint = env.get("ANTHROPIC_BASE_URL")
     token = env.get("ANTHROPIC_AUTH_TOKEN")
     catalog_cache = home / ".claude" / "cache" / "provider-models-cache.json"
+    gateway = isinstance(endpoint, str) and isinstance(token, str) and bool(endpoint and token)
 
-    if isinstance(endpoint, str) and isinstance(token, str) and endpoint and token:
+    if gateway:
         try:
             from provider_catalog import cache_payload, fetch_catalog
             rows, complete, _ = fetch_catalog(endpoint, token, timeout=5.0)
@@ -259,10 +303,15 @@ def run_setup_reconciliation_and_sync(home: Path, config_home: Path, policy_file
     if not reconcile_script.is_file():
         reconcile_script = home / ".claude" / "fleet-reconcile.py"
 
-    if not reconcile_script.is_file() or not catalog_cache.is_file():
+    if not reconcile_script.is_file():
         return
-
     import subprocess
+    if not gateway:
+        # A Claude login has no catalog: lanes map to the native alias for
+        # their tier, which also gives newly added lanes a model.
+        reconcile_native(home, config_home, reconcile_script)
+    elif not catalog_cache.is_file():
+        return
     cmd = [
         sys.executable,
         str(reconcile_script),
@@ -272,8 +321,8 @@ def run_setup_reconciliation_and_sync(home: Path, config_home: Path, policy_file
         "--catalog", str(catalog_cache),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if proc.returncode == 0 and proc.stdout:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False) if gateway else None
+        if proc is not None and proc.returncode == 0 and proc.stdout:
             try:
                 res = json.loads(proc.stdout)
                 if res.get("summary"):
@@ -299,6 +348,9 @@ def run_setup_reconciliation_and_sync(home: Path, config_home: Path, policy_file
             proc_sync = subprocess.run(sync_cmd, capture_output=True, text=True, check=False)
             if proc_sync.returncode == 0:
                 print("Synchronized fleet agents with approved provider models.")
+            else:
+                detail = (proc_sync.stderr or proc_sync.stdout).strip().splitlines()
+                print(f"claude-fleet-sync failed: {detail[-1] if detail else f'exit {proc_sync.returncode}'}", file=sys.stderr)
         except OSError:
             pass
 

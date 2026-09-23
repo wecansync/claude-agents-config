@@ -348,8 +348,14 @@ python3 packaging/update-manifest.py
 python3 packaging/build-release.py --ref <commit>
 # Produces: dist/releases/<version>/agentfleet-<version>.tar.gz, .zip,
 #           SHA256SUMS, and dist/releases/latest.json
-sh packaging/deploy.sh   # uploads site/ and dist/releases/ to the web root
+export AGENTFLEET_DEPLOY_HOST=user@server
+sh packaging/deploy.sh --dry-run   # list every change and deletion first
+sh packaging/deploy.sh             # upload site/, then archives, then latest.json
 ```
+
+`deploy.sh` mirrors `site/` with `rsync --delete`, so it only syncs into a web
+root that is empty or already carries the `.agentfleet-docroot` marker from an
+earlier deploy. Published release archives are never deleted.
 
 `site/`, `packaging/`, `dist/`, and `.github/` are repository-only and are
 never part of an installed bundle.

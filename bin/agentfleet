@@ -235,18 +235,11 @@ def load_profile(paths: Paths, name: str) -> tuple[dict, str | None]:
 
 
 def native_profile(fleet: dict, paths: Paths) -> dict:
-    reconcile = reconcile_module(paths)
-    lanes = fleet.get("lanes", {})
-    chosen: dict[str, dict] = {}
-    order = [name for name in lanes if not (isinstance(lanes[name], dict) and lanes[name].get("altOf"))]
-    order += [name for name in lanes if name not in order]
-    for lane in order:
-        config = lanes[lane]
-        if not isinstance(config, dict):
-            continue
-        sibling = config.get("altOf")
-        avoid = chosen.get(sibling, {}).get("model") if isinstance(sibling, str) else None
-        chosen[lane] = {"model": provider_catalog.native_lane_model(reconcile.lane_tier(lane, config), avoid)}
+    resolved = reconcile_module(paths).native_fleet(fleet)
+    chosen = {
+        lane: {key: config[key] for key in LANE_KEYS if key in config}
+        for lane, config in resolved.get("lanes", {}).items() if isinstance(config, dict)
+    }
     return {
         "format": PROFILE_FORMAT,
         "name": "native",

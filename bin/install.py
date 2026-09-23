@@ -981,39 +981,9 @@ def reconcile_module():
     return _RECONCILE_MODULE
 
 
-def lane_order(lanes: dict) -> list[str]:
-    """Primaries first, each alternate right after the lane it shadows."""
-    order: list[str] = []
-    def visit(name: str, trail: tuple[str, ...] = ()) -> None:
-        if name in order or name in trail:
-            return
-        sibling = lanes[name].get("altOf") if isinstance(lanes[name], dict) else None
-        if isinstance(sibling, str) and sibling in lanes:
-            visit(sibling, trail + (name,))
-        if name not in order:
-            order.append(name)
-    for name in lanes:
-        visit(name)
-    return order
-
-
 def direct_fleet(fleet: dict) -> dict:
     """Map every lane to the native Claude alias for its capability tier."""
-    result = copy.deepcopy(fleet)
-    lanes = result.get("lanes", {})
-    lane_tier = reconcile_module().lane_tier
-    for lane in lane_order(lanes):
-        config = lanes[lane]
-        if not isinstance(config, dict):
-            continue
-        sibling = config.get("altOf")
-        avoid = lanes[sibling].get("model") if isinstance(sibling, str) and isinstance(lanes.get(sibling), dict) else None
-        config["model"] = provider_catalog.native_lane_model(lane_tier(lane, config), avoid)
-        # A direct install is first-party only: gateway fallback chains and
-        # gateway-id preferences have nothing to point at any more.
-        config.pop("fallbacks", None)
-        config.pop("preferred", None)
-    return result
+    return reconcile_module().native_fleet(fleet)
 
 
 def direct_template(template: dict) -> dict:
