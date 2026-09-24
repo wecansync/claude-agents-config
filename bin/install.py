@@ -548,6 +548,29 @@ def before_for(identity: str, current: object, previous: dict[str, dict]) -> tup
     return (current is not ABSENT), copy.deepcopy(current) if current is not ABSENT else None
 
 
+# Journal entries whose installed value is a credential keep only a digest:
+# ownership checks just need "unchanged since install", and the journal must
+# not hold a copy of the token after the user switches away from it.
+SECRET_JOURNAL_IDS = {"value:env:ANTHROPIC_AUTH_TOKEN"}
+
+
+def secret_digest(value: object) -> dict:
+    return {"redactedSha256": hashlib.sha256(str(value).encode("utf-8")).hexdigest()}
+
+
+def redacted_equal(current: object, installed: object) -> bool:
+    """Equality where a redacted journal value matches by digest."""
+    if isinstance(installed, dict) and set(installed) == {"redactedSha256"}:
+        return isinstance(current, str) and secret_digest(current) == installed
+    if isinstance(installed, dict):
+        return isinstance(current, dict) and set(current) == set(installed) and all(redacted_equal(current[key], value) for key, value in installed.items())
+    return current == installed
+
+
+def current_matches_installed(current: object, entry: dict) -> bool:
+    return redacted_equal(current, entry.get("installed"))
+
+
 def record_value_journal(
     journal: dict[str, dict], identity: str, path: list[str], current: object, installed: object, previous: dict[str, dict]
 ) -> None:
@@ -563,6 +586,8 @@ def record_value_journal(
         "installedPresent": installed_present,
         "installed": copy.deepcopy(installed) if installed_present else None,
     }
+    if identity in SECRET_JOURNAL_IDS and installed_present:
+        journal[identity]["installed"] = secret_digest(installed)
     if old and old.get("beforePresent") is False:
         journal[identity]["before"] = None
 
@@ -1440,7 +1465,7 @@ def merge_settings(
             # A gateway credential remains setup-owned only while its current
             # value equals the prior installed value. A user replacement is
             # carried forward but must not become uninstall-owned.
-            owned = bool(old and old.get("installedPresent", True) and current == old.get("installed"))
+            owned = bool(old and old.get("installedPresent", True) and current_matches_installed(current, old))
             if current != value:
                 if current is ABSENT or owned:
                     record_value_journal(journal, identity, ["env", key], current, value, prior)
@@ -1453,7 +1478,7 @@ def merge_settings(
             elif owned:
                 journal[identity] = copy.deepcopy(old)
                 journal[identity]["installedPresent"] = True
-                journal[identity]["installed"] = value
+                journal[identity]["installed"] = secret_digest(value) if identity in SECRET_JOURNAL_IDS else value
             elif current is not ABSENT:
                 # Explicit gateway credentials supplied for a user-edited
                 # existing value are functional, but not owned for uninstall.
@@ -1467,7 +1492,7 @@ def merge_settings(
         for key in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"):
             identity = f"value:env:{key}"
             old = prior.get(identity)
-            if old and env.get(key, ABSENT) == old.get("installed"):
+            if old and current_matches_installed(env.get(key, ABSENT), old):
                 # Carry the original pre-gateway value into the new direct
                 # profile so a later uninstall restores user settings rather
                 # than restoring the removed gateway credential.
@@ -1482,7 +1507,8 @@ def merge_settings(
     if env_was_absent:
         journal["value:env"] = {
             "id": "value:env", "kind": "value", "path": ["env"],
-            "beforePresent": False, "before": None, "installedPresent": True, "installed": copy.deepcopy(env),
+            "beforePresent": False, "before": None, "installedPresent": True,
+            "installed": {key: secret_digest(value) if key == "ANTHROPIC_AUTH_TOKEN" else copy.deepcopy(value) for key, value in env.items()},
         }
     if permissions_was_absent:
         journal["value:permissions"] = {
@@ -2575,8 +2601,6 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
     return 0
 
 
-def current_matches_installed(current: object, entry: dict) -> bool:
-    return current == entry.get("installed")
 
 
 def settings_for_uninstall(path: Path, meta: dict) -> tuple[bytes | None, bool]:

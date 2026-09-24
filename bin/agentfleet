@@ -10,7 +10,9 @@ startup hooks use.
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime as dt
+import getpass
 import importlib.util
 import json
 import os
@@ -39,6 +41,10 @@ except Exception:
 
 PROFILE_FORMAT = "agentfleet.profile.v1"
 PROFILE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+# Device names Windows will not let a file be called, whatever the extension.
+RESERVED_NAMES = {"con", "prn", "aux", "nul", *(f"com{n}" for n in range(1, 10)), *(f"lpt{n}" for n in range(1, 10))}
+TOKEN_ENV_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+LOCK_TIMEOUT = 30.0
 DEFAULT_BASE_URL = "https://agentfleet.wecansync.com"
 # Settings a profile owns. Nothing else in settings.json is read or written.
 PROFILE_ENV_KEYS = (
@@ -138,14 +144,38 @@ def reconcile_module(paths: Paths):
 
 
 def valid_name(name: str) -> str:
-    if not PROFILE_NAME_RE.fullmatch(name):
-        die("profile names use lowercase letters, digits, and dashes (max 40 characters)")
+    if not PROFILE_NAME_RE.fullmatch(name) or name in RESERVED_NAMES:
+        die("profile names use lowercase letters, digits, and dashes (max 40 characters) and cannot be a device name such as con or nul")
     return name
+
+
+def url_identity(url: object) -> str | None:
+    """scheme://host:port of a gateway URL; None when it is not a usable URL."""
+    try:
+        return provider_catalog.endpoint_identity(url)
+    except provider_catalog.CatalogError:
+        return None
+
+
+def saved_url(paths: Paths, name: str) -> str | None:
+    try:
+        env = json.loads((paths.profiles / f"{name}.json").read_text(encoding="utf-8")).get("env") or {}
+    except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+        return None
+    url = env.get("ANTHROPIC_BASE_URL") if isinstance(env, dict) else None
+    return url if isinstance(url, str) else None
 
 
 def gateway_name(url: str) -> str:
     """A readable default profile name from a gateway URL's host."""
-    host = (urllib.parse.urlparse(url).hostname or "gateway").lower()
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "gateway").lower()
+    if host == "localhost" or re.fullmatch(r"[0-9.]+|[0-9a-f:]+", host):
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        return f"local-{port}" if port else "local"
     labels = [label for label in host.split(".") if label and label not in {"www", "api", "gateway", "llm", "ai"}]
     name = re.sub(r"[^a-z0-9-]+", "-", labels[0] if labels else "gateway").strip("-") or "gateway"
     return name[:40]
@@ -170,11 +200,21 @@ def active_name(paths: Paths, settings: dict) -> str:
             saved_kind = json.loads(saved.read_text(encoding="utf-8")).get("kind") if saved.is_file() else ("native" if name == "native" else None)
         except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
             saved_kind = None
-        if saved_kind == kind:
+        env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+        if saved_kind == kind and (kind == "native" or url_identity(saved_url(paths, name)) == url_identity(env.get("ANTHROPIC_BASE_URL"))):
             return name
     env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
     url = env.get("ANTHROPIC_BASE_URL")
-    return gateway_name(url) if isinstance(url, str) and url else "native"
+    if not (isinstance(url, str) and url):
+        return "native"
+    # Never reuse the name of a saved profile that points at another gateway:
+    # the next switch would save this setup over it.
+    base = gateway_name(url)
+    candidate, number = base, 2
+    while (paths.profiles / f"{candidate}.json").is_file() and url_identity(saved_url(paths, candidate)) != url_identity(url):
+        candidate = f"{base[:36]}-{number}"
+        number += 1
+    return candidate
 
 
 def fleet_map(paths: Paths) -> tuple[dict, list[Path]]:
@@ -202,7 +242,13 @@ def snapshot(paths: Paths, settings: dict, fleet: dict, name: str) -> tuple[dict
             for lane, config in fleet.get("lanes", {}).items() if isinstance(config, dict)
         },
         "modelTiers": fleet.get("modelTiers", {}) if isinstance(fleet.get("modelTiers"), dict) else {},
+        "excludedModels": [item for item in fleet.get("excludedModels") or [] if isinstance(item, str)],
     }
+    if profile["kind"] == "gateway":
+        try:
+            profile["policy"] = provider_catalog.load_policy(paths.policy)
+        except provider_catalog.CatalogError:
+            print("agentfleet: the provider policy is invalid; saving this profile without it", file=sys.stderr)
     # The version marks profiles saved after the 2.0.1 migration; without a
     # known version the profile is treated as older and cleaned on apply.
     version = installed_version(paths)
@@ -267,26 +313,32 @@ def native_profile(fleet: dict, paths: Paths) -> dict:
         },
         "lanes": chosen,
         "modelTiers": fleet.get("modelTiers", {}),
+        "excludedModels": [],
     }
 
 
-def fit_lanes(paths: Paths, fleet: dict, picker_rows: list[dict]) -> dict:
-    """Make every lane point at a model the target picker actually offers."""
+def fit_lanes(paths: Paths, fleet: dict, picker_rows: list[dict], policy: dict) -> dict:
+    """Make every lane point at a model the target picker actually offers,
+    judged by the target provider's policy."""
     offered = {row.get("model") for row in picker_rows if isinstance(row, dict)}
     lanes = fleet.get("lanes", {})
     if all(isinstance(c, dict) and c.get("model") in offered for c in lanes.values()):
         return fleet
-    try:
-        policy = provider_catalog.load_policy(paths.policy)
-    except provider_catalog.CatalogError:
-        policy = provider_catalog.generic_policy()
     rows = [{"id": row["model"], "description": row.get("description", "")} for row in picker_rows if isinstance(row, dict) and row.get("model")]
     resolved, _picker, _pending, _catalog = reconcile_module(paths).resolve_fleet(fleet, {}, rows, policy)
     resolved.pop("_reconcile", None)
     return resolved
 
 
-def apply_profile(paths: Paths, profile: dict, token: str | None) -> None:
+def apply_profile(paths: Paths, profile: dict, token: str | None) -> bool:
+    """Apply a profile. Returns True when a gateway profile carries no saved
+    provider policy (saved by an older version), so the current one is kept."""
+    target_policy = None
+    if profile.get("kind") == "gateway" and "policy" in profile:
+        try:
+            target_policy = provider_catalog.validate_policy(copy.deepcopy(profile["policy"]))
+        except provider_catalog.CatalogError:
+            die(f"profile {profile.get('name')} has an invalid saved provider policy; recreate it with: agentfleet add {profile.get('name')} --force")
     settings = read_json(paths.settings)
     fleet, fleet_paths = fleet_map(paths)
     env = settings.setdefault("env", {})
@@ -298,12 +350,22 @@ def apply_profile(paths: Paths, profile: dict, token: str | None) -> None:
         env.pop(key, None)
     for key in PROFILE_TOP_KEYS:
         settings.pop(key, None)
+    # An empty ANTHROPIC_API_KEY is ours (gateway profiles blank it); a real
+    # key is the user's and is never touched.
+    user_key = env.get("ANTHROPIC_API_KEY")
+    if user_key == "":
+        env.pop("ANTHROPIC_API_KEY")
     env.update({key: value for key, value in profile.get("env", {}).items() if key in PROFILE_ENV_KEYS})
     settings.update({key: value for key, value in profile.get("settings", {}).items() if key in PROFILE_TOP_KEYS})
     if profile.get("kind") == "gateway":
         if not env.get("ANTHROPIC_BASE_URL") or not token:
             die(f"profile {profile.get('name')} has no saved gateway URL or token; run: agentfleet save {profile.get('name')} while that gateway is active")
         env["ANTHROPIC_AUTH_TOKEN"] = token
+        # Claude Code sends ANTHROPIC_API_KEY before the gateway token.
+        if isinstance(user_key, str) and user_key:
+            print("agentfleet: settings.json sets ANTHROPIC_API_KEY; Claude Code may send it instead of the gateway token.", file=sys.stderr)
+        else:
+            env["ANTHROPIC_API_KEY"] = ""
     # Compaction controls must stay paired; derive the env value from the
     # top-level one when a profile carries only one of them.
     if isinstance(settings.get("autoCompactWindow"), int):
@@ -326,13 +388,32 @@ def apply_profile(paths: Paths, profile: dict, token: str | None) -> None:
                 target[key] = values[key]
     if isinstance(profile.get("modelTiers"), dict):
         fleet["modelTiers"] = profile["modelTiers"]
+    # Exclusions name one provider's models, so they travel with the profile.
+    if isinstance(profile.get("excludedModels"), list):
+        excluded = [item for item in profile["excludedModels"] if isinstance(item, str) and item.strip()]
+        if excluded:
+            fleet["excludedModels"] = excluded
+        else:
+            fleet.pop("excludedModels", None)
+    policy = target_policy
+    if policy is None:
+        try:
+            policy = provider_catalog.load_policy(paths.policy)
+        except provider_catalog.CatalogError:
+            policy = provider_catalog.generic_policy()
     picker = settings.get("modelPicker") if isinstance(settings.get("modelPicker"), dict) else {}
-    fleet = fit_lanes(paths, fleet, picker.get("options") if isinstance(picker.get("options"), list) else [])
-    atomic_write(paths.settings, json_bytes(settings), 0o600)
+    fleet = fit_lanes(paths, fleet, picker.get("options") if isinstance(picker.get("options"), list) else [], policy)
+    # One recoverable transaction: a crash mid-switch never leaves settings,
+    # the fleet map, and the policy describing different providers.
+    updates = {paths.settings: (json_bytes(settings), 0o600)}
     data = json_bytes(fleet)
     for path in {paths.fleet, paths.legacy_fleet} | set(fleet_paths):
         if path.parent.is_dir():
-            atomic_write(path, data, 0o644)
+            updates[path] = (data, 0o644)
+    if target_policy is not None:
+        updates[paths.policy] = (json_bytes(target_policy), 0o644)
+    reconcile_module(paths).transactional_write(paths.home, updates, [paths.home, paths.config])
+    return profile.get("kind") == "gateway" and target_policy is None
 
 
 def run_generator(paths: Paths) -> int:
@@ -344,9 +425,11 @@ def run_generator(paths: Paths) -> int:
 
 
 def with_lock(paths: Paths):
-    fd, lock = provider_catalog.acquire_lock(paths.home, timeout=10.0)
+    # The startup hook can hold the lock for its reconcile, sync, and drift
+    # steps, so wait longer than its worst case.
+    fd, lock = provider_catalog.acquire_lock(paths.home, timeout=LOCK_TIMEOUT)
     if fd is None:
-        die("another fleet writer (installer or startup hook) is busy; try again in a moment")
+        die(f"another fleet writer (installer or startup hook) is busy; try again in a moment (lock: {provider_catalog.lock_path(paths.home)})")
     return fd, lock
 
 
@@ -366,6 +449,9 @@ def cmd_profiles(paths: Paths, _args: argparse.Namespace) -> int:
         marker = "*" if name == active else " "
         detail = f"gateway {where}" if kind == "gateway" else "Claude login (subscription or API key)"
         saved = "" if profile or name == active else " (built in)"
+        if kind == "gateway" and profile:
+            policy = profile.get("policy")
+            saved += f" (policy: {policy.get('provider', '?')})" if isinstance(policy, dict) else " (no saved policy)"
         print(f"{marker} {name:<16} {detail}{saved}")
     print("\nSwitch with: agentfleet use <name>")
     return 0
@@ -410,9 +496,12 @@ def cmd_use(paths: Paths, args: argparse.Namespace) -> int:
         if target.get("kind") == "gateway" and not target_token:
             die(f"profile '{name}' has no saved gateway token; switch to that gateway and run: agentfleet save {name}")
         # Save where we are first, so switching back restores it exactly.
-        profile, token = snapshot(paths, settings, fleet, current)
-        save_profile(paths, profile, token)
-        apply_profile(paths, target, target_token)
+        # (--force on the active profile means "re-apply the saved copy",
+        # so the live state must not be saved over it first.)
+        if current != name:
+            profile, token = snapshot(paths, settings, fleet, current)
+            save_profile(paths, profile, token)
+        legacy = apply_profile(paths, target, target_token)
         atomic_write(paths.active, (name + "\n").encode("utf-8"), 0o600)
     finally:
         provider_catalog.release_lock(fd, lock)
@@ -422,8 +511,175 @@ def cmd_use(paths: Paths, args: argparse.Namespace) -> int:
         return code
     kind = target.get("kind")
     via = "your Claude login" if kind == "native" else (target.get("env") or {}).get("ANTHROPIC_BASE_URL", "the gateway")
+    if legacy:
+        print(f"Profile '{name}' was saved by an older version without a provider policy; keeping the current one.")
     print(f"Switched to '{name}' ({via}). Previous setup saved as '{current}'.")
     print("Restart Claude Code to apply.")
+    return 0
+
+
+def read_token(name: str, env_name: str | None) -> str:
+    """The new profile's gateway token: from an environment variable, or typed
+    with hidden input. There is deliberately no flag that takes the token."""
+    if env_name:
+        if not TOKEN_ENV_RE.fullmatch(env_name):
+            die("--token-env must name an environment variable (letters, digits, and underscores)")
+        value = os.environ.get(env_name, "")
+        if not value:
+            die(f"environment variable {env_name} is not set or is empty")
+    elif sys.stdin.isatty() and sys.stderr.isatty():
+        value = getpass.getpass(f"Token for {name} (input hidden): ")
+    else:
+        die("no token: pass --token-env VAR, or run this in a terminal to type it (input hidden)")
+    value = value.strip()
+    if not value or "\r" in value or "\n" in value:
+        die("the token is empty or contains a line break")
+    return value
+
+
+def cmd_add(paths: Paths, args: argparse.Namespace) -> int:
+    name = valid_name(args.name)
+    if name == "native":
+        die("'native' is reserved for your Claude login; choose another name")
+    url = args.gateway_url.strip().rstrip("/")
+    parsed = urllib.parse.urlparse(url)
+    try:
+        identity = provider_catalog.endpoint_identity(url)
+    except provider_catalog.CatalogError:
+        if parsed.scheme == "http" and not parsed.username and not parsed.password:
+            die("HTTP gateway URLs are allowed only for loopback hosts, with --allow-insecure-http")
+        die("--gateway-url must be an https URL without embedded credentials")
+    if parsed.scheme == "http" and not args.allow_insecure_http:
+        die("HTTP gateway URLs are allowed only for loopback hosts, with --allow-insecure-http")
+    # Everything that can refuse runs before the network call and the lock.
+    settings = read_json(paths.settings)
+    active = active_name(paths, settings)
+    existing, _ = load_profile(paths, name)
+    if name == active and not args.force:
+        die(f"profile '{name}' is active; pass --force to replace it (it is re-applied at once)")
+    if existing and not args.force:
+        die(f"profile '{name}' already exists; pass --force to replace it (its saved token is replaced too)")
+    switch = args.use or name == active
+    if switch and (not shutil.which("node") or not paths.generator.is_file()):
+        die("switching needs Node.js 18+ and the agent generator; install Node.js, then rerun")
+    if paths.profiles.is_dir():
+        for other in sorted(path.stem for path in paths.profiles.glob("*.json")):
+            if other != name and url_identity(saved_url(paths, other)) == identity:
+                print(f"note: profile '{other}' already uses this gateway")
+    token = read_token(name, args.token_env)
+    # Discovery happens outside the lock, as in the startup hook.
+    print(f"Checking {url} ...", end=" ", flush=True)
+    rows, complete, error = provider_catalog.fetch_catalog(url, token, timeout=15.0)
+    if not complete:
+        print(flush=True)
+        hint = " (check the token)" if error and ("HTTP 401" in error or "HTTP 403" in error) else ""
+        die(f"could not list models at {url}: {error or 'incomplete response'}{hint}")
+    if not rows:
+        print(flush=True)
+        die(f"{url} returned no models; nothing to assign lanes to")
+    print(f"{len(rows)} models.")
+    reconcile = reconcile_module(paths)
+    policy = provider_catalog.generic_policy(provider=name)
+    fd, lock = with_lock(paths)
+    try:
+        settings = read_json(paths.settings)
+        active = active_name(paths, settings)
+        if (paths.profiles / f"{name}.json").is_file() and not args.force:
+            die(f"profile '{name}' already exists; pass --force to replace it (its saved token is replaced too)")
+        fleet, _ = fleet_map(paths)
+        # Rank every lane against this provider alone: the other provider's
+        # pins, exclusions, and tier labels name models it does not have.
+        fresh = copy.deepcopy(fleet)
+        fresh.pop("excludedModels", None)
+        fresh["modelTiers"] = {}
+        for config in fresh.get("lanes", {}).values():
+            if isinstance(config, dict):
+                for key in LANE_KEYS:
+                    config.pop(key, None)
+        resolved, picker, pending, catalog = reconcile.resolve_fleet(fresh, {}, rows, policy)
+        missing = [item for item in pending if "no live approved candidate" in item]
+        if missing:
+            die("could not assign a model to every lane: " + "; ".join(missing[:3]))
+        resolved.pop("_reconcile", None)
+        chosen = reconcile.gateway_settings(resolved, catalog)
+        sized, _message, _budget = reconcile.reconcile_context({"model": chosen["model"], "env": {}}, catalog)
+        window = sized.get("autoCompactWindow") if isinstance(sized.get("autoCompactWindow"), int) else NATIVE_COMPACT_WINDOW
+        env = {"ANTHROPIC_BASE_URL": url, **chosen["env"], "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+               "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(window)}
+        max_context = (sized.get("env") or {}).get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+        if max_context:
+            env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = max_context
+        profile = {
+            "format": PROFILE_FORMAT,
+            "name": name,
+            "kind": "gateway",
+            "savedAt": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "settings": {"model": chosen["model"], "advisorModel": chosen["advisorModel"], "modelPicker": picker, "autoCompactWindow": window},
+            "env": env,
+            "lanes": {lane: {key: config[key] for key in LANE_KEYS if key in config}
+                      for lane, config in resolved.get("lanes", {}).items() if isinstance(config, dict)},
+            "modelTiers": {},
+            "excludedModels": [],
+            "policy": policy,
+        }
+        version = installed_version(paths)
+        if version:
+            profile["agentfleetVersion"] = version
+        if switch and active != name:
+            current, current_token = snapshot(paths, settings, fleet, active)
+            save_profile(paths, current, current_token)
+        save_profile(paths, profile, token)
+        if switch:
+            apply_profile(paths, profile, token)
+            atomic_write(paths.active, (name + "\n").encode("utf-8"), 0o600)
+            # Seed the startup hook's cache for the new endpoint.
+            cache = paths.claude / "cache"
+            cache.mkdir(parents=True, exist_ok=True)
+            payload = provider_catalog.cache_payload(rows, url, token, provider=name)
+            atomic_write(cache / "provider-models-cache.json", json_bytes(payload), 0o600)
+    finally:
+        provider_catalog.release_lock(fd, lock)
+    lanes = profile["lanes"]
+    shown = ", ".join(f"{lane} -> {lanes[lane]['model']}" for lane in ("plan", "implement", "review") if lane in lanes and lanes[lane].get("model"))
+    extra = len(lanes) - 3
+    print(f"Ranked {len(lanes)} lanes: {shown}" + (f" (+{extra} more)" if extra > 0 else ""))
+    print(f"Saved profile '{name}' (policy: every model approved; tighten with /fleet-setup).")
+    if not switch:
+        print(f"Switch with: agentfleet use {name}")
+        return 0
+    code = run_generator(paths)
+    if code != 0:
+        print("agentfleet: settings switched, but regenerating agents failed; run 'claude-fleet-sync' to retry", file=sys.stderr)
+        return code
+    previous = f" Previous setup saved as '{active}'." if active != name else ""
+    print(f"Switched to '{name}' ({url}).{previous} Restart Claude Code to apply.")
+    return 0
+
+
+def cmd_remove(paths: Paths, args: argparse.Namespace) -> int:
+    name = valid_name(args.name)
+    if name == "native":
+        die("'native' is built in and cannot be removed")
+    settings = read_json(paths.settings)
+    if active_name(paths, settings) == name:
+        die(f"'{name}' is the active profile; switch first: agentfleet use <other>")
+    profile, _ = load_profile(paths, name)
+    if not profile:
+        die(f"no saved profile '{name}'")
+    where = (profile.get("env") or {}).get("ANTHROPIC_BASE_URL") or "Claude login"
+    if not args.yes:
+        if not (sys.stdin.isatty() and sys.stderr.isatty()):
+            die("pass --yes to remove without a prompt")
+        if input(f"Remove profile '{name}' ({where}) and its saved token? [y/N] ").strip().lower() not in {"y", "yes"}:
+            print("Kept.")
+            return 0
+    fd, lock = with_lock(paths)
+    try:
+        (paths.profiles / f"{name}.json").unlink(missing_ok=True)
+        (paths.secrets / f"{name}.token").unlink(missing_ok=True)
+    finally:
+        provider_catalog.release_lock(fd, lock)
+    print(f"Removed profile '{name}' and its saved token.")
     return 0
 
 
@@ -437,7 +693,13 @@ def run_tool(paths: Paths, script: str, extra: list[str]) -> int:
 
 def cmd_status(paths: Paths, _args: argparse.Namespace) -> int:
     settings = read_json(paths.settings)
-    print(f"Active profile: {active_name(paths, settings)} ({current_kind(settings)})", flush=True)
+    label = ""
+    if current_kind(settings) == "gateway":
+        try:
+            label = f", policy: {provider_catalog.load_policy(paths.policy).get('provider')}"
+        except provider_catalog.CatalogError:
+            label = ", policy: invalid"
+    print(f"Active profile: {active_name(paths, settings)} ({current_kind(settings)}{label})", flush=True)
     return run_tool(paths, "claude-fleet-setup.py", ["--audit"])
 
 
@@ -852,11 +1114,22 @@ def main() -> int:
     parser.add_argument("--home", help=argparse.SUPPRESS)
     parser.add_argument("--prefix", help=argparse.SUPPRESS)
     parser.add_argument("--config-home", help=argparse.SUPPRESS)
+    parser.add_argument("--lock-timeout", type=float, help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="command", metavar="command")
     sub.add_parser("profiles", help="list saved profiles and the active one")
     use = sub.add_parser("use", help="switch to a profile ('native' = your Claude login)")
     use.add_argument("name")
     use.add_argument("--force", action="store_true", help="re-apply even if already active")
+    add = sub.add_parser("add", help="add a gateway provider as a new profile (no reinstall)")
+    add.add_argument("name")
+    add.add_argument("--gateway-url", required=True, help="the gateway's base URL (https)")
+    add.add_argument("--token-env", metavar="VAR", help="environment variable that holds the token (otherwise you are asked, input hidden)")
+    add.add_argument("--allow-insecure-http", action="store_true", help="allow http:// for a loopback gateway")
+    add.add_argument("--use", action="store_true", help="switch to the new profile right away")
+    add.add_argument("--force", action="store_true", help="replace a profile with the same name")
+    remove = sub.add_parser("remove", help="delete a saved profile and its token")
+    remove.add_argument("name")
+    remove.add_argument("--yes", action="store_true", help="do not ask for confirmation")
     save = sub.add_parser("save", help="save the current configuration as a named profile")
     save.add_argument("name")
     sub.add_parser("status", help="show the active profile and audit models, settings, hooks, agents, skills")
@@ -873,6 +1146,9 @@ def main() -> int:
     au.add_argument("--hook", action="store_true", help=argparse.SUPPRESS)
     au.add_argument("--run", metavar="VERSION", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.lock_timeout is not None:
+        global LOCK_TIMEOUT
+        LOCK_TIMEOUT = args.lock_timeout
     if not args.command:
         parser.print_help()
         return 0
@@ -880,7 +1156,7 @@ def main() -> int:
     handlers = {
         "profiles": cmd_profiles, "use": cmd_use, "save": cmd_save, "status": cmd_status,
         "doctor": cmd_doctor, "sync": cmd_sync, "update": cmd_update, "uninstall": cmd_uninstall, "rollback": cmd_rollback,
-        "version": cmd_version, "auto-update": cmd_auto_update,
+        "version": cmd_version, "auto-update": cmd_auto_update, "add": cmd_add, "remove": cmd_remove,
     }
     return handlers[args.command](paths, args)
 

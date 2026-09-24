@@ -129,7 +129,7 @@
     },
     {
       "path": "bin/agentfleet",
-      "sha256": "a8bc19625d05ed67a066397bc618f256105f5cf617f29d34de0caa1628389be0",
+      "sha256": "2d0e8bcafc49239337b56684a425c49a4b980da4a1b383921782ad57ba29b84c",
       "mode": "0o755"
     },
     {
@@ -149,7 +149,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "7373a2d9a316a60af417d205d1bfad811002a88577b9e2b4937ac94e6bfe6065",
+      "sha256": "7c263826634c74f8e1804bebcc52e284045731d487d9f5f1d9aedd909ead3e3d",
       "mode": "0o755"
     },
     {
@@ -236,6 +236,11 @@
       "path": "tests/test_auto_update.py",
       "sha256": "c9e8b8b4c3fde17556205f7f5bb3d0adf14f711103ea9788d4835e74949182f3",
       "mode": "0o644"
+    },
+    {
+      "path": "tests/test_profiles.py",
+      "sha256": "514a9d3230baf79135a69947a545abd08e8eb98f428454f1a202a2a25959d653",
+      "mode": "0o755"
     },
     {
       "path": "tests/test_provider_repair.py",
