@@ -213,11 +213,49 @@
     sections.forEach(function (s) { observer.observe(s); });
   }
 
+  /* ------------------------------------------------------------------
+     Latest-release badge: refresh the static version/date from
+     /releases/latest.json if it names a different version. Best-effort
+     only — any failure leaves the static markup in place.
+     ------------------------------------------------------------------ */
+  function initLatestRelease() {
+    var versionEls = document.querySelectorAll("[data-latest-version]");
+    var dateEls = document.querySelectorAll("[data-latest-date]");
+    if (!versionEls.length && !dateEls.length) return;
+
+    fetch("/releases/latest.json", { credentials: "omit" })
+      .then(function (res) {
+        if (!res.ok) throw new Error("bad status");
+        return res.json();
+      })
+      .then(function (data) {
+        if (!data || !data.version) return;
+        var version = "v" + String(data.version).replace(/^v/, "");
+        var current = versionEls.length ? versionEls[0].textContent.trim() : "";
+        if (current === version) return;
+
+        var dateText = "";
+        if (data.published_at) {
+          var d = new Date(data.published_at);
+          if (!isNaN(d.getTime())) {
+            dateText = d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
+          }
+        }
+
+        versionEls.forEach(function (el) { el.textContent = version; });
+        if (dateText) dateEls.forEach(function (el) { el.textContent = dateText; });
+      })
+      .catch(function () {
+        /* keep static text */
+      });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     initThemeToggle();
     initTabs();
     initCopyButtons();
     initNavToggle();
     initDocsSidebar();
+    initLatestRelease();
   });
 })();

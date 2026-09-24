@@ -13,6 +13,11 @@
       "mode": "0o644"
     },
     {
+      "path": "CHANGELOG.md",
+      "sha256": "18a60c231b333e8a95a3238b6724cdb112c5ae152ac6b2e75c58f22340610b3b",
+      "mode": "0o644"
+    },
+    {
       "path": "CONTRIBUTING.md",
       "sha256": "e3b2c3fa987322bd195f8534a6713fa70d3d6a1824f0711ccae72f6cc73856bf",
       "mode": "0o644"
@@ -24,7 +29,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "81babe7d6b48d684298d598dee9b90e27f0ee897de37d3ce81de949306fdffc4",
+      "sha256": "f6bc376f9792790e210ece19d02c91358a8eab4a9214600962e1269b81b8f760",
       "mode": "0o644"
     },
     {

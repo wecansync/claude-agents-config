@@ -120,6 +120,7 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; color: var(--accent-hover); }
 a:focus-visible,
 button:focus-visible,
+summary:focus-visible,
 [tabindex]:focus-visible,
 input:focus-visible {
   outline: 2px solid var(--ring);
@@ -296,6 +297,17 @@ pre.terminal-body {
 .terminal-body .choice.selected { color: #fff; }
 .terminal-body .choice.selected::before { content: "> "; color: var(--code-accent); }
 .terminal-body .choice:not(.selected)::before { content: "  "; }
+
+/* --------------------------------------------------------------------------
+   Latest-release badge (hero)
+   -------------------------------------------------------------------------- */
+.latest-badge {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: .4rem;
+  margin: 0 0 1.1rem; padding: .35rem .75rem;
+  background: var(--surface-alt); border: 1px solid var(--border); border-radius: 99px;
+  font-size: .85rem; color: var(--text-muted);
+}
+.latest-badge-version { font-weight: 700; color: var(--text); font-family: var(--font-mono); }
 
 /* --------------------------------------------------------------------------
    OS Tabs (used for install commands)
@@ -507,6 +519,41 @@ td code.il, th code.il { white-space: nowrap; }
 }
 .faq-item[open] summary::after { content: "\2212"; }
 .faq-item p { color: var(--text-muted); padding-bottom: 1.1rem; margin: 0; }
+
+/* --------------------------------------------------------------------------
+   Changelog / version history
+   -------------------------------------------------------------------------- */
+.release-card {
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 1.5rem; margin: 1.5rem 0 2rem;
+}
+.release-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; margin-bottom: .6rem; }
+.release-version { font-family: var(--font-mono); font-weight: 700; font-size: 1.05rem; color: var(--accent); }
+.release-date { color: var(--text-muted); font-size: .88rem; }
+.release-list { margin: .75rem 0 0; padding-left: 1.3rem; color: var(--text-muted); font-size: .93rem; }
+.release-list li { margin-bottom: .5rem; }
+.release-list li:last-child { margin-bottom: 0; }
+
+.version-history-heading { margin-top: 0; }
+.version-history { border-top: 1px solid var(--border); }
+.version-item { border-bottom: 1px solid var(--border); }
+.version-item summary {
+  cursor: pointer; list-style: none; padding: 1rem 1.6rem 1rem 0; position: relative;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem .6rem;
+}
+.version-item summary::-webkit-details-marker { display: none; }
+.version-item summary::after {
+  content: "+"; font-weight: 400; font-size: 1.3rem; color: var(--text-faint);
+  position: absolute; right: 0; top: .85rem;
+}
+.version-item[open] summary::after { content: "\2212"; }
+.version-item .version-summary { color: var(--text-muted); font-size: .9rem; flex-basis: 100%; }
+@media (min-width: 640px) {
+  .version-item .version-summary { flex-basis: auto; }
+}
+.version-item .release-list { padding-bottom: 1.1rem; }
+
+.changelog-full-link { margin-top: 1.5rem; }
 
 /* --------------------------------------------------------------------------
    Anchor headings (self-links used throughout docs)
