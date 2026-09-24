@@ -245,9 +245,12 @@ def validate_bundle(bundle: Path) -> tuple[dict, str]:
         if not path.is_file() or path.is_symlink():
             fail(f"manifest file is missing or not regular: {path}")
         if os.name != "nt":
+            # Only the executable bit is part of a file's logical mode: a git
+            # checkout under umask 0002 is group-writable, and the checksums
+            # below prove the content. World-writable files are refused,
+            # because anyone could change them after that check.
             actual_mode = stat.S_IMODE(path.stat().st_mode)
-            expected_mode = 0o755 if mode == "0o755" else 0o644
-            if actual_mode != expected_mode:
+            if actual_mode & 0o002 or not actual_mode & 0o400 or bool(actual_mode & 0o100) != (mode == "0o755"):
                 fail(f"mode mismatch before installation: {path} is {oct(actual_mode)}, expected {mode}")
         actual = file_sha256(path)
         if actual != digest:
@@ -545,6 +548,41 @@ def before_for(identity: str, current: object, previous: dict[str, dict]) -> tup
     return (current is not ABSENT), copy.deepcopy(current) if current is not ABSENT else None
 
 
+# Journal entries whose installed value is a credential keep only a digest:
+# ownership checks just need "unchanged since install", and the journal must
+# not hold a copy of the token after the user switches away from it.
+SECRET_JOURNAL_IDS = {"value:env:ANTHROPIC_AUTH_TOKEN"}
+API_KEY_JOURNAL_ID = "value:env:ANTHROPIC_API_KEY"
+
+
+def secret_digest(value: object) -> dict:
+    return {"redactedSha256": hashlib.sha256(str(value).encode("utf-8")).hexdigest()}
+
+
+def redacted_equal(current: object, installed: object) -> bool:
+    """Equality where a redacted journal value matches by digest."""
+    if isinstance(installed, dict) and set(installed) == {"redactedSha256"}:
+        return isinstance(current, str) and secret_digest(current) == installed
+    if isinstance(installed, dict):
+        return isinstance(current, dict) and set(current) == set(installed) and all(redacted_equal(current[key], value) for key, value in installed.items())
+    return current == installed
+
+
+def redact_journal_secrets(journal: dict[str, dict]) -> None:
+    """Replace credentials that versions before 2.0.5 journaled in
+    plaintext, in the per-key entry and in the whole-env entry."""
+    for identity, entry in list(journal.items()):
+        installed = entry.get("installed")
+        if identity in SECRET_JOURNAL_IDS and isinstance(installed, str):
+            journal[identity] = {**entry, "installed": secret_digest(installed)}
+        elif identity == "value:env" and isinstance(installed, dict) and isinstance(installed.get("ANTHROPIC_AUTH_TOKEN"), str):
+            journal[identity] = {**entry, "installed": {**installed, "ANTHROPIC_AUTH_TOKEN": secret_digest(installed["ANTHROPIC_AUTH_TOKEN"])}}
+
+
+def current_matches_installed(current: object, entry: dict) -> bool:
+    return redacted_equal(current, entry.get("installed"))
+
+
 def record_value_journal(
     journal: dict[str, dict], identity: str, path: list[str], current: object, installed: object, previous: dict[str, dict]
 ) -> None:
@@ -560,6 +598,8 @@ def record_value_journal(
         "installedPresent": installed_present,
         "installed": copy.deepcopy(installed) if installed_present else None,
     }
+    if identity in SECRET_JOURNAL_IDS and installed_present:
+        journal[identity]["installed"] = secret_digest(installed)
     if old and old.get("beforePresent") is False:
         journal[identity]["before"] = None
 
@@ -801,8 +841,9 @@ def platform_hook_template(home: Path, config_root: Path, template: dict, enable
                 elif kind == "statusline":
                     command = hook_command_for("statusline", home / ".claude") + hook_marker("statusline")
                 elif kind == "model-sync":
-                    if not enable_discovery:
-                        continue
+                    # Always wired: it does nothing until gateway discovery is
+                    # enabled, and a native install can later switch to a
+                    # gateway profile with `agentfleet add --use`.
                     command = hook_command_for("model-sync", home / ".claude", config_root) + hook_marker("model-sync")
                 elif kind == "model-context":
                     command = hook_command_for("model-context", home / ".claude", config_root) + hook_marker("model-context")
@@ -1085,6 +1126,9 @@ def carry_lane_choices(bundle_fleet: dict, existing: dict, *, drop_shipped_pins:
     tiers = existing.get("modelTiers")
     if isinstance(tiers, dict):
         result["modelTiers"] = {**result.get("modelTiers", {}), **copy.deepcopy(tiers)}
+    excluded = [item for item in existing.get("excludedModels") or [] if isinstance(item, str) and item.strip()]
+    if excluded:
+        result["excludedModels"] = excluded
     return result
 
 
@@ -1125,31 +1169,15 @@ def gateway_profile(bundle_fleet: dict, template: dict, rows: list[dict], policy
     reconcile = reconcile_module()
     fleet, picker, _pending, catalog = reconcile.resolve_fleet(bundle_fleet, {}, rows, policy)
     fleet.pop("_reconcile", None)
-    lanes = fleet.get("lanes", {})
-    def lane_model(*names: str) -> str | None:
-        for name in names:
-            model = lanes.get(name, {}).get("model") if isinstance(lanes.get(name), dict) else None
-            if isinstance(model, str) and model in catalog:
-                return model
-        return None
+    chosen = reconcile.gateway_settings(fleet, catalog)
     result = copy.deepcopy(template)
     result["modelPicker"] = picker
-    balanced = lane_model("implement", "tests") or next(iter(catalog), None)
-    deep = lane_model("plan", "review", "implement-deep") or balanced
-    fast = lane_model("explore-narrow", "implement-fast") or balanced
-    if balanced:
-        result["model"] = balanced
-    if deep:
-        result["advisorModel"] = deep
+    if chosen["model"]:
+        result["model"] = chosen["model"]
+    if chosen["advisorModel"]:
+        result["advisorModel"] = chosen["advisorModel"]
     env = result.get("env") if isinstance(result.get("env"), dict) else {}
-    for key, model in (
-        ("ANTHROPIC_DEFAULT_OPUS_MODEL", deep),
-        ("ANTHROPIC_DEFAULT_SONNET_MODEL", balanced),
-        ("ANTHROPIC_DEFAULT_HAIKU_MODEL", fast),
-        ("ANTHROPIC_SMALL_FAST_MODEL", fast),
-    ):
-        if model:
-            env[key] = model
+    env.update(chosen["env"])
     result["env"] = env
     return fleet, result
 
@@ -1189,6 +1217,48 @@ def obtain_gateway_token(args: argparse.Namespace, apply: bool) -> str | None:
     return token
 
 
+def endpoint_key(url: object) -> str | None:
+    """provider_catalog.endpoint_identity, or None for a URL it rejects."""
+    try:
+        return provider_catalog.endpoint_identity(url)
+    except provider_catalog.CatalogError:
+        return None
+
+
+def same_endpoint(first: object, second: object) -> bool:
+    key = endpoint_key(first)
+    return key is not None and key == endpoint_key(second)
+
+
+def effective_gateway(args: argparse.Namespace, existing: dict, previous: dict, gateway_token: str | None) -> tuple[str | None, str | None, bool]:
+    """Return (url, token, requested): the gateway pair this install writes.
+
+    The requested pair (--gateway-url with its token, else the live values)
+    is written unless the live pair is complete and one of its values was
+    changed after install, by `agentfleet use` or by hand: that change is
+    authoritative, so re-running the original install command keeps the live
+    pair. URL and token are decided together, so a URL is never paired with
+    another gateway's token.
+    """
+    env = existing.get("env") if isinstance(existing.get("env"), dict) else {}
+    url = args.gateway_url or env.get("ANTHROPIC_BASE_URL") or os.environ.get("ANTHROPIC_BASE_URL")
+    token = gateway_token or env.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    url = str(url).rstrip("/") if url else None
+    live_url, live_token = env.get("ANTHROPIC_BASE_URL"), env.get("ANTHROPIC_AUTH_TOKEN")
+    if not (isinstance(live_url, str) and live_url and isinstance(live_token, str) and live_token):
+        return url, token, True
+    prior = previous_journal_map(previous)
+    for key, value in (("ANTHROPIC_BASE_URL", url), ("ANTHROPIC_AUTH_TOKEN", token)):
+        current = env.get(key)
+        old = prior.get(f"value:env:{key}")
+        owned = bool(old and old.get("installedPresent", True) and current_matches_installed(current, old))
+        if current != value and not owned:
+            # Verbatim: the kept values must compare equal to the live ones,
+            # so none of them is rewritten or claimed as installer-owned.
+            return live_url, live_token, False
+    return url, token, True
+
+
 def merge_settings(
     existing: dict,
     template: dict,
@@ -1204,6 +1274,7 @@ def merge_settings(
     desired = copy.deepcopy(existing)
     prior = previous_journal_map(previous)
     journal: dict[str, dict] = dict(prior)
+    redact_journal_secrets(journal)
     env_before = get_nested(existing, ["env"])
     permissions_before = get_nested(existing, ["permissions"])
 
@@ -1395,7 +1466,9 @@ def merge_settings(
         and (
             args.enable_model_discovery
             or (
-                previous.get("profile") == "gateway"
+                # Any earlier install: a native install may have switched to
+                # a gateway with agentfleet since.
+                bool(previous)
                 and env.get("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY") == "1"
             )
         )
@@ -1435,48 +1508,60 @@ def merge_settings(
     gateway_owned = False
     gateway_state = None
     if gateway_mode:
-        url = args.gateway_url or env.get("ANTHROPIC_BASE_URL") or os.environ.get("ANTHROPIC_BASE_URL")
-        token = gateway_token or env.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        url, token, requested = effective_gateway(args, existing, previous, gateway_token)
         if not url or not token:
             fail("gateway mode requires both URL and token before any write")
         gateway_url_check(str(url))
-        if urllib.parse.urlparse(str(url)).scheme == "http" and not args.allow_insecure_http and args.gateway_url:
+        if urllib.parse.urlparse(str(url)).scheme == "http" and not args.allow_insecure_http and args.gateway_url and requested:
             fail("HTTP gateway URLs require explicit --allow-insecure-http")
-        for key, value in (("ANTHROPIC_BASE_URL", str(url).rstrip("/")), ("ANTHROPIC_AUTH_TOKEN", str(token))):
+        for key, value in (("ANTHROPIC_BASE_URL", str(url)), ("ANTHROPIC_AUTH_TOKEN", str(token))):
             identity = f"value:env:{key}"
             current = env.get(key, ABSENT)
             old = prior.get(identity)
             # A gateway credential remains setup-owned only while its current
             # value equals the prior installed value. A user replacement is
             # carried forward but must not become uninstall-owned.
-            owned = bool(old and old.get("installedPresent", True) and current == old.get("installed"))
-            if current != value:
-                if current is ABSENT or owned:
-                    record_value_journal(journal, identity, ["env", key], current, value, prior)
-                    env[key] = value
-                else:
-                    # A later user edit is authoritative. Do not overwrite it
-                    # with a repeated command-line credential, and remove the
-                    # stale ownership entry so uninstall preserves it.
-                    journal.pop(identity, None)
+            owned = bool(old and old.get("installedPresent", True) and current_matches_installed(current, old))
+            if current != value and requested:
+                # effective_gateway keeps a live pair changed after install, so
+                # a differing value here is one this install may write.
+                record_value_journal(journal, identity, ["env", key], current, value, prior)
+                env[key] = value
             elif owned:
                 journal[identity] = copy.deepcopy(old)
                 journal[identity]["installedPresent"] = True
-                journal[identity]["installed"] = value
+                journal[identity]["installed"] = secret_digest(value) if identity in SECRET_JOURNAL_IDS else value
             elif current is not ABSENT:
                 # Explicit gateway credentials supplied for a user-edited
                 # existing value are functional, but not owned for uninstall.
                 journal.pop(identity, None)
             gateway_owned = gateway_owned or bool(journal.get(identity))
+        # Claude Code sends ANTHROPIC_API_KEY in preference to the gateway
+        # token, so a key exported in the shell would bypass the gateway. An
+        # empty value in settings masks it. The empty value is only ever
+        # written by AgentFleet, so an unjournaled one is claimed as well; a
+        # real key in settings is the user's and stays.
+        identity = API_KEY_JOURNAL_ID
+        current = env.get("ANTHROPIC_API_KEY", ABSENT)
+        if current is ABSENT or (current == "" and identity not in prior):
+            record_value_journal(journal, identity, ["env", "ANTHROPIC_API_KEY"], ABSENT, "", prior)
+            env["ANTHROPIC_API_KEY"] = ""
+        elif current != "":
+            journal.pop(identity, None)
+            print("claude-agents-config: settings.json sets ANTHROPIC_API_KEY; Claude Code may send it to the gateway instead of the gateway token; remove it unless the gateway expects it.", file=sys.stderr)
     else:
         # Only remove credentials previously owned by this bundle.  A user's
         # existing gateway environment remains untouched, but the installed fleet
         # profile is direct Anthropic and discovery is disabled.
         # Discovery has already been journaled above with the disabled value.
-        for key in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"):
+        for key in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"):
             identity = f"value:env:{key}"
             old = prior.get(identity)
-            if old and env.get(key, ABSENT) == old.get("installed"):
+            # The empty API key masks a shell key only while a gateway is
+            # configured; it stays while a user-owned gateway URL does.
+            if key == "ANTHROPIC_API_KEY" and "ANTHROPIC_BASE_URL" in env:
+                continue
+            if old and current_matches_installed(env.get(key, ABSENT), old):
                 # Carry the original pre-gateway value into the new direct
                 # profile so a later uninstall restores user settings rather
                 # than restoring the removed gateway credential.
@@ -1491,7 +1576,8 @@ def merge_settings(
     if env_was_absent:
         journal["value:env"] = {
             "id": "value:env", "kind": "value", "path": ["env"],
-            "beforePresent": False, "before": None, "installedPresent": True, "installed": copy.deepcopy(env),
+            "beforePresent": False, "before": None, "installedPresent": True,
+            "installed": {key: secret_digest(value) if key == "ANTHROPIC_AUTH_TOKEN" else copy.deepcopy(value) for key, value in env.items()},
         }
     if permissions_was_absent:
         journal["value:permissions"] = {
@@ -1789,14 +1875,113 @@ def merged_policy_bytes(bundle: Path, config_root: Path) -> bytes:
     return policy_data
 
 
-def install_policy(bundle: Path, config_root: Path) -> dict:
+def install_policy(policy_data: bytes) -> dict:
     try:
-        value = json.loads(merged_policy_bytes(bundle, config_root).decode("utf-8"))
+        value = json.loads(policy_data.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as exc:
         fail(f"provider policy is not valid JSON ({exc})")
     if not isinstance(value, dict):
         fail("provider policy is not a JSON object")
     return value
+
+
+def saved_gateway_profiles(home: Path, url: str) -> list[dict]:
+    """The agentfleet gateway profiles saved for this endpoint, most recently
+    saved first. The installer only reads the profile store; agentfleet owns it.
+    """
+    store = home / ".claude" / "agentfleet" / "profiles"
+    if not store.is_dir() or store.is_symlink():
+        return []
+    found = []
+    for path in sorted(store.glob("*.json")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            profile = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(profile, dict) or profile.get("kind") != "gateway":
+            continue
+        env = profile.get("env") if isinstance(profile.get("env"), dict) else {}
+        if same_endpoint(env.get("ANTHROPIC_BASE_URL"), url):
+            found.append({**profile, "name": path.stem})
+    # Stable sort: newest savedAt first, name order among equals.
+    found.sort(key=lambda profile: str(profile.get("savedAt") or ""), reverse=True)
+    return found
+
+
+def rebased_fleet(live: dict, profile: dict | None) -> dict:
+    """The installed fleet with another provider's choices: the saved
+    profile's lane pins, tier labels, and exclusions, or none at all.
+
+    Custom lanes stay; lanes left without a model are resolved against the
+    new provider's catalog.
+    """
+    result = copy.deepcopy(live) if isinstance(live.get("lanes"), dict) else {"lanes": {}}
+    saved_lanes = (profile or {}).get("lanes")
+    saved_lanes = saved_lanes if isinstance(saved_lanes, dict) else {}
+    for name, config in result["lanes"].items():
+        if not isinstance(config, dict):
+            continue
+        for field in CARRIED_LANE_FIELDS:
+            config.pop(field, None)
+        saved = saved_lanes.get(name)
+        if isinstance(saved, dict):
+            config.update({field: copy.deepcopy(saved[field]) for field in CARRIED_LANE_FIELDS if field in saved})
+    tiers = (profile or {}).get("modelTiers")
+    result["modelTiers"] = copy.deepcopy(tiers) if isinstance(tiers, dict) else {}
+    excluded = (profile or {}).get("excludedModels")
+    result["excludedModels"] = [item for item in excluded if isinstance(item, str)] if isinstance(excluded, list) else []
+    return result
+
+
+def provider_policy(bundle: Path, home: Path, config_root: Path, existing: dict, gateway_url: str | None) -> tuple[bytes, dict | None]:
+    """Return (policy bytes, fleet to carry lane choices from; None = the
+    installed fleet).
+
+    A provider policy and the lane pins describe one provider's models. When
+    an explicit --gateway-url names another endpoint than the live one, the
+    installed policy and pins are not carried: the policy and choices saved
+    with an agentfleet profile for that endpoint are used, else the generic
+    shipped policy with no pins. A profile saved before policies were stored
+    per profile keeps today's behaviour.
+    """
+    if gateway_url:
+        env = existing.get("env") if isinstance(existing.get("env"), dict) else {}
+        old_url = env.get("ANTHROPIC_BASE_URL")
+        if same_endpoint(old_url, gateway_url):
+            return merged_policy_bytes(bundle, config_root), None
+        # A profile with a valid policy wins over older ones for the same
+        # endpoint; only when none has one does a legacy profile (saved
+        # before policies were per profile) keep today's behaviour.
+        legacy = False
+        for profile in saved_gateway_profiles(home, gateway_url):
+            if "policy" not in profile:
+                legacy = True
+                continue
+            try:
+                policy = provider_catalog.validate_policy(copy.deepcopy(profile["policy"]))
+            except provider_catalog.CatalogError as exc:
+                print(f"claude-agents-config: agentfleet profile '{profile['name']}' has an invalid provider policy ({exc}); ignoring it", file=sys.stderr)
+                continue
+            print(f"Gateway {gateway_url}: using the provider policy and lane choices saved in agentfleet profile '{profile['name']}'.")
+            return json_bytes(policy), rebased_fleet(existing_fleet_map(home, config_root), profile)
+        if not legacy:
+            live = existing_fleet_map(home, config_root)
+            generic = source_bytes(bundle, PROVIDER_POLICY_PATH)
+            installed_policy = config_root / "delegate-skills" / "provider-policy.json"
+            try:
+                replaced = installed_policy.is_file() and json.loads(installed_policy.read_text(encoding="utf-8")) != json.loads(generic.decode("utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                replaced = True
+            if replaced:
+                print(
+                    f"Gateway changed ({old_url or 'no gateway'} -> {gateway_url}): not carrying the previous provider's model families; "
+                    "using the generic policy (all models approved). "
+                    "Tip: agentfleet add NAME --gateway-url URL switches providers without reinstalling."
+                )
+            return generic, rebased_fleet(live, None)
+    return merged_policy_bytes(bundle, config_root), None
 
 
 def managed_specs(
@@ -1813,6 +1998,7 @@ def managed_specs(
     journal: list[dict],
     gateway_owned: bool,
     permission_owned: list[str],
+    policy_data: bytes,
 ) -> dict[Path, tuple[bytes, int, str]]:
     claude = home / ".claude"
     fleet = config_root / "delegate-skills"
@@ -1831,7 +2017,6 @@ def managed_specs(
     add(claude / "provider_catalog.py", source_bytes(bundle, PROVIDER_CATALOG_MODULE), 0o755, "home:.claude/provider_catalog.py")
     add(claude / "fleet-reconcile.py", source_bytes(bundle, RECONCILE_SCRIPT), 0o755, "home:.claude/fleet-reconcile.py")
     add(claude / "skills" / "fleet-setup" / "SKILL.md", source_bytes(bundle, "skills/fleet-setup/SKILL.md"), 0o644, "home:.claude/skills/fleet-setup/SKILL.md")
-    policy_data = merged_policy_bytes(bundle, fleet.parent)
     add(fleet / "provider-policy.json", policy_data, 0o644, "config:provider-policy.json")
     add(fleet / "config.json", fleet_bytes, 0o644, "config:delegate-fleet.json")
     add(claude / "fleet.json", fleet_bytes, 0o644, "home:.claude/fleet.json")
@@ -2239,19 +2424,25 @@ def profile_data(
     policy: dict,
     tier_labels: dict[str, str] | None = None,
     drop_shipped_pins: bool = False,
+    carry_from: dict | None = None,
 ) -> tuple[str, bytes, dict, dict, str]:
-    """Return (profile, fleet bytes, fleet, settings template, catalog note)."""
+    """Return (profile, fleet bytes, fleet, settings template, catalog note).
+
+    Lane choices are carried from carry_from, else the installed fleet.
+    """
     template = load_json(bundle / "config/settings.template.json", "settings template")
     fleet_source = load_json(bundle / "config/delegate-fleet.json", "fleet configuration")
     fleet_source.setdefault("integrations", {})["agentBrain"] = optional_agent_brain_available()
     note = ""
+    installed = carry_from if carry_from is not None else existing_fleet_map(home, config_root)
     if gateway_mode:
         profile = "gateway"
-        carried = carry_lane_choices(fleet_source, existing_fleet_map(home, config_root), drop_shipped_pins=drop_shipped_pins)
+        carried = carry_lane_choices(fleet_source, installed, drop_shipped_pins=drop_shipped_pins)
         if tier_labels:
             carried["modelTiers"] = {**carried.get("modelTiers", {}), **tier_labels}
         url = gateway_url or (existing.get("env") or {}).get("ANTHROPIC_BASE_URL")
-        token = gateway_token or (existing.get("env") or {}).get("ANTHROPIC_AUTH_TOKEN")
+        # The caller withholds a token that belongs to another endpoint.
+        token = gateway_token if gateway_url else (existing.get("env") or {}).get("ANTHROPIC_AUTH_TOKEN")
         rows, source = discover_gateway_rows(home, url, token, existing)
         if rows:
             fleet, template_profile = gateway_profile(carried, template, rows, policy)
@@ -2275,14 +2466,14 @@ def profile_data(
     else:
         # Custom lanes carry over here too; direct_fleet then maps every lane,
         # custom ones included, to the native alias for its tier.
-        fleet = direct_fleet(carry_lane_choices(fleet_source, existing_fleet_map(home, config_root), drop_shipped_pins=drop_shipped_pins))
+        fleet = direct_fleet(carry_lane_choices(fleet_source, installed, drop_shipped_pins=drop_shipped_pins))
         template_profile = direct_template(template)
         profile = "direct-anthropic"
     fleet_bytes = json_bytes(fleet)
     return profile, fleet_bytes, fleet, template_profile, note
 
 
-def determine_gateway(args: argparse.Namespace, previous: dict, existing: dict, apply: bool) -> tuple[bool, str | None]:
+def determine_gateway(args: argparse.Namespace, previous: dict, existing: dict, apply: bool, switched_to_native: bool = False) -> tuple[bool, str | None]:
     existing_env = existing.get("env") if isinstance(existing.get("env"), dict) else {}
     direct_requested = getattr(args, "provider", None) in {"native", "anthropic-api"}
     if direct_requested and (existing_env.get("ANTHROPIC_BASE_URL") or existing_env.get("ANTHROPIC_AUTH_TOKEN")):
@@ -2313,7 +2504,9 @@ def determine_gateway(args: argparse.Namespace, previous: dict, existing: dict, 
     if env_url and env_token:
         gateway_url_check(env_url)
         return True, "gateway (detected from environment)"
-    if previous.get("gatewayKeysOwned"):
+    # `agentfleet use native` removes the gateway keys on purpose; an update
+    # (including the automatic one) then keeps the Claude login.
+    if previous.get("gatewayKeysOwned") and not switched_to_native:
         fail("previously bundle-owned gateway settings are incomplete; provide --gateway-url and --gateway-token-env")
     return False, "direct Anthropic (no gateway)"
 
@@ -2462,7 +2655,11 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
     config_root = config_home(args, home, previous)
     if previous:
         metadata_records(previous, home, bin_dir, config_root)
-    gateway_mode, gateway_state = determine_gateway(args, previous, existing, not dry)
+    try:
+        switched_to_native = (home / ".claude" / "agentfleet" / "active").read_text(encoding="utf-8").strip() == "native"
+    except (OSError, UnicodeError):
+        switched_to_native = False
+    gateway_mode, gateway_state = determine_gateway(args, previous, existing, not dry, switched_to_native)
     # Require full gateway credentials before constructing any output. Dry-run
     # never prompts, but it may validate/read an explicitly named token
     # environment variable so the preview can render the gateway profile.
@@ -2472,12 +2669,24 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
             gateway_token = None
         else:
             gateway_token = obtain_gateway_token(args, True)
-    policy = install_policy(bundle, config_root)
+    gateway_url, discovery_token, requested = (None, None, True)
+    if gateway_mode:
+        gateway_url, discovery_token, requested = effective_gateway(args, existing, previous, gateway_token)
+        live_url = (existing.get("env") or {}).get("ANTHROPIC_BASE_URL")
+        if args.gateway_url and not requested:
+            print(f"Keeping the live gateway {live_url}: it was changed after install, so --gateway-url {args.gateway_url} is not applied. "
+                  "Switch providers with: agentfleet add NAME --gateway-url URL --use")
+        # A token is only ever sent to the endpoint it belongs to.
+        if not gateway_token and not same_endpoint(gateway_url, live_url):
+            discovery_token = None
+    policy_data, carry_from = provider_policy(bundle, home, config_root, existing, gateway_url if args.gateway_url and requested else None)
+    policy = install_policy(policy_data)
     labels: dict[str, str] = {}
     while True:
         profile, fleet_bytes, fleet, template, catalog_note = profile_data(
             bundle, gateway_mode, home=home, config_root=config_root, existing=existing,
-            gateway_url=args.gateway_url, gateway_token=gateway_token, policy=policy, tier_labels=labels,
+            gateway_url=gateway_url, gateway_token=discovery_token, policy=policy, tier_labels=labels,
+            carry_from=carry_from,
             # One-time migration of 1.0.0's shipped pins. A fresh install
             # also qualifies, harmlessly: it has no fleet to carry.
             drop_shipped_pins=version_key(previous.get("version")) < (2, 0, 1),
@@ -2528,7 +2737,7 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
         print(f"Keeping custom lane(s): {', '.join('fleet-' + name for name in custom_lanes)}")
     specs = managed_specs(
         bundle, home, config_root, bin_dir, settings_bytes, fleet_bytes, agent_bytes, {}, version, profile,
-        journal, gateway_owned, permission_owned,
+        journal, gateway_owned, permission_owned, policy_data,
     )
     meta = old_metadata(home)
     conflicts = check_parent_conflicts(specs, meta, bundle, args.force_owned)
@@ -2584,8 +2793,6 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
     return 0
 
 
-def current_matches_installed(current: object, entry: dict) -> bool:
-    return current == entry.get("installed")
 
 
 def settings_for_uninstall(path: Path, meta: dict) -> tuple[bytes | None, bool]:
@@ -2594,14 +2801,25 @@ def settings_for_uninstall(path: Path, meta: dict) -> tuple[bytes | None, bool]:
     current = load_json(path, "installed settings")
     changed = False
     entries = meta.get("settingsJournal", []) if isinstance(meta.get("settingsJournal"), list) else []
+    # The API-key mask goes last: it is kept while a gateway URL remains.
     entries = sorted(
         (entry for entry in entries if isinstance(entry, dict)),
-        key=lambda entry: (0 if entry.get("kind") == "value" else 1, str(entry.get("id", ""))),
+        key=lambda entry: (0 if entry.get("kind") == "value" else 1, entry.get("id") == API_KEY_JOURNAL_ID, str(entry.get("id", ""))),
     )
+    restored: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("kind"), str):
             continue
         kind = entry["kind"]
+        if (
+            entry.get("id") == API_KEY_JOURNAL_ID
+            and get_nested(current, ["env", "ANTHROPIC_BASE_URL"]) is not ABSENT
+            and "value:env:ANTHROPIC_BASE_URL" not in restored
+        ):
+            # A gateway the user switched to stays configured; removing the
+            # mask would let a shell API key reach it. A pre-install URL that
+            # uninstall restored had no mask, so the mask goes with it.
+            continue
         if kind == "value" and entry.get("id") == "value:modelPicker" and isinstance(entry.get("ownedRows"), list):
             picker = current.get("modelPicker") if isinstance(current.get("modelPicker"), dict) else None
             options = picker.get("options") if isinstance(picker, dict) else None
@@ -2637,6 +2855,7 @@ def settings_for_uninstall(path: Path, meta: dict) -> tuple[bytes | None, bool]:
                     set_nested(current, [str(part) for part in entry["path"]], entry.get("before"))
                 else:
                     delete_nested(current, [str(part) for part in entry["path"]])
+                restored.add(str(entry.get("id")))
                 changed = True
         elif kind == "list-item" and isinstance(entry.get("path"), list):
             values = get_nested(current, [str(part) for part in entry["path"]])
@@ -2730,6 +2949,8 @@ def _uninstall_locked(args: argparse.Namespace, bundle: Path, dry: bool, home: P
         removable.append(settings_path)
     # Saved provider profiles and gateway tokens belong to this bundle's
     # agentfleet command; leaving plaintext tokens behind would be a leak.
+    # The uninstall backup keeps copies (0600 in a 0700 snapshot) so that a
+    # rollback can restore them, as it keeps settings.json; the user is told.
     store = home / ".claude" / "agentfleet"
     store_files = sorted(path for path in store.rglob("*") if path.is_file() and not path.is_symlink()) if store.is_dir() and not store.is_symlink() else []
     removable.extend(store_files)
@@ -2766,7 +2987,7 @@ def _uninstall_locked(args: argparse.Namespace, bundle: Path, dry: bool, home: P
             if directory.is_dir() and not directory.is_symlink() and not any(directory.iterdir()):
                 directory.rmdir()
         if store_files:
-            print("Removed saved AgentFleet profiles and gateway tokens.")
+            print(f"Removed saved AgentFleet profiles and gateway tokens. The backup snapshot keeps copies for rollback; delete {backup} when you no longer need it.")
         # Keep metadata when an edited managed file remains, so a later clean
         # uninstall can still identify ownership safely.
         if preserved and metadata_path not in preserved:

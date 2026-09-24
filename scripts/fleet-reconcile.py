@@ -677,6 +677,34 @@ def resolve_fleet(
     result["_reconcile"] = {"changes": changes, "catalog_models": sorted(full_catalog)}
     return result, {"options": list(picker.values()), "replaceBuiltInOptions": True}, list(dict.fromkeys(pending)), full_catalog
 
+
+def gateway_settings(fleet: dict, catalog: dict[str, dict]) -> dict:
+    """Pick top-level model/advisorModel/env from an already-resolved fleet's
+    lanes, favoring the same lane order a fresh gateway install uses."""
+    lanes = fleet.get("lanes", {})
+
+    def lane_model(*names: str) -> str | None:
+        for name in names:
+            model = lanes.get(name, {}).get("model") if isinstance(lanes.get(name), dict) else None
+            if isinstance(model, str) and model in catalog:
+                return model
+        return None
+
+    balanced = lane_model("implement", "tests") or next(iter(catalog), None)
+    deep = lane_model("plan", "review", "implement-deep") or balanced
+    fast = lane_model("explore-narrow", "implement-fast") or balanced
+    env: dict[str, str] = {}
+    for key, model in (
+        ("ANTHROPIC_DEFAULT_OPUS_MODEL", deep),
+        ("ANTHROPIC_DEFAULT_SONNET_MODEL", balanced),
+        ("ANTHROPIC_DEFAULT_HAIKU_MODEL", fast),
+        ("ANTHROPIC_SMALL_FAST_MODEL", fast),
+    ):
+        if model:
+            env[key] = model
+    return {"model": balanced, "advisorModel": deep, "env": env}
+
+
 def reconcile_settings(
     settings: dict,
     picker: dict,

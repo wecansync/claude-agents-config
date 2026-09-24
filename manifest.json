@@ -1,6 +1,6 @@
 {
   "format": "claude-agents-config.bundle.v1",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "files": [
     {
       "path": ".gitattributes",
@@ -24,12 +24,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "d980e3c497041595b6f39af670d1bc594a0b5c42d8b9b218999775aa3478bfec",
+      "sha256": "81babe7d6b48d684298d598dee9b90e27f0ee897de37d3ce81de949306fdffc4",
       "mode": "0o644"
     },
     {
       "path": "VERSION",
-      "sha256": "137f467241023dadfa605db00e630b25a9394d0fc7232718812983ba24b93945",
+      "sha256": "ce0a2005da2b159fde33efc005d063470ccc2ccc54ffb702dfafb2c330285040",
       "mode": "0o644"
     },
     {
@@ -129,17 +129,17 @@
     },
     {
       "path": "bin/agentfleet",
-      "sha256": "eb5b0a714ead340f974b2ea7f2d1eb090164579eb9305d6d836f04e4c06a3678",
+      "sha256": "35eb7f76f0a670670a05d7085bfd7b690601b5c4ae27b3eaaf212d7f4782fd18",
       "mode": "0o755"
     },
     {
       "path": "bin/claude-agents-doctor",
-      "sha256": "f2e7615c636046ef0e26439537111e72ce8dd8c0dbce8aca6f60ccd5d5139108",
+      "sha256": "055c4fd0fb99156f6a88e04013c4a830ca6eff9f0384ce112cd29be13d3c8508",
       "mode": "0o755"
     },
     {
       "path": "bin/claude-fleet-setup",
-      "sha256": "c1447cc5ddd82c24b6d6cd9a5d11e113938b51dbe779218a0a0de1161fa0541e",
+      "sha256": "07107dd41ae2fcc59e75966e1472e25fa876a2ee179d2f50234e6ade82813c01",
       "mode": "0o755"
     },
     {
@@ -149,12 +149,12 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "5618c5c8a10fb3f816ad250eded55fa1fb8ae1bb14abd5b62ec157ceae31ac9f",
+      "sha256": "416ad267071e414cf140b200dafc79ca496315fc239bf1a98fac7776a45f6b4b",
       "mode": "0o755"
     },
     {
       "path": "config/CLAUDE.md",
-      "sha256": "7f7d29dc681657b105703b50a41c7ab2d5cbd8b68be164c0a4a854b81bc56331",
+      "sha256": "b93aa2ab8de985e886af1e09e9812b464bf67150e7868c7fb8b92713e15c1eef",
       "mode": "0o644"
     },
     {
@@ -194,7 +194,7 @@
     },
     {
       "path": "scripts/fleet-reconcile.py",
-      "sha256": "74e1467449e1a96b345d409e8b8db565ac1a431dbfa3197def7fa78d5379e45c",
+      "sha256": "630d388ed9e9d5dc245ed63048a2762216e2142f80c36bc0aa286958bd72d437",
       "mode": "0o755"
     },
     {
@@ -204,7 +204,7 @@
     },
     {
       "path": "scripts/provider_catalog.py",
-      "sha256": "beffd75a577dbdcb0b3f81c2c9e0a1549026b7ecd51974193974ebcde76342f0",
+      "sha256": "e2a6db98811e44c0f9cab312fcb2a27abdfe7eacf8616e2d4dfa82bf87d8c0d9",
       "mode": "0o755"
     },
     {
@@ -224,12 +224,12 @@
     },
     {
       "path": "scripts/sync-provider-models.mjs",
-      "sha256": "d2f83b31fe56a21d08839eb0aab91c61c5c02580fecf81d4a8e376ec79b67632",
+      "sha256": "11f7adffcfd96c3dece88c1ff7a73ece913bc04457ab85e00fc4bb4e5fe0f112",
       "mode": "0o755"
     },
     {
       "path": "skills/fleet-setup/SKILL.md",
-      "sha256": "01c966061325bec9e416a2405fb4fcba3fe46a822f91df8c4ff29cd87ef895e0",
+      "sha256": "f2d80ccf07ed654d7162cfbf725a07b683e83ac32613f00461180174712a70f0",
       "mode": "0o644"
     },
     {
@@ -238,8 +238,13 @@
       "mode": "0o644"
     },
     {
+      "path": "tests/test_profiles.py",
+      "sha256": "374f4f9640568c372146e12e65f3409b5f2bb4d3554112a202ddc76563a7aabe",
+      "mode": "0o755"
+    },
+    {
       "path": "tests/test_provider_repair.py",
-      "sha256": "4b7fb802f7fd110487913e3e4074ffc43bd452246d8e4005cb8cef72c0e28599",
+      "sha256": "d03b388ef9840a7eb7713a4fb4ec1949ad394e145bb74da2740595d0e7750fb3",
       "mode": "0o755"
     },
     {

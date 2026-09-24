@@ -53,16 +53,50 @@ def load_json(path: Path) -> object | None:
         return None
 
 
-def load_policy(path: Path) -> dict:
-    value = load_json(path)
+def validate_policy(value: object) -> dict:
+    """Raise CatalogError unless ``value`` is a well-formed provider policy."""
     if not isinstance(value, dict) or value.get("version") != POLICY_FORMAT:
-        raise CatalogError(f"invalid provider policy: {path}")
+        raise CatalogError("invalid provider policy")
     provider = value.get("provider")
     if not isinstance(provider, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", provider):
         raise CatalogError("provider policy has an invalid provider label")
     if not isinstance(value.get("families"), list):
         raise CatalogError("provider policy has no family list")
     return value
+
+
+def load_policy(path: Path) -> dict:
+    value = load_json(path)
+    try:
+        return validate_policy(value)
+    except CatalogError:
+        raise CatalogError(f"invalid provider policy: {path}") from None
+
+
+def generic_policy(provider: str = PROVIDER_NAME) -> dict:
+    """The shipped catch-all policy (every model approved), labeled for the
+    given provider. Matches config/provider-policy.json apart from the label."""
+    label = provider if isinstance(provider, str) and provider else PROVIDER_NAME
+    return {
+        "version": POLICY_FORMAT,
+        "provider": label,
+        "cacheTtlSeconds": 21600,
+        "oneMContextThreshold": 872000,
+        "contextSuffix": "[1m]",
+        "discoveryApproved": False,
+        "autoApproveProposals": True,
+        "namespaceAliases": [],
+        "runtimeAliases": {},
+        "modelTiers": {},
+        "families": [
+            {
+                "name": "gateway",
+                "prefixes": [""],
+                "approved": True,
+                "fallbackFamilies": [],
+            }
+        ],
+    }
 
 
 def policy_aliases(policy: dict) -> dict[str, str]:
@@ -206,6 +240,26 @@ def endpoint_scope(url: object) -> str:
     return urllib.parse.urlunparse((parsed.scheme.lower(), netloc, parsed.path.rstrip("/"), "", "", ""))
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def endpoint_identity(url: object) -> str:
+    """``scheme://host:port`` with the default port filled in and any path
+    ignored. Two URLs that resolve to the same endpoint_identity are the same
+    provider account boundary regardless of path (e.g. differing API bases
+    on one host); a different port is a different provider."""
+    scoped = endpoint_scope(url)
+    parsed = urllib.parse.urlparse(scoped)
+    hostname = parsed.hostname or ""
+    netloc = hostname.lower()
+    if ":" in netloc and not netloc.startswith("["):
+        netloc = f"[{netloc}]"
+    port = parsed.port if parsed.port is not None else _DEFAULT_PORTS.get(parsed.scheme)
+    if port is not None:
+        netloc += f":{port}"
+    return urllib.parse.urlunparse((parsed.scheme, netloc, "", "", "", ""))
+
+
 def account_scope(token: object) -> str:
     if not isinstance(token, str) or not token or any(char in token for char in "\r\n"):
         raise CatalogError("provider credential is missing or malformed")
@@ -262,6 +316,36 @@ def cache_rows(value: object, endpoint: str, token: str, ttl: int = DEFAULT_CACH
     return rows if complete else None
 
 
+class _RefuseRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only within the same endpoint (scheme, host, and
+    port). urllib copies every request header, credentials included, onto
+    the redirect target, which may be another host or plain HTTP; any other
+    redirect surfaces as an HTTPError."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        if _origin(newurl) is not None and _origin(newurl) == _origin(req.full_url):
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+        return None
+
+
+def _origin(url: str) -> tuple[str, str, int | None] | None:
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        return parsed.scheme.lower(), (parsed.hostname or "").lower(), parsed.port or _DEFAULT_PORTS.get(parsed.scheme.lower())
+    except ValueError:
+        return None
+
+
+def _credential_opener(url: str) -> urllib.request.OpenerDirector:
+    """An opener for requests that carry the provider credential: no
+    redirects, and no proxy for a loopback gateway (urllib does not bypass
+    proxies for localhost by itself, and that hop is plain HTTP)."""
+    handlers: list[urllib.request.BaseHandler] = [_RefuseRedirect()]
+    if (urllib.parse.urlparse(url).hostname or "").lower() in {"localhost", "127.0.0.1", "::1"}:
+        handlers.append(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener(*handlers)
+
+
 def fetch_catalog(endpoint: str, token: str, timeout: float = 2.5) -> tuple[list[dict], bool, str | None]:
     """Fetch bounded pages without exposing the credential.
 
@@ -291,7 +375,7 @@ def fetch_catalog(endpoint: str, token: str, timeout: float = 2.5) -> tuple[list
         if remaining <= 0:
             return [], False, "provider catalog timed out"
         try:
-            with urllib.request.urlopen(request, timeout=remaining) as response:
+            with _credential_opener(url).open(request, timeout=remaining) as response:
                 body = response.read(MAX_CATALOG_BYTES + 1)
             if len(body) > MAX_CATALOG_BYTES:
                 return [], False, "provider catalog response is too large"
@@ -302,6 +386,8 @@ def fetch_catalog(endpoint: str, token: str, timeout: float = 2.5) -> tuple[list
                 exc.close()
             except OSError:
                 pass
+            if 300 <= exc.code < 400:
+                return [], False, f"provider redirected to another endpoint (HTTP {exc.code}); use the final gateway URL, such redirects are not followed"
             return [], False, f"provider returned HTTP {exc.code}"
         except (OSError, UnicodeError, json.JSONDecodeError, CatalogError, ValueError) as exc:
             return [], False, f"provider catalog unavailable: {type(exc).__name__}"

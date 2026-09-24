@@ -27,7 +27,7 @@ sys.dont_write_bytecode = True
 _HERE = Path(__file__).resolve().parent
 SCRIPTS = _HERE if (_HERE / "provider_catalog.py").is_file() else _HERE.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
-from provider_catalog import CatalogError, acquire_lock, load_policy, release_lock  # noqa: E402
+from provider_catalog import CatalogError, acquire_lock, generic_policy, load_policy, release_lock  # noqa: E402
 
 # Windows pipes and consoles default to a legacy encoding while policy output
 # may quote non-ASCII model names or paths; emit stdout as UTF-8.
@@ -394,12 +394,36 @@ def clean_model_id(model_id: str | None) -> str:
     return re.sub(r"\[.*?\]$", "", model_id).strip()
 
 
+def live_gateway_credentials(home: Path) -> tuple[str, str] | None:
+    """The endpoint/token settings.json is currently using, or None when
+    native or incomplete. Cached rows are only trustworthy for display when
+    scoped to this exact endpoint and account."""
+    settings = read_json(home / ".claude" / "settings.json", {})
+    env = settings.get("env") if isinstance(settings, dict) else None
+    if not isinstance(env, dict):
+        return None
+    endpoint, token = env.get("ANTHROPIC_BASE_URL"), env.get("ANTHROPIC_AUTH_TOKEN")
+    if isinstance(endpoint, str) and endpoint and isinstance(token, str) and token:
+        return endpoint, token
+    return None
+
+
+def live_cache_rows(home: Path, catalog_cache: Path) -> list[dict]:
+    """Cached catalog rows, validated against the live endpoint/token with a
+    30-day display TTL. Native, a mismatched endpoint/token, or a stale or
+    invalid cache all yield no rows -- stale display data is worse than none."""
+    from provider_catalog import cache_rows
+    credentials = live_gateway_credentials(home)
+    if credentials is None:
+        return []
+    cache_data = read_json(catalog_cache, {})
+    rows = cache_rows(cache_data, credentials[0], credentials[1], ttl=30 * 24 * 60 * 60)
+    return rows if rows else []
+
+
 def get_live_catalog_info(home: Path) -> dict:
     catalog_cache = home / ".claude" / "cache" / "provider-models-cache.json"
-    cache_data = read_json(catalog_cache, {})
-    models = []
-    if isinstance(cache_data, dict) and isinstance(cache_data.get("models"), list):
-        models = cache_data["models"]
+    models = live_cache_rows(home, catalog_cache)
 
     live_ids = set()
     clean_ids = set()
@@ -613,7 +637,7 @@ def audit_fleet(home: Path, config_home: Path, policy_file: Path) -> dict:
     try:
         policy = load_policy(policy_file)
     except CatalogError:
-        policy = {"version": "provider-policy.v1", "provider": "gateway", "families": [{"name": "gateway", "prefixes": [""], "approved": True}]}
+        policy = generic_policy()
     overrides = tier_overrides(policy, fleet_config if isinstance(fleet_config, dict) else {})
     excluded = excluded_models(fleet_config)
     raw_rows = read_json(Path(catalog_info["cache_file"]), {})
@@ -776,11 +800,12 @@ def is_alias(model: object) -> bool:
 
 
 def runtime_catalog(home: Path, policy_file: Path | None) -> dict[str, dict]:
-    """Live models under the ids settings.json uses (context suffix applied)."""
+    """Live models under the ids settings.json uses (context suffix applied).
+    Native, or a cache that does not match the live endpoint/token, yields no
+    rows rather than another provider's stale entries."""
     from provider_catalog import available_rows
-    rows = read_json(home / ".claude" / "cache" / "provider-models-cache.json", {})
-    models = rows.get("models") if isinstance(rows, dict) else None
-    if not isinstance(models, list):
+    models = live_cache_rows(home, home / ".claude" / "cache" / "provider-models-cache.json")
+    if not models:
         return {}
     try:
         policy = load_policy(policy_file) if policy_file else {}
