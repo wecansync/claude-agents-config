@@ -1253,7 +1253,9 @@ def effective_gateway(args: argparse.Namespace, existing: dict, previous: dict, 
         old = prior.get(f"value:env:{key}")
         owned = bool(old and old.get("installedPresent", True) and current_matches_installed(current, old))
         if current != value and not owned:
-            return live_url.rstrip("/"), live_token, False
+            # Verbatim: the kept values must compare equal to the live ones,
+            # so none of them is rewritten or claimed as installer-owned.
+            return live_url, live_token, False
     return url, token, True
 
 
@@ -1506,13 +1508,13 @@ def merge_settings(
     gateway_owned = False
     gateway_state = None
     if gateway_mode:
-        url, token, _requested = effective_gateway(args, existing, previous, gateway_token)
+        url, token, requested = effective_gateway(args, existing, previous, gateway_token)
         if not url or not token:
             fail("gateway mode requires both URL and token before any write")
         gateway_url_check(str(url))
-        if urllib.parse.urlparse(str(url)).scheme == "http" and not args.allow_insecure_http and args.gateway_url:
+        if urllib.parse.urlparse(str(url)).scheme == "http" and not args.allow_insecure_http and args.gateway_url and requested:
             fail("HTTP gateway URLs require explicit --allow-insecure-http")
-        for key, value in (("ANTHROPIC_BASE_URL", str(url).rstrip("/")), ("ANTHROPIC_AUTH_TOKEN", str(token))):
+        for key, value in (("ANTHROPIC_BASE_URL", str(url)), ("ANTHROPIC_AUTH_TOKEN", str(token))):
             identity = f"value:env:{key}"
             current = env.get(key, ABSENT)
             old = prior.get(identity)
@@ -1520,7 +1522,7 @@ def merge_settings(
             # value equals the prior installed value. A user replacement is
             # carried forward but must not become uninstall-owned.
             owned = bool(old and old.get("installedPresent", True) and current_matches_installed(current, old))
-            if current != value:
+            if current != value and requested:
                 # effective_gateway keeps a live pair changed after install, so
                 # a differing value here is one this install may write.
                 record_value_journal(journal, identity, ["env", key], current, value, prior)
@@ -2804,13 +2806,19 @@ def settings_for_uninstall(path: Path, meta: dict) -> tuple[bytes | None, bool]:
         (entry for entry in entries if isinstance(entry, dict)),
         key=lambda entry: (0 if entry.get("kind") == "value" else 1, entry.get("id") == API_KEY_JOURNAL_ID, str(entry.get("id", ""))),
     )
+    restored: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("kind"), str):
             continue
         kind = entry["kind"]
-        if entry.get("id") == API_KEY_JOURNAL_ID and get_nested(current, ["env", "ANTHROPIC_BASE_URL"]) is not ABSENT:
+        if (
+            entry.get("id") == API_KEY_JOURNAL_ID
+            and get_nested(current, ["env", "ANTHROPIC_BASE_URL"]) is not ABSENT
+            and "value:env:ANTHROPIC_BASE_URL" not in restored
+        ):
             # A gateway the user switched to stays configured; removing the
-            # mask would let a shell API key reach it.
+            # mask would let a shell API key reach it. A pre-install URL that
+            # uninstall restored had no mask, so the mask goes with it.
             continue
         if kind == "value" and entry.get("id") == "value:modelPicker" and isinstance(entry.get("ownedRows"), list):
             picker = current.get("modelPicker") if isinstance(current.get("modelPicker"), dict) else None
@@ -2847,6 +2855,7 @@ def settings_for_uninstall(path: Path, meta: dict) -> tuple[bytes | None, bool]:
                     set_nested(current, [str(part) for part in entry["path"]], entry.get("before"))
                 else:
                     delete_nested(current, [str(part) for part in entry["path"]])
+                restored.add(str(entry.get("id")))
                 changed = True
         elif kind == "list-item" and isinstance(entry.get("path"), list):
             values = get_nested(current, [str(part) for part in entry["path"]])

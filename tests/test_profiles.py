@@ -43,6 +43,11 @@ def gateway(ids: list[str], token: str):
 
         def do_GET(self):  # noqa: N802
             type(self).seen.append(self.headers.get("Authorization"))
+            if type(self).mode == "slash" and self.path.split("?")[0] == "/v1/models":
+                self.send_response(301)
+                self.send_header("Location", "/v1/models/?" + self.path.partition("?")[2])
+                self.end_headers()
+                return
             if type(self).mode == "redirect":
                 self.send_response(302)
                 self.send_header("Location", type(self).redirect_to + self.path)
@@ -344,12 +349,12 @@ class ProfileTests(unittest.TestCase):
         self.assertNotIn("Gateway changed", result.stdout)
         self.assertEqual(self.read(self.policy_path), self.omni_policy)
 
-    def test_a_saved_policy_wins_over_an_older_legacy_profile(self):
+    def test_a_saved_policy_wins_over_a_legacy_profile(self):
         self.ok(self.add("b", "b"))
         profile = self.read(self.home / ".claude/agentfleet/profiles/b.json")
         legacy = {key: value for key, value in profile.items() if key != "policy"}
-        legacy.update(name="aaa-old", savedAt="2020-01-01T00:00:00Z")
-        (self.home / ".claude/agentfleet/profiles/aaa-old.json").write_text(json.dumps(legacy))
+        legacy.update(name="aaa-new", savedAt="2099-01-01T00:00:00Z")
+        (self.home / ".claude/agentfleet/profiles/aaa-new.json").write_text(json.dumps(legacy))
         result = self.ok(self.install("b"))
         self.assertIn("agentfleet profile 'b'", result.stdout)
         self.assertEqual(self.read(self.policy_path), profile["policy"])
@@ -357,18 +362,41 @@ class ProfileTests(unittest.TestCase):
     def test_reinstall_after_an_agentfleet_switch_keeps_the_live_gateway(self):
         self.ok(self.add("b", "b", "--use"))
         b_policy = self.read(self.home / ".claude/agentfleet/profiles/b.json")["policy"]
+        settings_path = self.home / ".claude/settings.json"
+        settings = self.read(settings_path)
+        settings["env"]["ANTHROPIC_BASE_URL"] = self.url("b") + "/"
+        settings_path.write_text(json.dumps(settings))
         # Re-running the original install command (gateway a) must not revert
         # the switch, nor mix a's policy or lanes into b's live setup.
         result = self.ok(self.install("a"))
         self.assertIn("Keeping the live gateway", result.stdout)
         env = self.settings_env()
-        self.assertEqual((env["ANTHROPIC_BASE_URL"], env["ANTHROPIC_AUTH_TOKEN"]), (self.url("b"), TOKENS["b"]))
+        self.assertEqual((env["ANTHROPIC_BASE_URL"], env["ANTHROPIC_AUTH_TOKEN"]), (self.url("b") + "/", TOKENS["b"]), "kept verbatim")
         self.assertEqual(self.read(self.policy_path), b_policy)
         self.assertEqual({provider_catalog.strip_known_suffix(lane["model"]) for lane in self.lanes().values()} - set(B_IDS), set())
         self.gates()
         self.ok(self.af("use", "native"))
         saved = self.read(self.home / ".claude/agentfleet/profiles/b.json")
-        self.assertEqual((saved["env"]["ANTHROPIC_BASE_URL"], saved["policy"]), (self.url("b"), b_policy), "b's profile keeps b's setup")
+        self.assertEqual((saved["env"]["ANTHROPIC_BASE_URL"], saved["policy"]), (self.url("b") + "/", b_policy), "b's profile keeps b's setup")
+
+    def test_uninstall_after_keeping_the_live_gateway_leaves_it_whole(self):
+        self.ok(self.add("b", "b", "--use"))
+        settings_path = self.home / ".claude/settings.json"
+        settings = self.read(settings_path)
+        settings["env"]["ANTHROPIC_BASE_URL"] = self.url("b") + "/"
+        settings_path.write_text(json.dumps(settings))
+        self.ok(self.install("a"))
+        self.ok(self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(self.home), "--config-home", str(self.config)]))
+        env = self.read(settings_path)["env"]
+        self.assertEqual((env.get("ANTHROPIC_BASE_URL"), env.get("ANTHROPIC_AUTH_TOKEN"), env.get("ANTHROPIC_API_KEY")),
+                         (self.url("b") + "/", TOKENS["b"], ""), "the user's gateway was never claimed, so uninstall leaves URL, token, and mask")
+
+    def test_https_rerun_keeps_a_loopback_gateway_switched_to_later(self):
+        self.ok(self.add("b", "b", "--use"))
+        result = self.ok(self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--provider", "gateway", "--gateway-url", "https://gw.invalid.example",
+                                       "--gateway-token-env", "TOK_C", "--home", str(self.home), "--config-home", str(self.config)]))
+        self.assertIn("Keeping the live gateway", result.stdout)
+        self.assertEqual(self.settings_env()["ANTHROPIC_BASE_URL"], self.url("b"))
 
     def test_dry_run_never_sends_the_live_token_to_another_gateway(self):
         dry = self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--dry-run", "--provider", "gateway", "--gateway-url", self.url("c"),
@@ -429,6 +457,20 @@ class ProfileTests(unittest.TestCase):
         self.assertNotIn("ANTHROPIC_API_KEY", env, "the per-key entry removes the mask")
         self.assertEqual(env.get("USER_SETTING"), "1")
 
+    def test_uninstall_restores_a_pre_install_gateway_without_the_mask(self):
+        home, config = Path(self.raw.name) / "home3", Path(self.raw.name) / "config3"
+        (home / ".claude").mkdir(parents=True)
+        settings_path = home / ".claude/settings.json"
+        settings_path.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://litellm.corp.example"}}))
+        paths, env = ["--home", str(home), "--config-home", str(config)], {"HOME": str(home), "XDG_CONFIG_HOME": str(config)}
+        self.ok(self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--provider", "gateway", "--gateway-url", self.url("a"), "--allow-insecure-http",
+                              "--gateway-token-env", "TOK_A", *paths], **env))
+        self.ok(self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", *paths], **env))
+        restored = self.read(settings_path)["env"]
+        self.assertEqual(restored.get("ANTHROPIC_BASE_URL"), "https://litellm.corp.example")
+        self.assertNotIn("ANTHROPIC_API_KEY", restored, "the pre-install setup had no mask")
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", restored)
+
     def test_reinstall_keeps_a_user_api_key(self):
         settings_path = self.home / ".claude/settings.json"
         settings = self.read(settings_path)
@@ -461,6 +503,19 @@ class ProfileTests(unittest.TestCase):
         entry = next(e for e in self.read(path)["settingsJournal"] if e.get("id") == "value:env")
         self.assertEqual(set(entry["installed"]["ANTHROPIC_AUTH_TOKEN"]), {"redactedSha256"})
 
+    def test_native_update_redacts_a_carried_token_entry(self):
+        # After `use native` the token entry no longer matches settings, so an
+        # update carries it untouched; it must still lose the plaintext.
+        self.ok(self.af("use", "native"))
+        path = self.home / ".claude/.claude-agents-config-install.json"
+        meta = self.read(path)
+        for entry in meta["settingsJournal"]:
+            if entry.get("id") == "value:env:ANTHROPIC_AUTH_TOKEN":
+                entry["installed"] = TOKENS["a"]
+        path.write_text(json.dumps(meta))
+        self.ok(self.update())
+        self.assertNotIn(TOKENS["a"], path.read_text())
+
     # -- redirects and proxies ---------------------------------------------------------
     def test_redirects_are_refused_and_never_carry_the_token(self):
         self.servers["b"][1].mode = "redirect"
@@ -469,6 +524,10 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue(self.servers["b"][1].seen, "the request reached b")
         self.assertNotIn(f"Bearer {TOKENS['b']}", self.servers["c"][1].seen, "b's token never reached the redirect target")
         self.assertFalse((self.home / ".claude/agentfleet/profiles/x.json").exists())
+
+    def test_same_endpoint_redirects_are_followed(self):
+        self.servers["b"][1].mode = "slash"
+        self.ok(self.add("x", "b"))
 
     def test_loopback_gateways_bypass_proxies(self):
         dead_proxy = "http://127.0.0.1:9"

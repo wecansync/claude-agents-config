@@ -317,11 +317,22 @@ def cache_rows(value: object, endpoint: str, token: str, ttl: int = DEFAULT_CACH
 
 
 class _RefuseRedirect(urllib.request.HTTPRedirectHandler):
-    """Surface redirects as errors. urllib copies every request header,
-    credentials included, onto the redirect target, which may be another
-    host or plain HTTP."""
+    """Follow a redirect only within the same endpoint (scheme, host, and
+    port). urllib copies every request header, credentials included, onto
+    the redirect target, which may be another host or plain HTTP; any other
+    redirect surfaces as an HTTPError."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        if _origin(newurl) is not None and _origin(newurl) == _origin(req.full_url):
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+        return None
+
+
+def _origin(url: str) -> tuple[str, str, int | None] | None:
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        return parsed.scheme.lower(), (parsed.hostname or "").lower(), parsed.port or _DEFAULT_PORTS.get(parsed.scheme.lower())
+    except ValueError:
         return None
 
 
@@ -376,7 +387,7 @@ def fetch_catalog(endpoint: str, token: str, timeout: float = 2.5) -> tuple[list
             except OSError:
                 pass
             if 300 <= exc.code < 400:
-                return [], False, f"provider redirected (HTTP {exc.code}); use the final gateway URL, redirects are not followed"
+                return [], False, f"provider redirected to another endpoint (HTTP {exc.code}); use the final gateway URL, such redirects are not followed"
             return [], False, f"provider returned HTTP {exc.code}"
         except (OSError, UnicodeError, json.JSONDecodeError, CatalogError, ValueError) as exc:
             return [], False, f"provider catalog unavailable: {type(exc).__name__}"
