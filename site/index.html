@@ -9,7 +9,7 @@
 <meta property="og:description" content="A fleet of native Claude Code subagents. One command to install. Works with your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway.">
 <meta property="og:type" content="website">
 <link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
-<link rel="stylesheet" href="/assets/site.css?v=1">
+<link rel="stylesheet" href="/assets/site.css?v=2">
 <script>
 (function(){
   try {
@@ -33,6 +33,7 @@
       <a href="#features">Features</a>
       <a href="#how-it-works">How it works</a>
       <a href="#lanes">Lanes</a>
+      <a href="#changelog">Changelog</a>
       <a href="/docs/">Docs</a>
       <a href="https://github.com/wecansync/claude-agents-config">GitHub</a>
     </nav>
@@ -57,6 +58,8 @@
       <p class="eyebrow">Native Claude Code subagents</p>
       <h1>A fleet of specialist agents that runs on any provider</h1>
       <p class="lede">AgentFleet installs 19 native Claude Code subagents ("lanes"), each named for a role — plan, implement, review, test — never a model. Point it at your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway, and every lane gets the best-fit model automatically.</p>
+
+      <p class="latest-badge"><span class="latest-badge-version" data-latest-version>v2.0.5</span> &middot; <span class="latest-badge-date" data-latest-date>September 24, 2026</span> &middot; <a href="#changelog">What's new</a></p>
 
       <div class="tabs" id="install-tabs">
         <div role="tablist" aria-label="Operating system">
@@ -387,8 +390,86 @@ agentfleet save &lt;name&gt;       # name the current setup</code></pre>
   </div>
 </section>
 
+<!-- ============================== CHANGELOG ============================== -->
+<section class="section" id="changelog">
+  <div class="container-narrow">
+    <p class="eyebrow">What's new</p>
+    <h2>Latest release</h2>
+
+    <div class="release-card">
+      <div class="release-head">
+        <span class="release-version" data-latest-version>v2.0.5</span>
+        <span class="release-date" data-latest-date>September 24, 2026</span>
+      </div>
+      <p>Any number of provider profiles: add and remove gateways without reinstalling, and give each profile its own settings.</p>
+      <ul class="release-list">
+        <li>New <code class="il">agentfleet add NAME --gateway-url URL</code> and <code class="il">agentfleet remove NAME</code> add and remove gateway profiles without reinstalling.</li>
+        <li>Each profile keeps its own provider policy, model pins, exclusions, and tier labels, instead of sharing one policy across every profile.</li>
+        <li>Gateway tokens are handled more safely: no redirect leaks, a digest instead of plaintext in the install journal, and no live token sent to a new URL during a dry run.</li>
+        <li><code class="il">agentfleet update</code> (including automatic updates) now succeeds after <code class="il">agentfleet use native</code>.</li>
+        <li>Uninstall keeps the API-key mask for a gateway you switched to and restores a pre-install gateway exactly.</li>
+      </ul>
+    </div>
+
+    <h3 class="version-history-heading">Version history</h3>
+    <div class="version-history">
+      <details class="version-item">
+        <summary><span class="release-version">v2.0.4</span><span class="release-date">September 23, 2026</span><span class="version-summary">Model-to-lane interview in <code class="il">/fleet-setup</code>, automatic updates.</span></summary>
+        <ul class="release-list">
+          <li><code class="il">/fleet-setup</code> suggests a complete fleet from each model's description, tier, and context size, or walks you through it model by model.</li>
+          <li><code class="il">claude-fleet-setup --exclude/--include MODEL</code> keeps a model out of every lane while leaving it in the <code class="il">/model</code> picker.</li>
+          <li>Automatic updates: a same-major-version release installs itself in the background at most once a day. Turn it off with <code class="il">agentfleet auto-update off</code>.</li>
+          <li>A local <code class="il">.claude/</code> directory no longer breaks installs made from a git clone.</li>
+        </ul>
+      </details>
+      <details class="version-item">
+        <summary><span class="release-version">v2.0.3</span><span class="release-date">September 23, 2026</span><span class="version-summary">Redesigned website with full documentation, plus a missing CLI command.</span></summary>
+        <ul class="release-list">
+          <li>Redesigned landing page and a full documentation site at <code class="il">/docs/</code>.</li>
+          <li><code class="il">agentfleet rollback [--backup DIR]</code>, which the README already documented but which didn't exist yet.</li>
+          <li>Docs now correctly say that writable lanes are only instructed, not technically prevented, from committing, pushing, or deploying.</li>
+        </ul>
+      </details>
+      <details class="version-item">
+        <summary><span class="release-version">v2.0.2</span><span class="release-date">September 23, 2026</span><span class="version-summary">Fixed <code class="il">agentfleet update</code>, which had failed for everyone.</span></summary>
+        <ul class="release-list">
+          <li><code class="il">agentfleet update</code> works again: Cloudflare had rejected the default Python user agent before the request reached the server.</li>
+          <li>An update now removes preference values 2.0.1 stopped shipping, but only if you never changed them yourself.</li>
+        </ul>
+      </details>
+      <details class="version-item">
+        <summary><span class="release-version">v2.0.1</span><span class="release-date">September 23, 2026</span><span class="version-summary">Dropped shipped lane pins, neutral defaults, a doctor fix.</span></summary>
+        <ul class="release-list">
+          <li>Updating from 1.0.0 no longer carries over the old shipped model pins as if you had chosen them yourself.</li>
+          <li><code class="il">CLAUDE.md</code> and settings no longer include the maintainer's personal preferences; put your own in <code class="il">~/.claude/rules/*.md</code>.</li>
+          <li><code class="il">agentfleet doctor</code> now covers all 19 lanes and flags any custom lane marked read-only.</li>
+        </ul>
+      </details>
+      <details class="version-item">
+        <summary><span class="release-version">v2.0.0</span><span class="release-date">September 23, 2026</span><span class="version-summary">The project becomes AgentFleet: any provider, role-named lanes, profiles.</span></summary>
+        <ul class="release-list">
+          <li>Any provider: a Claude subscription, an Anthropic API key, or any gateway that serves <code class="il">GET /v1/models</code>.</li>
+          <li>19 role-named lanes (<code class="il">fleet-plan</code>, <code class="il">fleet-implement</code>, <code class="il">fleet-review</code>, ...) replace the 30 lanes that used to be named after models.</li>
+          <li>Tier-based model assignment with automatic fallbacks, a first-run wizard, and provider profiles (<code class="il">agentfleet use native|&lt;name&gt;</code>).</li>
+          <li>A one-command install that verifies a SHA-256 checksum.</li>
+        </ul>
+      </details>
+      <details class="version-item">
+        <summary><span class="release-version">v1.0.0</span><span class="release-date">September 18, 2026</span><span class="version-summary">The portable Claude agents configuration, before the AgentFleet name.</span></summary>
+        <ul class="release-list">
+          <li>Initial release: a portable Claude Code agents configuration installed entirely under <code class="il">~/.claude</code> and <code class="il">~/.local/bin</code>.</li>
+          <li>Provider-aware fleet repair: model discovery, advisory fallback models, and reconciliation as the gateway's model list changes.</li>
+          <li>A <code class="il">/fleet-setup</code> skill, automatic context-window sync on model switch, and Windows UTF-8 output fixes.</li>
+        </ul>
+      </details>
+    </div>
+
+    <p class="changelog-full-link"><a href="https://github.com/wecansync/claude-agents-config/blob/main/CHANGELOG.md">Full changelog on GitHub</a></p>
+  </div>
+</section>
+
 <!-- ============================== CLOSING CTA ============================== -->
-<section class="section">
+<section class="section section-alt">
   <div class="container center">
     <h2>Install AgentFleet in one command</h2>
     <p class="lede center" style="margin:0 auto 1.5rem">No root, no admin rights, checksum-verified releases.</p>
@@ -421,6 +502,6 @@ agentfleet save &lt;name&gt;       # name the current setup</code></pre>
   </div>
 </footer>
 
-<script src="/assets/site.js?v=1"></script>
+<script src="/assets/site.js?v=2"></script>
 </body>
 </html>
