@@ -53,16 +53,50 @@ def load_json(path: Path) -> object | None:
         return None
 
 
-def load_policy(path: Path) -> dict:
-    value = load_json(path)
+def validate_policy(value: object) -> dict:
+    """Raise CatalogError unless ``value`` is a well-formed provider policy."""
     if not isinstance(value, dict) or value.get("version") != POLICY_FORMAT:
-        raise CatalogError(f"invalid provider policy: {path}")
+        raise CatalogError("invalid provider policy")
     provider = value.get("provider")
     if not isinstance(provider, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", provider):
         raise CatalogError("provider policy has an invalid provider label")
     if not isinstance(value.get("families"), list):
         raise CatalogError("provider policy has no family list")
     return value
+
+
+def load_policy(path: Path) -> dict:
+    value = load_json(path)
+    try:
+        return validate_policy(value)
+    except CatalogError:
+        raise CatalogError(f"invalid provider policy: {path}") from None
+
+
+def generic_policy(provider: str = PROVIDER_NAME) -> dict:
+    """The shipped catch-all policy (every model approved), labeled for the
+    given provider. Matches config/provider-policy.json apart from the label."""
+    label = provider if isinstance(provider, str) and provider else PROVIDER_NAME
+    return {
+        "version": POLICY_FORMAT,
+        "provider": label,
+        "cacheTtlSeconds": 21600,
+        "oneMContextThreshold": 872000,
+        "contextSuffix": "[1m]",
+        "discoveryApproved": False,
+        "autoApproveProposals": True,
+        "namespaceAliases": [],
+        "runtimeAliases": {},
+        "modelTiers": {},
+        "families": [
+            {
+                "name": "gateway",
+                "prefixes": [""],
+                "approved": True,
+                "fallbackFamilies": [],
+            }
+        ],
+    }
 
 
 def policy_aliases(policy: dict) -> dict[str, str]:
@@ -204,6 +238,26 @@ def endpoint_scope(url: object) -> str:
     if port is not None:
         netloc += f":{port}"
     return urllib.parse.urlunparse((parsed.scheme.lower(), netloc, parsed.path.rstrip("/"), "", "", ""))
+
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def endpoint_identity(url: object) -> str:
+    """``scheme://host:port`` with the default port filled in and any path
+    ignored. Two URLs that resolve to the same endpoint_identity are the same
+    provider account boundary regardless of path (e.g. differing API bases
+    on one host); a different port is a different provider."""
+    scoped = endpoint_scope(url)
+    parsed = urllib.parse.urlparse(scoped)
+    hostname = parsed.hostname or ""
+    netloc = hostname.lower()
+    if ":" in netloc and not netloc.startswith("["):
+        netloc = f"[{netloc}]"
+    port = parsed.port if parsed.port is not None else _DEFAULT_PORTS.get(parsed.scheme)
+    if port is not None:
+        netloc += f":{port}"
+    return urllib.parse.urlunparse((parsed.scheme, netloc, "", "", "", ""))
 
 
 def account_scope(token: object) -> str:

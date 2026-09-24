@@ -804,8 +804,9 @@ def platform_hook_template(home: Path, config_root: Path, template: dict, enable
                 elif kind == "statusline":
                     command = hook_command_for("statusline", home / ".claude") + hook_marker("statusline")
                 elif kind == "model-sync":
-                    if not enable_discovery:
-                        continue
+                    # Always wired: it does nothing until gateway discovery is
+                    # enabled, and a native install can later switch to a
+                    # gateway profile with `agentfleet add --use`.
                     command = hook_command_for("model-sync", home / ".claude", config_root) + hook_marker("model-sync")
                 elif kind == "model-context":
                     command = hook_command_for("model-context", home / ".claude", config_root) + hook_marker("model-context")
@@ -1088,6 +1089,9 @@ def carry_lane_choices(bundle_fleet: dict, existing: dict, *, drop_shipped_pins:
     tiers = existing.get("modelTiers")
     if isinstance(tiers, dict):
         result["modelTiers"] = {**result.get("modelTiers", {}), **copy.deepcopy(tiers)}
+    excluded = [item for item in existing.get("excludedModels") or [] if isinstance(item, str) and item.strip()]
+    if excluded:
+        result["excludedModels"] = excluded
     return result
 
 
@@ -1128,31 +1132,15 @@ def gateway_profile(bundle_fleet: dict, template: dict, rows: list[dict], policy
     reconcile = reconcile_module()
     fleet, picker, _pending, catalog = reconcile.resolve_fleet(bundle_fleet, {}, rows, policy)
     fleet.pop("_reconcile", None)
-    lanes = fleet.get("lanes", {})
-    def lane_model(*names: str) -> str | None:
-        for name in names:
-            model = lanes.get(name, {}).get("model") if isinstance(lanes.get(name), dict) else None
-            if isinstance(model, str) and model in catalog:
-                return model
-        return None
+    chosen = reconcile.gateway_settings(fleet, catalog)
     result = copy.deepcopy(template)
     result["modelPicker"] = picker
-    balanced = lane_model("implement", "tests") or next(iter(catalog), None)
-    deep = lane_model("plan", "review", "implement-deep") or balanced
-    fast = lane_model("explore-narrow", "implement-fast") or balanced
-    if balanced:
-        result["model"] = balanced
-    if deep:
-        result["advisorModel"] = deep
+    if chosen["model"]:
+        result["model"] = chosen["model"]
+    if chosen["advisorModel"]:
+        result["advisorModel"] = chosen["advisorModel"]
     env = result.get("env") if isinstance(result.get("env"), dict) else {}
-    for key, model in (
-        ("ANTHROPIC_DEFAULT_OPUS_MODEL", deep),
-        ("ANTHROPIC_DEFAULT_SONNET_MODEL", balanced),
-        ("ANTHROPIC_DEFAULT_HAIKU_MODEL", fast),
-        ("ANTHROPIC_SMALL_FAST_MODEL", fast),
-    ):
-        if model:
-            env[key] = model
+    env.update(chosen["env"])
     result["env"] = env
     return fleet, result
 

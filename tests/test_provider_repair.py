@@ -1896,6 +1896,25 @@ class AgentFleetTwoTests(unittest.TestCase):
             self.assertNotIn("excludedModels", fleet)
             self.assertEqual(fleet["lanes"]["plan"]["model"], "opus")
 
+    def test_exclusion_survives_reinstall(self):
+        # Regression: carry_lane_choices used to drop excludedModels on every
+        # update, silently un-excluding a model the user opted out of.
+        with tempfile.TemporaryDirectory(prefix="agentfleet exclude-carry ") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config)
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            setup = subprocess.run([str(home / ".local/bin/claude-fleet-setup"), "--exclude", "opus"], env=env, text=True, capture_output=True)
+            self.assertEqual(setup.returncode, 0, setup.stderr + setup.stdout)
+            fleet = json.loads((home / ".claude/fleet.json").read_text())
+            self.assertEqual(fleet["excludedModels"], ["opus"])
+            reinstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(reinstall.returncode, 0, reinstall.stderr + reinstall.stdout)
+            fleet = json.loads((home / ".claude/fleet.json").read_text())
+            self.assertEqual(fleet.get("excludedModels"), ["opus"], "exclusion must survive an update, not just a fleet-setup edit")
+            mirror = json.loads((config / "delegate-skills/config.json").read_text())
+            self.assertEqual(mirror.get("excludedModels"), ["opus"])
+
     def test_explicit_preference_wins_and_can_be_cleared(self):
         ns = self.reconcile()
         rows = [{"id": "claude-opus-5", "context_length": 1000000}, {"id": "claude-sonnet-5", "context_length": 1000000}]

@@ -279,7 +279,7 @@ def fit_lanes(paths: Paths, fleet: dict, picker_rows: list[dict]) -> dict:
     try:
         policy = provider_catalog.load_policy(paths.policy)
     except provider_catalog.CatalogError:
-        policy = {"version": "provider-policy.v1", "provider": "gateway", "families": [{"name": "gateway", "prefixes": [""], "approved": True}]}
+        policy = provider_catalog.generic_policy()
     rows = [{"id": row["model"], "description": row.get("description", "")} for row in picker_rows if isinstance(row, dict) and row.get("model")]
     resolved, _picker, _pending, _catalog = reconcile_module(paths).resolve_fleet(fleet, {}, rows, policy)
     resolved.pop("_reconcile", None)

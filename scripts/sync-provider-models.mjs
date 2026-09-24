@@ -327,6 +327,13 @@ async function run() {
   const discovery = fetchCatalog(settings);
   const lock = acquireSharedLock();
   if (!lock) return response(null, null, "Provider reconciliation was deferred because another fleet writer holds the lock.");
+  // A profile switch may have landed while the catalog was being fetched.
+  const current = readJson(SETTINGS_PATH);
+  if (current?.env?.ANTHROPIC_BASE_URL !== settings.env?.ANTHROPIC_BASE_URL
+      || current?.env?.ANTHROPIC_AUTH_TOKEN !== settings.env?.ANTHROPIC_AUTH_TOKEN) {
+    releaseSharedLock(lock);
+    return response(null, null, "Provider changed during startup; reconciliation deferred to the next start.");
+  }
   try {
     let extraMessage = null;
     if (discovery?.network === true && Array.isArray(discovery.rows)) {
