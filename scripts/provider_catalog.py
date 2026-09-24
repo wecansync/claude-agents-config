@@ -316,6 +316,25 @@ def cache_rows(value: object, endpoint: str, token: str, ttl: int = DEFAULT_CACH
     return rows if complete else None
 
 
+class _RefuseRedirect(urllib.request.HTTPRedirectHandler):
+    """Surface redirects as errors. urllib copies every request header,
+    credentials included, onto the redirect target, which may be another
+    host or plain HTTP."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        return None
+
+
+def _credential_opener(url: str) -> urllib.request.OpenerDirector:
+    """An opener for requests that carry the provider credential: no
+    redirects, and no proxy for a loopback gateway (urllib does not bypass
+    proxies for localhost by itself, and that hop is plain HTTP)."""
+    handlers: list[urllib.request.BaseHandler] = [_RefuseRedirect()]
+    if (urllib.parse.urlparse(url).hostname or "").lower() in {"localhost", "127.0.0.1", "::1"}:
+        handlers.append(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener(*handlers)
+
+
 def fetch_catalog(endpoint: str, token: str, timeout: float = 2.5) -> tuple[list[dict], bool, str | None]:
     """Fetch bounded pages without exposing the credential.
 
@@ -345,7 +364,7 @@ def fetch_catalog(endpoint: str, token: str, timeout: float = 2.5) -> tuple[list
         if remaining <= 0:
             return [], False, "provider catalog timed out"
         try:
-            with urllib.request.urlopen(request, timeout=remaining) as response:
+            with _credential_opener(url).open(request, timeout=remaining) as response:
                 body = response.read(MAX_CATALOG_BYTES + 1)
             if len(body) > MAX_CATALOG_BYTES:
                 return [], False, "provider catalog response is too large"
@@ -356,6 +375,8 @@ def fetch_catalog(endpoint: str, token: str, timeout: float = 2.5) -> tuple[list
                 exc.close()
             except OSError:
                 pass
+            if 300 <= exc.code < 400:
+                return [], False, f"provider redirected (HTTP {exc.code}); use the final gateway URL, redirects are not followed"
             return [], False, f"provider returned HTTP {exc.code}"
         except (OSError, UnicodeError, json.JSONDecodeError, CatalogError, ValueError) as exc:
             return [], False, f"provider catalog unavailable: {type(exc).__name__}"

@@ -24,7 +24,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "d845be49a3c1ed84c34590724ada5146e8ee2e77408e38e5396cf8eb9714a50b",
+      "sha256": "81babe7d6b48d684298d598dee9b90e27f0ee897de37d3ce81de949306fdffc4",
       "mode": "0o644"
     },
     {
@@ -129,7 +129,7 @@
     },
     {
       "path": "bin/agentfleet",
-      "sha256": "2d0e8bcafc49239337b56684a425c49a4b980da4a1b383921782ad57ba29b84c",
+      "sha256": "35eb7f76f0a670670a05d7085bfd7b690601b5c4ae27b3eaaf212d7f4782fd18",
       "mode": "0o755"
     },
     {
@@ -149,7 +149,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "2838e10f4c00deb15f4c46d5f3907295458c1f1a8241d41af13a6285c6ac5189",
+      "sha256": "8a44544a6538a431805673a7a2c5d548f21bdd18654ac941eec0c37d6daf05ca",
       "mode": "0o755"
     },
     {
@@ -204,7 +204,7 @@
     },
     {
       "path": "scripts/provider_catalog.py",
-      "sha256": "12c52161977eb5d0113bcf77b677827964a05756e1bfbbd3de4d355f5e4f3354",
+      "sha256": "7d7507ad4752776e079745cb72c5e48758a9f6a56fbffe67d263514b85a4172c",
       "mode": "0o755"
     },
     {
@@ -239,7 +239,7 @@
     },
     {
       "path": "tests/test_profiles.py",
-      "sha256": "6dd88640dd5abdd91d20adb6ac695da8b510ad3f4c053fda7fb46e45970fa858",
+      "sha256": "4d9902bd86c5c3af15271f5616ca63fe646c88153f142afc49c176a810bfc4cc",
       "mode": "0o755"
     },
     {

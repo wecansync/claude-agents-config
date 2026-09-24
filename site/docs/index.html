@@ -547,7 +547,7 @@ agentfleet use openrouter     # or pass --use to add</code></pre>
             </tbody>
           </table>
         </div>
-        <aside class="callout tip"><span class="callout-label">Tip</span><p>Re-running the installer with a different <code class="il">--gateway-url</code> also switches providers, but it cannot keep the old setup: it uses the policy and choices of a saved profile for that endpoint if there is one, and otherwise the generic policy without the old provider's pins and exclusions. Prefer <code class="il">agentfleet add</code>.</p></aside>
+        <aside class="callout tip"><span class="callout-label">Tip</span><p>Re-running the installer with a different <code class="il">--gateway-url</code> also switches providers, but it cannot keep the old setup: it uses the policy and choices of a saved profile for that endpoint if there is one, and otherwise the generic policy without the old provider's pins and exclusions. Prefer <code class="il">agentfleet add</code>. After a switch with <code class="il">agentfleet</code>, re-running the original install command (or an update) keeps the gateway you switched to.</p></aside>
         <h3 id="profiles-storage" class="anchor-heading">Where profiles are stored<a class="anchor-link" href="#profiles-storage" aria-label="Link to this section">#</a></h3>
         <ul class="req-list">
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Profiles: <code class="il">~/.claude/agentfleet/profiles/</code></li>

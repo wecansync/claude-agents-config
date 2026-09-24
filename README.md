@@ -295,7 +295,8 @@ Re-running the installer with a different `--gateway-url` also switches
 providers, but it cannot keep the old setup: it uses the policy and choices of
 a saved profile for that endpoint if there is one, and otherwise the generic
 policy without the old provider's pins and exclusions. Prefer
-`agentfleet add`.
+`agentfleet add`. After a switch with `agentfleet`, re-running the original
+install command (or an update) keeps the gateway you switched to.
 
 ---
 

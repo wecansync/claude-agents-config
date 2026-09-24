@@ -150,11 +150,15 @@ def valid_name(name: str) -> str:
 
 
 def url_identity(url: object) -> str | None:
-    """scheme://host:port of a gateway URL; None when it is not a usable URL."""
+    """scheme://host:port of a gateway URL; None when there is no URL.
+
+    A URL the catalog rejects (e.g. plain HTTP on a LAN) compares by its
+    normalized text, so two such gateways never count as the same one.
+    """
     try:
         return provider_catalog.endpoint_identity(url)
     except provider_catalog.CatalogError:
-        return None
+        return url.strip().rstrip("/").lower() if isinstance(url, str) and url.strip() else None
 
 
 def saved_url(paths: Paths, name: str) -> str | None:
@@ -178,7 +182,9 @@ def gateway_name(url: str) -> str:
         return f"local-{port}" if port else "local"
     labels = [label for label in host.split(".") if label and label not in {"www", "api", "gateway", "llm", "ai"}]
     name = re.sub(r"[^a-z0-9-]+", "-", labels[0] if labels else "gateway").strip("-") or "gateway"
-    return name[:40]
+    name = name[:40]
+    # Profile names become file names; Windows reserves device names.
+    return f"{name}-gateway" if name in RESERVED_NAMES else name
 
 
 def current_kind(settings: dict) -> str:
@@ -201,7 +207,8 @@ def active_name(paths: Paths, settings: dict) -> str:
         except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
             saved_kind = None
         env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
-        if saved_kind == kind and (kind == "native" or url_identity(saved_url(paths, name)) == url_identity(env.get("ANTHROPIC_BASE_URL"))):
+        identity = url_identity(saved_url(paths, name))
+        if saved_kind == kind and (kind == "native" or (identity is not None and identity == url_identity(env.get("ANTHROPIC_BASE_URL")))):
             return name
     env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
     url = env.get("ANTHROPIC_BASE_URL")
@@ -267,12 +274,14 @@ def save_profile(paths: Paths, profile: dict, token: str | None) -> None:
     for directory in (paths.store, paths.profiles, paths.secrets):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(directory, 0o700)
-    atomic_write(paths.profiles / f"{profile['name']}.json", json_bytes(profile), 0o600)
+    # The profile and its token are two files. Drop the old token first: an
+    # interrupted save then leaves a profile without a token, which `use`
+    # refuses, and never a new URL paired with another gateway's token.
     secret = paths.secrets / f"{profile['name']}.token"
+    secret.unlink(missing_ok=True)
+    atomic_write(paths.profiles / f"{profile['name']}.json", json_bytes(profile), 0o600)
     if token:
         atomic_write(secret, token.encode("utf-8"), 0o600)
-    else:
-        secret.unlink(missing_ok=True)
 
 
 def load_profile(paths: Paths, name: str) -> tuple[dict, str | None]:
@@ -363,7 +372,7 @@ def apply_profile(paths: Paths, profile: dict, token: str | None) -> bool:
         env["ANTHROPIC_AUTH_TOKEN"] = token
         # Claude Code sends ANTHROPIC_API_KEY before the gateway token.
         if isinstance(user_key, str) and user_key:
-            print("agentfleet: settings.json sets ANTHROPIC_API_KEY; Claude Code may send it instead of the gateway token.", file=sys.stderr)
+            print("agentfleet: settings.json sets ANTHROPIC_API_KEY; Claude Code may send it to the gateway instead of the gateway token; remove it unless the gateway expects it.", file=sys.stderr)
         else:
             env["ANTHROPIC_API_KEY"] = ""
     # Compaction controls must stay paired; derive the env value from the
@@ -526,7 +535,7 @@ def read_token(name: str, env_name: str | None) -> str:
             die("--token-env must name an environment variable (letters, digits, and underscores)")
         value = os.environ.get(env_name, "")
         if not value:
-            die(f"environment variable {env_name} is not set or is empty")
+            die("the environment variable named by --token-env is not set or is empty (pass its name, e.g. --token-env MY_TOKEN, not $MY_TOKEN)")
     elif sys.stdin.isatty() and sys.stderr.isatty():
         value = getpass.getpass(f"Token for {name} (input hidden): ")
     else:

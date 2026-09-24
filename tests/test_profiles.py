@@ -7,6 +7,7 @@ import http.server
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import socketserver
 import stat
@@ -37,8 +38,16 @@ def gateway(ids: list[str], token: str):
     """A fake gateway with its own state (one class per server)."""
     class Handler(http.server.BaseHTTPRequestHandler):
         mode = "ok"
+        redirect_to = ""
+        seen: list = []
 
         def do_GET(self):  # noqa: N802
+            type(self).seen.append(self.headers.get("Authorization"))
+            if type(self).mode == "redirect":
+                self.send_response(302)
+                self.send_header("Location", type(self).redirect_to + self.path)
+                self.end_headers()
+                return
             if self.headers.get("Authorization") != f"Bearer {token}":
                 self.send_response(401)
                 self.end_headers()
@@ -87,6 +96,7 @@ class ProfileTests(unittest.TestCase):
     def setUp(self):
         for _server, handler, _url in self.servers.values():
             handler.mode = "ok"
+            handler.seen = []
         self.raw = tempfile.TemporaryDirectory(prefix="agentfleet profiles ")
         self.addCleanup(self.raw.cleanup)
         self.home, self.config = Path(self.raw.name) / "home", Path(self.raw.name) / "config"
@@ -125,8 +135,8 @@ class ProfileTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn(text, result.stderr + result.stdout)
 
-    def add(self, name, key, *extra):
-        return self.af("add", name, "--gateway-url", self.url(key), "--allow-insecure-http", "--token-env", f"TOK_{key.upper()}", *extra)
+    def add(self, name, key, *extra, **env):
+        return self.af("add", name, "--gateway-url", self.url(key), "--allow-insecure-http", "--token-env", f"TOK_{key.upper()}", *extra, **env)
 
     def settings_env(self) -> dict:
         return self.read(self.home / ".claude/settings.json")["env"]
@@ -275,6 +285,9 @@ class ProfileTests(unittest.TestCase):
         self.gates()
 
     # -- reinstalling with another gateway -----------------------------------------------
+    def update(self):
+        return self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--home", str(self.home), "--config-home", str(self.config)])
+
     def install(self, key, *extra):
         return self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--provider", "gateway", "--gateway-url", self.url(key), "--allow-insecure-http",
                              "--gateway-token-env", f"TOK_{key.upper()}", "--home", str(self.home), "--config-home", str(self.config), *extra])
@@ -327,9 +340,67 @@ class ProfileTests(unittest.TestCase):
         profile = self.read(path)
         del profile["policy"]
         path.write_text(json.dumps(profile))
-        result = self.install("b")
+        result = self.ok(self.install("b"))
         self.assertNotIn("Gateway changed", result.stdout)
         self.assertEqual(self.read(self.policy_path), self.omni_policy)
+
+    def test_a_saved_policy_wins_over_an_older_legacy_profile(self):
+        self.ok(self.add("b", "b"))
+        profile = self.read(self.home / ".claude/agentfleet/profiles/b.json")
+        legacy = {key: value for key, value in profile.items() if key != "policy"}
+        legacy.update(name="aaa-old", savedAt="2020-01-01T00:00:00Z")
+        (self.home / ".claude/agentfleet/profiles/aaa-old.json").write_text(json.dumps(legacy))
+        result = self.ok(self.install("b"))
+        self.assertIn("agentfleet profile 'b'", result.stdout)
+        self.assertEqual(self.read(self.policy_path), profile["policy"])
+
+    def test_reinstall_after_an_agentfleet_switch_keeps_the_live_gateway(self):
+        self.ok(self.add("b", "b", "--use"))
+        b_policy = self.read(self.home / ".claude/agentfleet/profiles/b.json")["policy"]
+        # Re-running the original install command (gateway a) must not revert
+        # the switch, nor mix a's policy or lanes into b's live setup.
+        result = self.ok(self.install("a"))
+        self.assertIn("Keeping the live gateway", result.stdout)
+        env = self.settings_env()
+        self.assertEqual((env["ANTHROPIC_BASE_URL"], env["ANTHROPIC_AUTH_TOKEN"]), (self.url("b"), TOKENS["b"]))
+        self.assertEqual(self.read(self.policy_path), b_policy)
+        self.assertEqual({provider_catalog.strip_known_suffix(lane["model"]) for lane in self.lanes().values()} - set(B_IDS), set())
+        self.gates()
+        self.ok(self.af("use", "native"))
+        saved = self.read(self.home / ".claude/agentfleet/profiles/b.json")
+        self.assertEqual((saved["env"]["ANTHROPIC_BASE_URL"], saved["policy"]), (self.url("b"), b_policy), "b's profile keeps b's setup")
+
+    def test_dry_run_never_sends_the_live_token_to_another_gateway(self):
+        dry = self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--dry-run", "--provider", "gateway", "--gateway-url", self.url("c"),
+                            "--allow-insecure-http", "--home", str(self.home), "--config-home", str(self.config)])
+        self.assertEqual(dry.returncode, 0, dry.stderr + dry.stdout)
+        self.assertNotIn(f"Bearer {TOKENS['a']}", self.servers["c"][1].seen)
+
+    def test_update_keeps_discovery_after_a_native_install_switched_to_a_gateway(self):
+        self.ok(self.af("use", "native"))
+        self.ok(self.update())
+        self.ok(self.add("c", "c", "--use"))
+        self.assertEqual(self.settings_env()["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"], "1")
+        self.ok(self.update())
+        self.assertEqual(self.settings_env()["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"], "1")
+        self.gates()
+
+    def test_lan_gateways_are_told_apart(self):
+        # Plain-HTTP LAN URLs are not valid catalog endpoints; two of them
+        # still count as different gateways, and the installer copes.
+        self.ok(self.af("save", "lan1"))
+        path = self.home / ".claude/agentfleet/profiles/lan1.json"
+        profile = self.read(path)
+        profile["env"]["ANTHROPIC_BASE_URL"] = "http://192.168.1.10:4000"
+        path.write_text(json.dumps(profile))
+        (self.home / ".claude/agentfleet/active").write_text("lan1\n")
+        settings_path = self.home / ".claude/settings.json"
+        settings = self.read(settings_path)
+        settings["env"]["ANTHROPIC_BASE_URL"] = "http://192.168.1.11:4000"
+        settings_path.write_text(json.dumps(settings))
+        self.ok(self.af("use", "native"))
+        self.assertEqual(self.read(path)["env"]["ANTHROPIC_BASE_URL"], "http://192.168.1.10:4000", "lan1 was not overwritten")
+        self.ok(self.install("b"))
 
     def test_gateway_installs_blank_the_api_key_and_uninstall_removes_it(self):
         journal = self.read(self.home / ".claude/.claude-agents-config-install.json")
@@ -342,16 +413,66 @@ class ProfileTests(unittest.TestCase):
         env = self.read(settings_path).get("env", {}) if settings_path.is_file() else {}
         self.assertNotIn("ANTHROPIC_API_KEY", env, uninstall.stdout)
 
+    def test_uninstall_removes_the_api_key_entry_when_env_existed_before(self):
+        # A fresh home whose settings already have an env map, so the
+        # installer journals the key itself rather than the whole env.
+        home, config = Path(self.raw.name) / "home2", Path(self.raw.name) / "config2"
+        (home / ".claude").mkdir(parents=True)
+        settings_path = home / ".claude/settings.json"
+        settings_path.write_text(json.dumps({"env": {"USER_SETTING": "1"}}))
+        paths = ["--home", str(home), "--config-home", str(config)]
+        self.ok(self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--provider", "gateway", "--gateway-url", self.url("a"), "--allow-insecure-http",
+                              "--gateway-token-env", "TOK_A", *paths], HOME=str(home), XDG_CONFIG_HOME=str(config)))
+        self.assertEqual(self.read(settings_path)["env"]["ANTHROPIC_API_KEY"], "")
+        self.ok(self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", *paths], HOME=str(home), XDG_CONFIG_HOME=str(config)))
+        env = self.read(settings_path)["env"]
+        self.assertNotIn("ANTHROPIC_API_KEY", env, "the per-key entry removes the mask")
+        self.assertEqual(env.get("USER_SETTING"), "1")
+
     def test_reinstall_keeps_a_user_api_key(self):
         settings_path = self.home / ".claude/settings.json"
         settings = self.read(settings_path)
         settings["env"]["ANTHROPIC_API_KEY"] = "user-owned-key-value"
         settings_path.write_text(json.dumps(settings))
         result = self.ok(self.install("a"))
-        self.assertIn("may send it instead of the gateway token", result.stderr)
+        self.assertIn("may send it to the gateway instead of the gateway token", result.stderr)
         self.assertEqual(self.settings_env()["ANTHROPIC_API_KEY"], "user-owned-key-value")
         self.ok(self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(self.home), "--config-home", str(self.config)]))
         self.assertEqual(self.read(settings_path)["env"].get("ANTHROPIC_API_KEY"), "user-owned-key-value", "uninstall keeps the user's key")
+
+    def test_uninstall_keeps_the_api_key_mask_while_a_gateway_remains(self):
+        self.ok(self.add("b", "b", "--use"))
+        self.ok(self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(self.home), "--config-home", str(self.config)]))
+        env = self.read(self.home / ".claude/settings.json")["env"]
+        self.assertEqual(env.get("ANTHROPIC_BASE_URL"), self.url("b"), "the gateway the user switched to stays")
+        self.assertEqual(env.get("ANTHROPIC_API_KEY"), "", "so does the mask that keeps a shell API key away from it")
+
+    def test_update_redacts_tokens_older_versions_journaled(self):
+        path = self.home / ".claude/.claude-agents-config-install.json"
+        meta = self.read(path)
+        for entry in meta["settingsJournal"]:
+            if entry.get("id") == "value:env:ANTHROPIC_AUTH_TOKEN":
+                entry["installed"] = TOKENS["a"]
+        meta["settingsJournal"].append({"id": "value:env", "kind": "value", "path": ["env"], "beforePresent": False, "before": None,
+                                        "installedPresent": True, "installed": {"ANTHROPIC_AUTH_TOKEN": TOKENS["a"], "OTHER": "1"}})
+        path.write_text(json.dumps(meta))
+        self.ok(self.install("a"))
+        self.assertNotIn(TOKENS["a"], path.read_text())
+        entry = next(e for e in self.read(path)["settingsJournal"] if e.get("id") == "value:env")
+        self.assertEqual(set(entry["installed"]["ANTHROPIC_AUTH_TOKEN"]), {"redactedSha256"})
+
+    # -- redirects and proxies ---------------------------------------------------------
+    def test_redirects_are_refused_and_never_carry_the_token(self):
+        self.servers["b"][1].mode = "redirect"
+        self.servers["b"][1].redirect_to = self.url("c")
+        self.fails(self.add("x", "b"), "redirects are not followed")
+        self.assertTrue(self.servers["b"][1].seen, "the request reached b")
+        self.assertNotIn(f"Bearer {TOKENS['b']}", self.servers["c"][1].seen, "b's token never reached the redirect target")
+        self.assertFalse((self.home / ".claude/agentfleet/profiles/x.json").exists())
+
+    def test_loopback_gateways_bypass_proxies(self):
+        dead_proxy = "http://127.0.0.1:9"
+        self.ok(self.add("b", "b", http_proxy=dead_proxy, HTTP_PROXY=dead_proxy))
 
     # -- compatibility and safety ------------------------------------------------------
     def test_legacy_profile_keeps_the_current_policy(self):
@@ -404,8 +525,18 @@ class ProfileTests(unittest.TestCase):
         settings["env"]["ANTHROPIC_API_KEY"] = "user-owned-key-value"
         settings_path.write_text(json.dumps(settings))
         result = self.ok(self.add("b", "b", "--use"))
-        self.assertIn("may send it instead of the gateway token", result.stderr)
+        self.assertIn("may send it to the gateway instead of the gateway token", result.stderr)
         self.assertEqual(self.settings_env()["ANTHROPIC_API_KEY"], "user-owned-key-value")
+
+    def test_token_env_value_is_never_echoed(self):
+        result = self.af("add", "x", "--gateway-url", self.url("b"), "--allow-insecure-http", "--token-env", "LooksLikeAToken_1234")
+        self.fails(result, "--token-env is not set")
+        self.assertNotIn("LooksLikeAToken_1234", result.stdout + result.stderr)
+
+    def test_default_names_avoid_windows_device_names(self):
+        agentfleet = runpy.run_path(str(ROOT / "bin/agentfleet"))
+        self.assertEqual(agentfleet["gateway_name"]("https://aux.example.com"), "aux-gateway")
+        self.assertEqual(agentfleet["gateway_name"]("https://openrouter.ai/api"), "openrouter")
 
     def test_generic_policy_matches_the_shipped_file(self):
         shipped = json.loads((ROOT / "config/provider-policy.json").read_text())
