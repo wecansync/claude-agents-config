@@ -5,6 +5,7 @@
 ## 1. Fleet Commands & Configuration Management
 - `/fleet-setup` — Interactive wizard: scan models & settings, repair stale models, validate hooks, curate agents/skills, and tune the fleet.
 - `agentfleet profiles` / `agentfleet use <name>` — List provider profiles and switch between a gateway and your own Claude login (`native`); restart Claude Code after switching.
+- `agentfleet add <name> --gateway-url <url> --token-env <VAR>` / `agentfleet remove <name>` — Add another gateway as a profile without reinstalling, or delete one. Never ask for a token in chat.
 - `agentfleet status` / `agentfleet doctor` / `agentfleet update` — Audit, verify, or update the installation.
 - `claude-fleet-setup --audit` — Scan settings.json, models, hooks, agents, and skills for health and bloat.
 - `claude-fleet-setup --fix-settings` — Repair stale models in settings.json and optimize compaction window.

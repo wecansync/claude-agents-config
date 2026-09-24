@@ -38,9 +38,16 @@ Then ask only the questions that apply, in this order.
 
 **Step 1: Stale settings** (only if the audit found any). For each stale key, offer up to three live models of the matching tier (`advisorModel` and `ANTHROPIC_DEFAULT_OPUS_MODEL` → deep, `model` and `ANTHROPIC_DEFAULT_SONNET_MODEL` → balanced, haiku/small-fast → fast), plus "Keep unchanged". Apply with `claude-fleet-setup --fix-settings` or `--fix-settings --advisor <model>`.
 
-**Step 2: Provider profile.** Ask whether to stay on the current profile or switch. Options come from `agentfleet profiles`; always include `native` ("Your Claude subscription or API key login").
-- To switch, run `agentfleet use <name>`, then tell the user to restart Claude Code.
-- To keep the current gateway for later, run `agentfleet save <name>`.
+**Step 2: Provider profile.** Ask whether to stay on the current profile or switch. Options: "Stay on <active>", one per saved profile from `agentfleet profiles`, `native` ("Your Claude subscription or API key login"), "Add a provider", and "Remove a provider" (only when a non-active saved profile exists). `AskUserQuestion` takes at most 4 options; if there are more, ask "Stay", "Switch", "Add a provider", "Remove a provider" first, then list the profiles.
+- **Switch:** run `agentfleet use <name>`, then tell the user to restart Claude Code. Each profile keeps its own provider policy, lane pins, exclusions, and tier labels.
+- **Keep the current gateway for later:** `agentfleet save <name>`.
+- **Add a provider:** ask for a short name (lowercase letters, digits, dashes) and the gateway URL (e.g. `https://openrouter.ai/api`). Then ask how the token reaches the command:
+  - "It's in an environment variable" → ask only for the variable's *name*, then run `agentfleet add <name> --gateway-url <url> --token-env <VAR>`. Add `--use` if the user wants to switch now (then tell them to restart Claude Code).
+  - "I'll type it" → do not run anything. Tell the user to run `agentfleet add <name> --gateway-url <url>` in a separate terminal (not with `!`, which cannot hide input); it prompts for the token without echoing it. Wait for them to confirm, then re-run `agentfleet profiles`.
+  Never ask for, accept, or repeat a token in the chat. If the user pastes one anyway, don't echo it; tell them to rotate it. `http://` URLs work only for localhost and need `--allow-insecure-http`.
+- **Remove a provider:** confirm with `AskUserQuestion` (name the profile), then run `agentfleet remove <name> --yes`. The active profile and `native` cannot be removed.
+
+Step 3 changes apply to the active profile only; after a switch in Step 2, the choices shown next are that profile's.
 
 **Step 3: Fleet tuning.** Options:
 - **Auto-rank all lanes (Recommended):** `claude-fleet-setup --reconcile`. Each lane gets the best live model for its tier, and the next best become its fallbacks.

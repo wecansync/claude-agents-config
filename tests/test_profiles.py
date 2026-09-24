@@ -274,6 +274,85 @@ class ProfileTests(unittest.TestCase):
         self.fails(self.af("remove", "c", "--yes"), "is the active profile")
         self.gates()
 
+    # -- reinstalling with another gateway -----------------------------------------------
+    def install(self, key, *extra):
+        return self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--provider", "gateway", "--gateway-url", self.url(key), "--allow-insecure-http",
+                             "--gateway-token-env", f"TOK_{key.upper()}", "--home", str(self.home), "--config-home", str(self.config), *extra])
+
+    def test_reinstall_to_another_port_uses_the_generic_policy(self):
+        # b runs on the same host as a; only the port differs.
+        self.ok(self.run_cmd([str(self.home / ".local/bin/claude-fleet-setup"), "--exclude", "codex-5.5"]))
+        self.ok(self.run_cmd([str(self.home / ".local/bin/claude-fleet-setup"), "--prefer", "plan=claude-sonnet-5[1m]"]))
+        result = self.ok(self.install("b"))
+        self.assertIn(f"Gateway changed ({self.url('a')} -> {self.url('b')})", result.stdout)
+        self.assertEqual(self.read(self.policy_path), self.read(ROOT / "config/provider-policy.json"), "a's families are not carried to b")
+        fleet = self.read(self.home / ".claude/fleet.json")
+        self.assertNotIn("excludedModels", fleet)
+        self.assertNotIn("preferred", fleet["lanes"]["plan"])
+        models = {provider_catalog.strip_known_suffix(lane["model"]) for lane in fleet["lanes"].values()}
+        self.assertEqual(models - set(B_IDS), set(), "every lane uses one of b's models")
+        self.assertEqual(self.settings_env()["ANTHROPIC_API_KEY"], "")
+        self.gates()
+
+    def test_reinstall_to_the_same_endpoint_keeps_the_policy_and_choices(self):
+        self.ok(self.run_cmd([str(self.home / ".local/bin/claude-fleet-setup"), "--exclude", "codex-5.5"]))
+        result = self.ok(self.install("a"))
+        self.assertNotIn("Gateway changed", result.stdout)
+        self.assertEqual(self.read(self.policy_path), self.omni_policy)
+        self.assertEqual(self.read(self.home / ".claude/fleet.json").get("excludedModels"), ["codex-5.5"])
+        self.gates()
+
+    def test_reinstall_uses_the_saved_profiles_policy_and_choices(self):
+        self.ok(self.add("b", "b"))
+        path = self.home / ".claude/agentfleet/profiles/b.json"
+        profile = self.read(path)
+        profile["excludedModels"] = ["deepseek/deepseek-chat"]
+        profile["lanes"]["plan"]["preferred"] = ["anthropic/claude-sonnet-4.5"]
+        path.write_text(json.dumps(profile))
+        saved = path.read_bytes()
+        result = self.ok(self.install("b"))
+        self.assertIn("agentfleet profile 'b'", result.stdout)
+        self.assertNotIn("Gateway changed", result.stdout)
+        self.assertEqual(self.read(self.policy_path), profile["policy"])
+        fleet = self.read(self.home / ".claude/fleet.json")
+        self.assertEqual(fleet.get("excludedModels"), ["deepseek/deepseek-chat"])
+        self.assertEqual(fleet["lanes"]["plan"].get("preferred"), ["anthropic/claude-sonnet-4.5"])
+        self.assertNotIn("deepseek/deepseek-chat", {provider_catalog.strip_known_suffix(lane["model"]) for lane in fleet["lanes"].values()})
+        self.assertEqual(path.read_bytes(), saved, "the installer never writes profiles")
+        self.gates()
+
+    def test_reinstall_with_a_legacy_saved_profile_keeps_the_policy(self):
+        self.ok(self.add("b", "b"))
+        path = self.home / ".claude/agentfleet/profiles/b.json"
+        profile = self.read(path)
+        del profile["policy"]
+        path.write_text(json.dumps(profile))
+        result = self.install("b")
+        self.assertNotIn("Gateway changed", result.stdout)
+        self.assertEqual(self.read(self.policy_path), self.omni_policy)
+
+    def test_gateway_installs_blank_the_api_key_and_uninstall_removes_it(self):
+        journal = self.read(self.home / ".claude/.claude-agents-config-install.json")
+        self.assertEqual(self.settings_env()["ANTHROPIC_API_KEY"], "")
+        self.assertIn("value:env:ANTHROPIC_API_KEY", json.dumps(journal))
+        self.ok(self.install("a"))
+        self.assertEqual(self.settings_env()["ANTHROPIC_API_KEY"], "")
+        uninstall = self.ok(self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(self.home), "--config-home", str(self.config)]))
+        settings_path = self.home / ".claude/settings.json"
+        env = self.read(settings_path).get("env", {}) if settings_path.is_file() else {}
+        self.assertNotIn("ANTHROPIC_API_KEY", env, uninstall.stdout)
+
+    def test_reinstall_keeps_a_user_api_key(self):
+        settings_path = self.home / ".claude/settings.json"
+        settings = self.read(settings_path)
+        settings["env"]["ANTHROPIC_API_KEY"] = "user-owned-key-value"
+        settings_path.write_text(json.dumps(settings))
+        result = self.ok(self.install("a"))
+        self.assertIn("may send it instead of the gateway token", result.stderr)
+        self.assertEqual(self.settings_env()["ANTHROPIC_API_KEY"], "user-owned-key-value")
+        self.ok(self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(self.home), "--config-home", str(self.config)]))
+        self.assertEqual(self.read(settings_path)["env"].get("ANTHROPIC_API_KEY"), "user-owned-key-value", "uninstall keeps the user's key")
+
     # -- compatibility and safety ------------------------------------------------------
     def test_legacy_profile_keeps_the_current_policy(self):
         self.ok(self.af("save", "a"))

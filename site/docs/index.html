@@ -514,14 +514,40 @@ claude-fleet-setup --tier my-model-id=</code></pre>
 
       <section id="profiles">
         <h2 class="anchor-heading">Profiles<a class="anchor-link" href="#profiles" aria-label="Link to this section">#</a></h2>
-        <p>Profiles let you switch providers without reinstalling. Lane names stay the same; only the models behind them change.</p>
+        <p>Profiles let you switch providers without reinstalling, and you can keep as many as you like: one per gateway, plus <code class="il">native</code> for your Claude login. Lane names stay the same; only the models behind them change.</p>
         <div class="cmd-ref">
-          <div class="cmd-ref-item"><code class="il">agentfleet profiles</code><p>List saved profiles. The active one is marked with an asterisk.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet profiles</code><p>List saved profiles with each one's provider policy. The active one is marked with an asterisk.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet use native</code><p>Switch to your Claude subscription or API key login.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet use &lt;name&gt;</code><p>Switch to a saved gateway profile.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet save &lt;name&gt;</code><p>Name and save the current configuration as a profile.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet add &lt;name&gt; --gateway-url URL</code><p>Add another gateway as a profile without reinstalling. See <a href="#profiles-add">Adding a provider</a>.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet remove &lt;name&gt; [--yes]</code><p>Delete a saved profile and its token. The active profile and <code class="il">native</code> cannot be removed.</p></div>
         </div>
         <p>Switching first saves the current setup, so switching back restores it exactly. Restart Claude Code after switching profiles.</p>
+        <p>Each profile keeps its own provider policy (the model families it approves and the gateway's naming conventions), lane pins, excluded models, and tier labels. A pin or exclusion you set on one provider does not follow you to another, whose models have different names.</p>
+        <h3 id="profiles-add" class="anchor-heading">Adding a provider<a class="anchor-link" href="#profiles-add" aria-label="Link to this section">#</a></h3>
+        <p><code class="il">agentfleet add</code> saves a new gateway profile without reinstalling:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy agentfleet add example">Copy</button></div>
+          <pre><code>export OPENROUTER_TOKEN=...   # or leave --token-env out to be prompted
+agentfleet add openrouter --gateway-url https://openrouter.ai/api --token-env OPENROUTER_TOKEN
+agentfleet use openrouter     # or pass --use to add</code></pre>
+        </div>
+        <p>It lists the gateway's models first, and saves nothing if the token is rejected or no model is available. Every lane is assigned one of that gateway's models, under a generic policy that approves all of its models. The token is read from the named environment variable, or typed at a hidden prompt when you leave <code class="il">--token-env</code> out; no flag takes the token itself, so it never lands in your shell history. <code class="il">--force</code> replaces a saved profile of the same name. <code class="il">http://</code> is accepted only for localhost, with <code class="il">--allow-insecure-http</code>.</p>
+        <p>The gateway must accept Anthropic Messages requests and list its models at <code class="il">/v1/models</code>.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Provider</th><th><code class="il">--gateway-url</code></th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td>OpenRouter</td><td><code class="il">https://openrouter.ai/api</code></td><td>Namespaced model ids (<code class="il">anthropic/claude-sonnet-4.5</code>); the model list includes context sizes.</td></tr>
+              <tr><td>LiteLLM proxy</td><td>your proxy, e.g. <code class="il">http://localhost:4000</code></td><td>Its model list has no context sizes.</td></tr>
+              <tr><td>Vercel AI Gateway</td><td><code class="il">https://ai-gateway.vercel.sh/claude-code</code></td><td>Claude Code support is documented; the model list endpoint is not, so <code class="il">add</code> may be unable to list models.</td></tr>
+              <tr><td>OpenCode Zen</td><td><code class="il">https://opencode.ai/zen</code></td><td>Claude models only on its Anthropic endpoint; the base URL is not documented.</td></tr>
+              <tr><td>OmniRoute or another Anthropic-compatible gateway</td><td>your URL</td><td></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <aside class="callout tip"><span class="callout-label">Tip</span><p>Re-running the installer with a different <code class="il">--gateway-url</code> also switches providers, but it cannot keep the old setup: it uses the policy and choices of a saved profile for that endpoint if there is one, and otherwise the generic policy without the old provider's pins and exclusions. Prefer <code class="il">agentfleet add</code>.</p></aside>
         <h3 id="profiles-storage" class="anchor-heading">Where profiles are stored<a class="anchor-link" href="#profiles-storage" aria-label="Link to this section">#</a></h3>
         <ul class="req-list">
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Profiles: <code class="il">~/.claude/agentfleet/profiles/</code></li>
@@ -529,6 +555,7 @@ claude-fleet-setup --tier my-model-id=</code></pre>
         </ul>
         <h3 id="profiles-native" class="anchor-heading">Switching to native<a class="anchor-link" href="#profiles-native" aria-label="Link to this section">#</a></h3>
         <p>When you switch to <code class="il">native</code>, AgentFleet removes <code class="il">ANTHROPIC_BASE_URL</code>, <code class="il">ANTHROPIC_AUTH_TOKEN</code>, and the <code class="il">ANTHROPIC_DEFAULT_*_MODEL</code> environment overrides from settings, then maps lanes to the <code class="il">opus</code>, <code class="il">sonnet</code>, and <code class="il">haiku</code> aliases.</p>
+        <p>Gateway profiles set <code class="il">ANTHROPIC_API_KEY</code> to an empty string in <code class="il">settings.json</code>, because Claude Code would otherwise send an API key exported in your shell instead of the gateway token. Switching to <code class="il">native</code> removes it. A non-empty key already in <code class="il">settings.json</code> is yours and is left alone, with a warning.</p>
         <aside class="callout note"><span class="callout-label">Note</span><p>The name <code class="il">native</code> is reserved and cannot be used as a custom profile name.</p></aside>
       </section>
 
@@ -536,9 +563,11 @@ claude-fleet-setup --tier my-model-id=</code></pre>
         <h2 class="anchor-heading">Commands<a class="anchor-link" href="#commands" aria-label="Link to this section">#</a></h2>
         <h3 id="commands-agentfleet" class="anchor-heading">agentfleet<a class="anchor-link" href="#commands-agentfleet" aria-label="Link to this section">#</a></h3>
         <div class="cmd-ref">
-          <div class="cmd-ref-item"><code class="il">agentfleet profiles</code><p>List saved profiles and the active one (marked with an asterisk).</p></div>
-          <div class="cmd-ref-item"><code class="il">agentfleet use &lt;name&gt;</code><p>Switch to a saved profile. Use <code class="il">native</code> to switch to your Claude login. Saves the current setup first.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet profiles</code><p>List saved profiles with each one's provider policy, and the active one (marked with an asterisk).</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet use &lt;name&gt;</code><p>Switch to a saved profile. Use <code class="il">native</code> to switch to your Claude login. Saves the current setup first; <code class="il">--force</code> re-applies the active profile.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet save &lt;name&gt;</code><p>Save the current configuration as a named profile.</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet add &lt;name&gt; --gateway-url URL</code><p>Add a gateway profile without reinstalling. Options: <code class="il">--token-env VAR</code> (otherwise a hidden prompt), <code class="il">--use</code> (switch to it now), <code class="il">--force</code> (replace a saved profile), <code class="il">--allow-insecure-http</code> (localhost only).</p></div>
+          <div class="cmd-ref-item"><code class="il">agentfleet remove &lt;name&gt; [--yes]</code><p>Delete a saved profile and its token. Asks for confirmation unless <code class="il">--yes</code> is given.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet status</code><p>Show the active profile and run the audit: live models, stale settings, hook health, agents and skills with token cost.</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet doctor</code><p>Verify the installation (runs <code class="il">claude-agents-doctor --check</code>).</p></div>
           <div class="cmd-ref-item"><code class="il">agentfleet sync</code><p>Regenerate fleet agent files from <code class="il">~/.claude/fleet.json</code>.</p></div>
@@ -584,7 +613,7 @@ claude-fleet-setup --tier my-model-id=</code></pre>
           <li><h4>Phase 2: Status and wizard questions</h4><p>Prints a 4–6 line status summary drawn entirely from live audit data, then asks only the questions that apply:</p>
             <ul class="req-list">
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 1 — Stale settings</strong> (only if found): for each stale key, offers up to three live models of the matching tier, plus "Keep unchanged". Applies with <code class="il">claude-fleet-setup --fix-settings</code>.</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 2 — Provider profile</strong>: stay on the current profile or switch. Options come from <code class="il">agentfleet profiles</code>; <code class="il">native</code> is always included.</li>
+              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 2 — Provider profile</strong>: stay on the current profile, switch to a saved one or <code class="il">native</code>, add a provider, or remove one. To add a provider, the wizard asks for a name, the gateway URL, and the <em>name</em> of the environment variable that holds the token, then runs <code class="il">agentfleet add</code>; if you would rather type the token, it gives you the command to run in a separate terminal. It never asks for a token in the chat. Step 3 choices apply to the active profile.</li>
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 3 — Fleet tuning</strong>: auto-rank all lanes (recommended), assign models to lanes, fix model tier labels, or keep current assignments.</li>
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 4 — Agent curation</strong> (only if non-fleet agents exist): keep all, archive entire domains not relevant to your work (e.g. <code class="il">game_dev</code>, <code class="il">niche_ops</code>), or archive one category. Fleet lanes are never archived.</li>
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <strong>Step 5 — Skills and new agents</strong>: archive legacy delegate wrappers, create a custom lane, or do nothing.</li>
@@ -637,7 +666,7 @@ claude-fleet-setup --tier my-model-id=</code></pre>
         <h3 id="wgi-fleet" class="anchor-heading">Fleet map, policy, and manifest<a class="anchor-link" href="#wgi-fleet" aria-label="Link to this section">#</a></h3>
         <ul class="req-list">
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/fleet.json</code> — the canonical fleet map. A legacy mirror is kept in sync at <code class="il">~/.config/delegate-skills/config.json</code>.</li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.config/delegate-skills/provider-policy.json</code> — provider policy. Generic (one catch-all family) on a fresh install; an existing install keeps its provider-specific families and aliases on update.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.config/delegate-skills/provider-policy.json</code> — provider policy. Generic (one catch-all family) on a fresh install; an existing install keeps its provider-specific families and aliases on update, unless <code class="il">--gateway-url</code> names a different gateway. <code class="il">agentfleet use</code> swaps in each profile's own policy.</li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/CLAUDE.md</code> — the global delegation policy. AgentFleet manages this file and rewrites it on update. Keep your own instructions in <code class="il">~/.claude/rules/*.md</code>, which Claude Code loads in every session and AgentFleet never touches.</li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/.claude-agents-config-manifest.json</code> — installed-tree verification data. The doctor uses this and does not require the source clone.</li>
         </ul>
@@ -782,12 +811,19 @@ agentfleet rollback --backup ~/.claude/backups/claude-agents-config/20240101-120
 
         <h3 id="ts-token" class="anchor-heading">Gateway models are not refreshed at startup<a class="anchor-link" href="#ts-token" aria-label="Link to this section">#</a></h3>
         <p>The startup hook reads the gateway URL and token from <code>ANTHROPIC_BASE_URL</code> and <code>ANTHROPIC_AUTH_TOKEN</code> in <code>~/.claude/settings.json</code>, which the installer and <code>agentfleet use</code> write. It does not read your shell environment. If the gateway is unreachable, the hook uses the cached catalog; if either value is missing from <code>settings.json</code>, it skips discovery and every lane keeps its current model.</p>
-        <p>To restore the credentials, switch back to a saved gateway profile with <code>agentfleet use &lt;name&gt;</code>, or re-run the installer with the gateway flags:</p>
+        <p>To restore the credentials, switch back to a saved gateway profile with <code>agentfleet use &lt;name&gt;</code>, add the gateway again with <code>agentfleet add &lt;name&gt; --gateway-url URL --token-env VAR --use</code>, or re-run the installer with the gateway flags:</p>
         <div class="code-wrap">
           <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy gateway reinstall example">Copy</button></div>
           <pre><code># Set the token first, outside shell history.
 curl -fsSL https://agentfleet.wecansync.com/install.sh | sh -s -- --provider gateway \
   --gateway-url https://gateway.example.com --gateway-token-env MY_GATEWAY_TOKEN</code></pre>
+        </div>
+
+        <h3 id="ts-provider" class="anchor-heading">No approved models after pointing settings.json at another gateway<a class="anchor-link" href="#ts-provider" aria-label="Link to this section">#</a></h3>
+        <p>Reconcile reports <code class="il">no live approved candidate</code> or <code class="il">unapproved model family</code>: the provider policy still describes the previous gateway's model families, so none of the new gateway's models are approved. This happens when <code class="il">settings.json</code> is edited by hand to point at another gateway. Add the gateway as a profile instead; it gets a policy of its own:</p>
+        <div class="code-wrap">
+          <div class="code-head"><button class="copy-btn" type="button" aria-label="Copy agentfleet add command">Copy</button></div>
+          <pre><code>agentfleet add &lt;name&gt; --gateway-url https://gateway.example.com --token-env MY_GATEWAY_TOKEN --use</code></pre>
         </div>
 
         <h3 id="ts-lock" class="anchor-heading">"another fleet writer is busy"<a class="anchor-link" href="#ts-lock" aria-label="Link to this section">#</a></h3>

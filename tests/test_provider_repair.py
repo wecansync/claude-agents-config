@@ -1934,6 +1934,7 @@ class AgentFleetTwoTests(unittest.TestCase):
             self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
             settings = json.loads((home / ".claude/settings.json").read_text())
             self.assertNotIn("ANTHROPIC_BASE_URL", settings.get("env", {}))
+            self.assertNotIn("ANTHROPIC_API_KEY", settings.get("env", {}), "only gateway installs blank the API key")
             self.assertEqual(settings["model"], "default")
             lanes = json.loads((home / ".claude/fleet.json").read_text())["lanes"]
             self.assertEqual({config["model"] for config in lanes.values()}, {"opus", "sonnet", "haiku"})

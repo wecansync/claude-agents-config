@@ -1484,14 +1484,31 @@ def merge_settings(
                 # existing value are functional, but not owned for uninstall.
                 journal.pop(identity, None)
             gateway_owned = gateway_owned or bool(journal.get(identity))
+        # Claude Code sends ANTHROPIC_API_KEY in preference to the gateway
+        # token, so a key exported in the shell would bypass the gateway. An
+        # empty value in settings masks it. The empty value is only ever
+        # written by AgentFleet, so an unjournaled one is claimed as well; a
+        # real key in settings is the user's and stays.
+        identity = "value:env:ANTHROPIC_API_KEY"
+        current = env.get("ANTHROPIC_API_KEY", ABSENT)
+        if current is ABSENT or (current == "" and identity not in prior):
+            record_value_journal(journal, identity, ["env", "ANTHROPIC_API_KEY"], ABSENT, "", prior)
+            env["ANTHROPIC_API_KEY"] = ""
+        elif current != "":
+            journal.pop(identity, None)
+            print("claude-agents-config: settings.json sets ANTHROPIC_API_KEY; Claude Code may send it instead of the gateway token.", file=sys.stderr)
     else:
         # Only remove credentials previously owned by this bundle.  A user's
         # existing gateway environment remains untouched, but the installed fleet
         # profile is direct Anthropic and discovery is disabled.
         # Discovery has already been journaled above with the disabled value.
-        for key in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"):
+        for key in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"):
             identity = f"value:env:{key}"
             old = prior.get(identity)
+            # The empty API key masks a shell key only while a gateway is
+            # configured; it stays while a user-owned gateway URL does.
+            if key == "ANTHROPIC_API_KEY" and "ANTHROPIC_BASE_URL" in env:
+                continue
             if old and current_matches_installed(env.get(key, ABSENT), old):
                 # Carry the original pre-gateway value into the new direct
                 # profile so a later uninstall restores user settings rather
@@ -1806,14 +1823,106 @@ def merged_policy_bytes(bundle: Path, config_root: Path) -> bytes:
     return policy_data
 
 
-def install_policy(bundle: Path, config_root: Path) -> dict:
+def install_policy(policy_data: bytes) -> dict:
     try:
-        value = json.loads(merged_policy_bytes(bundle, config_root).decode("utf-8"))
+        value = json.loads(policy_data.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as exc:
         fail(f"provider policy is not valid JSON ({exc})")
     if not isinstance(value, dict):
         fail("provider policy is not a JSON object")
     return value
+
+
+def saved_gateway_profile(home: Path, identity: str) -> dict | None:
+    """The first agentfleet profile (by name) saved for this gateway endpoint.
+
+    The installer only reads the profile store; agentfleet owns it.
+    """
+    store = home / ".claude" / "agentfleet" / "profiles"
+    if not store.is_dir() or store.is_symlink():
+        return None
+    for path in sorted(store.glob("*.json")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            profile = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(profile, dict) or profile.get("kind") != "gateway":
+            continue
+        env = profile.get("env") if isinstance(profile.get("env"), dict) else {}
+        url = env.get("ANTHROPIC_BASE_URL")
+        if isinstance(url, str) and url and provider_catalog.endpoint_identity(url) == identity:
+            return {**profile, "name": path.stem}
+    return None
+
+
+def rebased_fleet(live: dict, profile: dict | None) -> dict:
+    """The installed fleet with another provider's choices: the saved
+    profile's lane pins, tier labels, and exclusions, or none at all.
+
+    Custom lanes stay; lanes left without a model are resolved against the
+    new provider's catalog.
+    """
+    result = copy.deepcopy(live) if isinstance(live.get("lanes"), dict) else {"lanes": {}}
+    saved_lanes = (profile or {}).get("lanes")
+    saved_lanes = saved_lanes if isinstance(saved_lanes, dict) else {}
+    for name, config in result["lanes"].items():
+        if not isinstance(config, dict):
+            continue
+        for field in CARRIED_LANE_FIELDS:
+            config.pop(field, None)
+        saved = saved_lanes.get(name)
+        if isinstance(saved, dict):
+            config.update({field: copy.deepcopy(saved[field]) for field in CARRIED_LANE_FIELDS if field in saved})
+    tiers = (profile or {}).get("modelTiers")
+    result["modelTiers"] = copy.deepcopy(tiers) if isinstance(tiers, dict) else {}
+    excluded = (profile or {}).get("excludedModels")
+    result["excludedModels"] = [item for item in excluded if isinstance(item, str)] if isinstance(excluded, list) else []
+    return result
+
+
+def provider_policy(bundle: Path, home: Path, config_root: Path, existing: dict, gateway_url: str | None) -> tuple[bytes, dict | None]:
+    """Return (policy bytes, fleet to carry lane choices from; None = the
+    installed fleet).
+
+    A provider policy and the lane pins describe one provider's models. When
+    an explicit --gateway-url names another endpoint than the live one, the
+    installed policy and pins are not carried: the policy and choices saved
+    with an agentfleet profile for that endpoint are used, else the generic
+    shipped policy with no pins. A profile saved before policies were stored
+    per profile keeps today's behaviour.
+    """
+    if gateway_url:
+        env = existing.get("env") if isinstance(existing.get("env"), dict) else {}
+        old_url = env.get("ANTHROPIC_BASE_URL")
+        identity = provider_catalog.endpoint_identity(gateway_url)
+        same = isinstance(old_url, str) and bool(old_url) and provider_catalog.endpoint_identity(old_url) == identity
+        profile = None if same else saved_gateway_profile(home, identity)
+        if not same and not (profile is not None and "policy" not in profile):
+            live = existing_fleet_map(home, config_root)
+            if profile is not None:
+                try:
+                    policy = provider_catalog.validate_policy(copy.deepcopy(profile["policy"]))
+                except provider_catalog.CatalogError as exc:
+                    print(f"claude-agents-config: agentfleet profile '{profile['name']}' has an invalid provider policy ({exc}); ignoring it", file=sys.stderr)
+                else:
+                    print(f"Gateway {gateway_url}: using the provider policy and lane choices saved in agentfleet profile '{profile['name']}'.")
+                    return json_bytes(policy), rebased_fleet(live, profile)
+            generic = source_bytes(bundle, PROVIDER_POLICY_PATH)
+            installed_policy = config_root / "delegate-skills" / "provider-policy.json"
+            try:
+                replaced = installed_policy.is_file() and json.loads(installed_policy.read_text(encoding="utf-8")) != json.loads(generic.decode("utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                replaced = True
+            if replaced:
+                print(
+                    f"Gateway changed ({old_url or 'no gateway'} -> {gateway_url}): not carrying the previous provider's model families; "
+                    "using the generic policy (all models approved). "
+                    "Tip: agentfleet add NAME --gateway-url URL switches providers without reinstalling."
+                )
+            return generic, rebased_fleet(live, None)
+    return merged_policy_bytes(bundle, config_root), None
 
 
 def managed_specs(
@@ -1830,6 +1939,7 @@ def managed_specs(
     journal: list[dict],
     gateway_owned: bool,
     permission_owned: list[str],
+    policy_data: bytes,
 ) -> dict[Path, tuple[bytes, int, str]]:
     claude = home / ".claude"
     fleet = config_root / "delegate-skills"
@@ -1848,7 +1958,6 @@ def managed_specs(
     add(claude / "provider_catalog.py", source_bytes(bundle, PROVIDER_CATALOG_MODULE), 0o755, "home:.claude/provider_catalog.py")
     add(claude / "fleet-reconcile.py", source_bytes(bundle, RECONCILE_SCRIPT), 0o755, "home:.claude/fleet-reconcile.py")
     add(claude / "skills" / "fleet-setup" / "SKILL.md", source_bytes(bundle, "skills/fleet-setup/SKILL.md"), 0o644, "home:.claude/skills/fleet-setup/SKILL.md")
-    policy_data = merged_policy_bytes(bundle, fleet.parent)
     add(fleet / "provider-policy.json", policy_data, 0o644, "config:provider-policy.json")
     add(fleet / "config.json", fleet_bytes, 0o644, "config:delegate-fleet.json")
     add(claude / "fleet.json", fleet_bytes, 0o644, "home:.claude/fleet.json")
@@ -2256,15 +2365,20 @@ def profile_data(
     policy: dict,
     tier_labels: dict[str, str] | None = None,
     drop_shipped_pins: bool = False,
+    carry_from: dict | None = None,
 ) -> tuple[str, bytes, dict, dict, str]:
-    """Return (profile, fleet bytes, fleet, settings template, catalog note)."""
+    """Return (profile, fleet bytes, fleet, settings template, catalog note).
+
+    Lane choices are carried from carry_from, else the installed fleet.
+    """
     template = load_json(bundle / "config/settings.template.json", "settings template")
     fleet_source = load_json(bundle / "config/delegate-fleet.json", "fleet configuration")
     fleet_source.setdefault("integrations", {})["agentBrain"] = optional_agent_brain_available()
     note = ""
+    installed = carry_from if carry_from is not None else existing_fleet_map(home, config_root)
     if gateway_mode:
         profile = "gateway"
-        carried = carry_lane_choices(fleet_source, existing_fleet_map(home, config_root), drop_shipped_pins=drop_shipped_pins)
+        carried = carry_lane_choices(fleet_source, installed, drop_shipped_pins=drop_shipped_pins)
         if tier_labels:
             carried["modelTiers"] = {**carried.get("modelTiers", {}), **tier_labels}
         url = gateway_url or (existing.get("env") or {}).get("ANTHROPIC_BASE_URL")
@@ -2292,7 +2406,7 @@ def profile_data(
     else:
         # Custom lanes carry over here too; direct_fleet then maps every lane,
         # custom ones included, to the native alias for its tier.
-        fleet = direct_fleet(carry_lane_choices(fleet_source, existing_fleet_map(home, config_root), drop_shipped_pins=drop_shipped_pins))
+        fleet = direct_fleet(carry_lane_choices(fleet_source, installed, drop_shipped_pins=drop_shipped_pins))
         template_profile = direct_template(template)
         profile = "direct-anthropic"
     fleet_bytes = json_bytes(fleet)
@@ -2489,12 +2603,14 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
             gateway_token = None
         else:
             gateway_token = obtain_gateway_token(args, True)
-    policy = install_policy(bundle, config_root)
+    policy_data, carry_from = provider_policy(bundle, home, config_root, existing, args.gateway_url)
+    policy = install_policy(policy_data)
     labels: dict[str, str] = {}
     while True:
         profile, fleet_bytes, fleet, template, catalog_note = profile_data(
             bundle, gateway_mode, home=home, config_root=config_root, existing=existing,
             gateway_url=args.gateway_url, gateway_token=gateway_token, policy=policy, tier_labels=labels,
+            carry_from=carry_from,
             # One-time migration of 1.0.0's shipped pins. A fresh install
             # also qualifies, harmlessly: it has no fleet to carry.
             drop_shipped_pins=version_key(previous.get("version")) < (2, 0, 1),
@@ -2545,7 +2661,7 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
         print(f"Keeping custom lane(s): {', '.join('fleet-' + name for name in custom_lanes)}")
     specs = managed_specs(
         bundle, home, config_root, bin_dir, settings_bytes, fleet_bytes, agent_bytes, {}, version, profile,
-        journal, gateway_owned, permission_owned,
+        journal, gateway_owned, permission_owned, policy_data,
     )
     meta = old_metadata(home)
     conflicts = check_parent_conflicts(specs, meta, bundle, args.force_owned)

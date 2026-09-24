@@ -24,7 +24,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "14f4c39c17c962671193e4477dbc4a88fa1554b833f3735f2b5b3d03e09d9f18",
+      "sha256": "d845be49a3c1ed84c34590724ada5146e8ee2e77408e38e5396cf8eb9714a50b",
       "mode": "0o644"
     },
     {
@@ -149,12 +149,12 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "7c263826634c74f8e1804bebcc52e284045731d487d9f5f1d9aedd909ead3e3d",
+      "sha256": "2838e10f4c00deb15f4c46d5f3907295458c1f1a8241d41af13a6285c6ac5189",
       "mode": "0o755"
     },
     {
       "path": "config/CLAUDE.md",
-      "sha256": "7f7d29dc681657b105703b50a41c7ab2d5cbd8b68be164c0a4a854b81bc56331",
+      "sha256": "b93aa2ab8de985e886af1e09e9812b464bf67150e7868c7fb8b92713e15c1eef",
       "mode": "0o644"
     },
     {
@@ -229,7 +229,7 @@
     },
     {
       "path": "skills/fleet-setup/SKILL.md",
-      "sha256": "01c966061325bec9e416a2405fb4fcba3fe46a822f91df8c4ff29cd87ef895e0",
+      "sha256": "f2d80ccf07ed654d7162cfbf725a07b683e83ac32613f00461180174712a70f0",
       "mode": "0o644"
     },
     {
@@ -239,12 +239,12 @@
     },
     {
       "path": "tests/test_profiles.py",
-      "sha256": "514a9d3230baf79135a69947a545abd08e8eb98f428454f1a202a2a25959d653",
+      "sha256": "6dd88640dd5abdd91d20adb6ac695da8b510ad3f4c053fda7fb46e45970fa858",
       "mode": "0o755"
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "f6028c267cd057d5d73a80fa7d21c52f08be74a9381f8f7523a2172843b802f8",
+      "sha256": "d03b388ef9840a7eb7713a4fb4ec1949ad394e145bb74da2740595d0e7750fb3",
       "mode": "0o755"
     },
     {
