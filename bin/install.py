@@ -245,9 +245,12 @@ def validate_bundle(bundle: Path) -> tuple[dict, str]:
         if not path.is_file() or path.is_symlink():
             fail(f"manifest file is missing or not regular: {path}")
         if os.name != "nt":
+            # Only the executable bit is part of a file's logical mode: a git
+            # checkout under umask 0002 is group-writable, and the checksums
+            # below prove the content. World-writable files are refused,
+            # because anyone could change them after that check.
             actual_mode = stat.S_IMODE(path.stat().st_mode)
-            expected_mode = 0o755 if mode == "0o755" else 0o644
-            if actual_mode != expected_mode:
+            if actual_mode & 0o002 or not actual_mode & 0o400 or bool(actual_mode & 0o100) != (mode == "0o755"):
                 fail(f"mode mismatch before installation: {path} is {oct(actual_mode)}, expected {mode}")
         actual = file_sha256(path)
         if actual != digest:

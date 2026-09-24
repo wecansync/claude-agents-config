@@ -134,7 +134,7 @@
     },
     {
       "path": "bin/claude-agents-doctor",
-      "sha256": "f2e7615c636046ef0e26439537111e72ce8dd8c0dbce8aca6f60ccd5d5139108",
+      "sha256": "055c4fd0fb99156f6a88e04013c4a830ca6eff9f0384ce112cd29be13d3c8508",
       "mode": "0o755"
     },
     {
@@ -149,7 +149,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "5618c5c8a10fb3f816ad250eded55fa1fb8ae1bb14abd5b62ec157ceae31ac9f",
+      "sha256": "079c6ebb326a4f8e4e1b09dc45c7bb87301005eef543cb69e4e1273d2d8784bf",
       "mode": "0o755"
     },
     {
@@ -239,7 +239,7 @@
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "4b7fb802f7fd110487913e3e4074ffc43bd452246d8e4005cb8cef72c0e28599",
+      "sha256": "8f193484486c2659f7f3ff2b72b72d98159f2b9cc9bb69c78e92e46c3d95c33b",
       "mode": "0o755"
     },
     {

@@ -2259,6 +2259,24 @@ class AgentFleetTwoTests(unittest.TestCase):
             self.assertEqual((home / ".claude/settings.json").read_bytes(), original)
             self.assertFalse(list((home / ".claude/agents").glob("fleet-*.md")) if (home / ".claude/agents").exists() else [])
 
+    def test_install_from_a_group_writable_checkout(self):
+        # A clone made under umask 0002 has 0664/0775 files; that must install.
+        with tempfile.TemporaryDirectory(prefix="agentfleet umask ") as raw:
+            bundle = Path(raw) / "bundle"
+            shutil.copytree(ROOT, bundle, ignore=shutil.ignore_patterns(".git", ".claude", ".kilo", "__pycache__", "dist"))
+            for path in bundle.rglob("*"):
+                if path.is_file():
+                    path.chmod(0o775 if path.stat().st_mode & 0o100 else 0o664)
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = self.env_for(home, config)
+            install = subprocess.run([PYTHON, str(bundle / "bin/install.py"), "--provider", "native", "--home", str(home), "--config-home", str(config)], cwd=bundle, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
+            self.assertEqual(stat_mode(home / ".claude/CLAUDE.md"), 0o644, "installed files still get exact modes")
+            (bundle / "README.md").chmod(0o666)
+            refused = subprocess.run([PYTHON, str(bundle / "bin/install.py"), "--dry-run", "--home", str(home), "--config-home", str(config)], cwd=bundle, env=env, text=True, capture_output=True)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("mode mismatch before installation", refused.stderr + refused.stdout, "world-writable source files are refused")
+
     def test_doctor_rejects_write_tools_on_read_only_lanes(self):
         with tempfile.TemporaryDirectory(prefix="agentfleet readonly ") as raw:
             home, config = Path(raw) / "home", Path(raw) / "config"

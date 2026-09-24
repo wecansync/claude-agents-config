@@ -179,9 +179,11 @@ def source_bundle(bundle: Path, errors: list[str]) -> dict | None:
         if sha256(path) != item.get("sha256"):
             fail(errors, f"checksum mismatch: {path}")
         if os.name != "nt":
-            expected_mode = {"0o755": 0o755, "0o644": 0o644}.get(item.get("mode"))
+            # Same logical-mode rule as the installer: group-write from a
+            # umask 0002 checkout is fine, world-write is not.
             actual_mode = stat.S_IMODE(path.stat().st_mode)
-            if expected_mode is None or actual_mode != expected_mode:
+            if (item.get("mode") not in {"0o755", "0o644"} or actual_mode & 0o002 or not actual_mode & 0o400
+                    or bool(actual_mode & 0o100) != (item.get("mode") == "0o755")):
                 fail(errors, f"mode mismatch for {path}: expected {item.get('mode')}, found {oct(actual_mode)}")
     checksum_path = bundle / "checksums.sha256"
     checksums = {}
