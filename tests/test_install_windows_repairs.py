@@ -23,7 +23,7 @@ import hashlib
 import importlib.util
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import shlex
 import shutil
@@ -124,7 +124,8 @@ class ShimGenerationTests(unittest.TestCase):
         if_lines = [line for line in body.split("\r\n") if line.lower().startswith("if ")]
         self.assertTrue(if_lines, "expected at least one if line")
         for line in if_lines:
-            self.assertNotIn("(", line, f"no parenthesized errorlevel block: {line!r}")
+            # The pinned path itself may contain "(" (e.g. "Program Files (x86)").
+            self.assertNotIn("(", line.replace(pinned, ""), f"no parenthesized errorlevel block: {line!r}")
 
     def test_ps1_shim_tries_pinned_interpreter_before_py_and_python(self):
         script = Path("C:/fleet/claude-agents-doctor.py")
@@ -350,6 +351,7 @@ class MarkerBearingHookRepairTests(unittest.TestCase):
             self.assertEqual(reinstall.returncode, 0, reinstall.stderr)
             self.assertIn("sync-omniroute-models.mjs", reinstall.stdout, "the notice must name the retired script")
             self.assertIn("hook:SessionStart:model-sync", reinstall.stdout, "the notice must name the hook")
+            self.assertIn("replacing it with the current hook", reinstall.stdout)
             self.assertIn("backed up", reinstall.stdout.lower())
 
             settings_after = json.loads(settings_path.read_text())
@@ -458,6 +460,87 @@ class MarkerBearingHookRepairTests(unittest.TestCase):
             settings_after = json.loads(settings_path.read_text())
             self.assertFalse(hook_present(settings_after, "UserPromptSubmit", "route"), "uninstall removes the hook even though the journal recorded it in the legacy marker form")
 
+    def test_retired_hook_beside_an_edited_one_is_removed_not_replaced(self):
+        # Two model-sync hooks for one event: A still runs the retired script,
+        # B is a genuine edit of the current one. A goes; B is kept, so the
+        # current hook is not installed and the notice must not claim it is.
+        with tempfile.TemporaryDirectory(prefix="af-hook-retired-beside-edit-") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = env_for(home, config)
+            settings_path = home / ".claude" / "settings.json"
+
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr)
+            settings = json.loads(settings_path.read_text())
+            hook = find_hook(settings, "SessionStart", "model-sync")
+            refreshed = hook["command"]
+            retired = refreshed.replace("sync-provider-models.mjs", "sync-omniroute-models.mjs")
+            edited = refreshed.replace("--quiet", "--quiet --b-flag")
+            self.assertNotEqual(retired, refreshed)
+            self.assertNotEqual(edited, refreshed)
+            hook["command"] = retired
+            settings["hooks"]["SessionStart"].append({"hooks": [dict(hook, command=edited)]})
+            settings_path.write_text(json.dumps(settings, indent=2))
+
+            reinstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(reinstall.returncode, 0, reinstall.stderr)
+            self.assertIn("hook:SessionStart:model-sync", reinstall.stdout)
+            self.assertIn("removing it", reinstall.stdout)
+            self.assertNotIn("replacing it with the current hook", reinstall.stdout)
+            commands = [h["command"] for g in json.loads(settings_path.read_text())["hooks"]["SessionStart"] for h in g["hooks"] if "claude-agents-config:model-sync" in h["command"]]
+            self.assertEqual(commands, [edited], "the retired hook is dropped and the edited one kept verbatim")
+
+    def test_current_command_over_a_stale_journal_entry_is_adopted(self):
+        # An older release froze a hook and its journal kept an old command
+        # with different arguments; the user then pasted the current command.
+        # It equals what this run installs, so it is the bundle's again.
+        with tempfile.TemporaryDirectory(prefix="af-hook-adopt-current-") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = env_for(home, config)
+            settings_path = home / ".claude" / "settings.json"
+            meta_path = home / ".claude" / ".claude-agents-config-install.json"
+
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr)
+            original = find_hook(json.loads(settings_path.read_text()), "UserPromptSubmit", "route")["command"]
+
+            meta = json.loads(meta_path.read_text())
+            entry = journal_entry(meta, "UserPromptSubmit", "route")
+            stale = alternate_marker_form(original.replace(" --home ", " --legacy-arg --home "))
+            self.assertNotEqual(stale, alternate_marker_form(original), "the stale entry must differ by more than quoting")
+            entry["installed"] = entry["command"] = stale
+            meta_path.write_text(json.dumps(meta, indent=2))
+
+            reinstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(reinstall.returncode, 0, reinstall.stderr)
+            self.assertEqual(find_hook(json.loads(settings_path.read_text()), "UserPromptSubmit", "route")["command"], original)
+            self.assertEqual(journal_entry(json.loads(meta_path.read_text()), "UserPromptSubmit", "route")["installed"], original, "the journal adopts the current command")
+
+            uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(uninstall.returncode, 0, uninstall.stderr)
+            self.assertFalse(hook_present(json.loads(settings_path.read_text()), "UserPromptSubmit", "route"), "uninstall removes the adopted hook")
+
+    def test_uninstall_keeps_an_unmarked_user_copy_of_a_managed_hook(self):
+        with tempfile.TemporaryDirectory(prefix="af-hook-uninstall-unmarked-") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = env_for(home, config)
+            settings_path = home / ".claude" / "settings.json"
+
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr)
+            settings = json.loads(settings_path.read_text())
+            managed = find_hook(settings, "PreModelSwitch", "model-context")
+            unmarked = re.sub(r"\s*#\s*claude-agents-config:[a-z0-9-]+\s*$", "", managed["command"])
+            self.assertNotEqual(unmarked, managed["command"])
+            settings["hooks"]["PreModelSwitch"].append({"hooks": [dict(managed, command=unmarked)]})
+            settings_path.write_text(json.dumps(settings, indent=2))
+
+            uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(uninstall.returncode, 0, uninstall.stderr)
+            after = json.loads(settings_path.read_text())
+            commands = [h["command"] for g in after.get("hooks", {}).get("PreModelSwitch", []) for h in g["hooks"]]
+            self.assertEqual(commands, [unmarked], "the managed hook goes; the user's unmarked copy stays")
+
     def test_edited_hook_with_a_current_script_survives_reinstall_verbatim(self):
         with tempfile.TemporaryDirectory(prefix="af-hook-edited-") as raw:
             home, config = Path(raw) / "home", Path(raw) / "config"
@@ -533,6 +616,32 @@ class HookRepairUnitTests(unittest.TestCase):
 
             self.assertIsNone(fn("model-sync", f"node {claude / 'sync-provider-models.mjs'} --quiet", home, {}), "the current script is not retired")
             self.assertIsNone(fn("route", f"python3 {claude / 'route-to-fleet.py'}", home, {}), "an unrelated kind never matches")
+
+            # Whole path arguments only: a longer path that starts or ends
+            # with the retired one is a different file.
+            omniroute.unlink()
+            self.assertIsNone(fn("model-sync", f"node {omniroute}.bak --quiet", home, {}), "a .bak copy is a different file")
+            self.assertIsNone(fn("model-sync", f"node /backup{omniroute} --quiet", home, {}), "a path that merely ends with it is a different file")
+            # Other spellings of the same file are recognized.
+            for spelled in ("~/.claude/sync-omniroute-models.mjs", '"$HOME/.claude/sync-omniroute-models.mjs"', "--script=${HOME}/.claude/sync-omniroute-models.mjs"):
+                self.assertEqual(fn("model-sync", f"node {spelled} --quiet", home, {}), "sync-omniroute-models.mjs", spelled)
+
+    def test_names_home_path_recognizes_windows_spellings(self):
+        fn = self.installer.names_home_path
+        home = PureWindowsPath("C:/Users/u")
+        target = home / ".claude" / "sync-omniroute-models.mjs"
+        for command in (
+            r'node "C:\Users\u\.claude\sync-omniroute-models.mjs" --quiet',
+            "node C:/Users/u/.claude/sync-omniroute-models.mjs --quiet",
+            "node /c/Users/u/.claude/sync-omniroute-models.mjs --quiet",
+            r'node "%USERPROFILE%\.claude\sync-omniroute-models.mjs"',
+            r"node $env:USERPROFILE\.claude\sync-omniroute-models.mjs",
+        ):
+            self.assertTrue(fn(command, target, home), command)
+        self.assertFalse(fn(r"node C:\Users\u\.claude\sync-omniroute-models.mjs.bak", target, home))
+        self.assertFalse(fn(r"node D:\Users\u\.claude\sync-omniroute-models.mjs", target, home))
+        with unittest.mock.patch.object(self.installer.os, "name", "nt"):
+            self.assertTrue(fn(r"node c:\users\U\.CLAUDE\sync-omniroute-models.mjs", target, home), "paths are case-insensitive on Windows")
 
 
 if __name__ == "__main__":

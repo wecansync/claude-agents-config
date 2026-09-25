@@ -109,8 +109,10 @@ function Find-UvPython {
     # `uv python install` keeps interpreters off PATH; ask uv for one. `find`
     # only reports installed interpreters and never downloads, and --system
     # skips virtual environments, whose interpreter would otherwise be pinned
-    # into every hook. Only a real uv.exe: through a .cmd shim, cmd.exe would
-    # read '>=3.10' as a redirect.
+    # into every hook. --no-config and --no-project ignore any uv.toml or
+    # pyproject.toml in the current directory or its parents, so the repo this
+    # runs from cannot steer the choice. Only a real uv.exe: through a .cmd
+    # shim, cmd.exe would read '>=3.10' as a redirect.
     $uv = Get-Command uv -CommandType Application -ErrorAction SilentlyContinue |
         Where-Object { $_.Extension -eq '.exe' } | Select-Object -First 1
     if (-not $uv) { return $null }
@@ -125,7 +127,7 @@ function Find-UvPython {
         $savedEncoding = $null
     }
     try {
-        $output = @(& $uv.Source python find --system '>=3.10' 2>$null)
+        $output = @(& $uv.Source python find --system --no-config --no-project '>=3.10' 2>$null)
         $exitCode = $LASTEXITCODE
     } catch {
         return $null

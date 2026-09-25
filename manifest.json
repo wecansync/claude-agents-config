@@ -14,7 +14,7 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "d598cba091c51f77ab8821ea42ba5a70ea54c592e91e4a0d912e896c1a57d279",
+      "sha256": "72d12ccfb884afa2f35578a4b487961cfb32e39c4f8db0fc325fac362f54c324",
       "mode": "0o644"
     },
     {
@@ -154,7 +154,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "87211ebc7b1c86c748530820d19c676d950b368f29ad2464b2af7910ce9c2e92",
+      "sha256": "35554a87fd555b39a7327230df66e511dedd9747162052dd4c9db69093ce6e22",
       "mode": "0o755"
     },
     {
@@ -244,7 +244,7 @@
     },
     {
       "path": "tests/test_install_windows_repairs.py",
-      "sha256": "8cebd44ec5707bb72859eff4929f6554d8927ef7d30dd1dbba0f11d5b99f9ece",
+      "sha256": "25d6c8993d56a10843318917969dfae58cf865011707b45eaf476c59104ba8e4",
       "mode": "0o644"
     },
     {

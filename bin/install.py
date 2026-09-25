@@ -931,6 +931,32 @@ def normalized_hook_command(command: object) -> str:
     return " ".join(text.split())
 
 
+def names_home_path(command: str, path: Path, home: Path) -> bool:
+    """Whether command names exactly ``path`` (a file under home) in a
+    spelling a hand edit plausibly uses: the absolute path in either slash
+    style, ~, $HOME, ${HOME}, %USERPROFILE% or $env:USERPROFILE in place of
+    home, or Git Bash's /c/... form of a drive path; case-insensitively on
+    Windows. It must be a whole path argument: a longer path that merely
+    starts or ends with it (x.mjs.bak, /backup/home/u/.claude/x.mjs) is a
+    different file."""
+    text = command.replace("\\", "/")
+    absolute = path.as_posix()
+    spellings = {absolute}
+    try:
+        relative = path.relative_to(home).as_posix()
+    except ValueError:
+        relative = None
+    if relative:
+        spellings.update(f"{prefix}/{relative}" for prefix in ("~", "$HOME", "${HOME}", "%USERPROFILE%", "$env:USERPROFILE"))
+    if len(path.drive) == 2 and path.drive[1] == ":":
+        spellings.add(f"/{path.drive[0].lower()}{absolute[2:]}")
+    flags = re.IGNORECASE if os.name == "nt" else 0
+    return any(
+        re.search(r"(?<![^\s\"'=])" + re.escape(spelling) + r"(?![^\s\"';&|)])", text, flags)
+        for spelling in spellings
+    )
+
+
 def retired_hook_script_for_kind(kind: str, command: object, home: Path, previous_managed: dict[str, dict]) -> str | None:
     """The retired legacy script this marker-bearing command still names for
     kind's hook, or None. A command can be a genuine, deliberate user edit
@@ -940,13 +966,13 @@ def retired_hook_script_for_kind(kind: str, command: object, home: Path, previou
     sync-provider-models.mjs for model-sync), keeping the edit wired risks a
     broken hook once that script is gone.
 
-    Only fires on the exact home/.claude/<script> path (str(path), or its
-    forward-slash form on Windows) -- never a bare filename substring -- and
-    only when that file will truly be gone after this run: absent, or a
-    previously managed file still_recognisably_ours would let obsolete_paths
-    retire. A command that merely mentions a retired filename elsewhere (the
-    user's own untracked script, or a path outside this home) is left alone;
-    see the genuine-edit branch in clean_hook_groups.
+    Only fires when the command runs that exact home/.claude/<script> file
+    (names_home_path) -- never a bare filename substring -- and only when that
+    file will truly be gone after this run: absent, or a previously managed
+    file still_recognisably_ours would let obsolete_paths retire. A command
+    that merely mentions a retired filename elsewhere (the user's own
+    untracked script, or a path outside this home) is left alone; see the
+    genuine-edit branch in clean_hook_groups.
     """
     if not isinstance(command, str):
         return None
@@ -960,7 +986,7 @@ def retired_hook_script_for_kind(kind: str, command: object, home: Path, previou
     } - {current_script}
     for name in sorted(retired_names):
         candidate = home / ".claude" / name
-        if str(candidate) not in command and candidate.as_posix() not in command:
+        if not names_home_path(command, candidate, home):
             continue
         if not candidate.is_file():
             return name
@@ -1001,7 +1027,17 @@ def clean_hook_groups(
         if isinstance(entry, dict) and entry.get("kind") == "hook" and isinstance(entry.get("installed"), str)
     }
     incoming_kinds = incoming_kinds_by_event(incoming)
+    incoming_commands: dict[str, str] = {}
+    for event, entries in incoming.items():
+        for group in entries if isinstance(entries, list) else []:
+            hooks = group.get("hooks", []) if isinstance(group, dict) else []
+            for hook in hooks if isinstance(hooks, list) else []:
+                command = hook.get("command") if isinstance(hook, dict) else None
+                suffix = hook_suffix(command) if isinstance(command, str) else None
+                if suffix is not None:
+                    incoming_commands.setdefault(f"{event}:{suffix}", command)
     edited_suffixes: set[str] = set()
+    retired_hooks: list[tuple[str, str, str]] = []
     legacy_restores: dict[tuple[str, str], list[dict]] = {}
     for event in list(result):
         entries = result.get(event)
@@ -1037,26 +1073,30 @@ def clean_hook_groups(
                     identity = f"hook:{event}:{suffix}"
                     old_installed = previous[identity].get("installed")
                     retired_script = retired_hook_script_for_kind(suffix, command, home, previous_managed)
-                    if isinstance(old_installed, str) and normalized_hook_command(command) == normalized_hook_command(old_installed):
-                        # Equal to the previously installed command once
-                        # quoting and marker-style differences are stripped
-                        # away (e.g. something outside the installer
-                        # re-quoted settings.json, or this journal entry
-                        # predates the "# marker" convention). Treat exactly
-                        # like the exact-match branch above: drop it so the
-                        # refreshed command below takes its place.
+                    owned_forms = {normalized_hook_command(incoming_commands.get(f"{event}:{suffix}"))}
+                    if isinstance(old_installed, str):
+                        owned_forms.add(normalized_hook_command(old_installed))
+                    if normalized_hook_command(command) in owned_forms - {""}:
+                        # Equal to the previously installed command, or to
+                        # the one this run installs, once quoting and
+                        # marker-style differences are stripped away (e.g.
+                        # something outside the installer re-quoted
+                        # settings.json, this journal entry predates the
+                        # "# marker" convention, or the current command was
+                        # pasted over a hook an older release had frozen).
+                        # Treat exactly like the exact-match branch above:
+                        # drop it so the refreshed command below takes its
+                        # place.
                         continue
                     elif retired_script:
                         # A genuine edit, but one that still names a script
                         # this bundle has retired for this kind, and that
                         # script will really be gone after this run. Keeping
                         # the edit verbatim would leave a hook that fails
-                        # every session, so it is replaced like the cases above.
-                        notices.append(
-                            f"  refresh: hook:{event}:{suffix} ran {home / '.claude' / retired_script}, "
-                            "which is gone after this update; installing the current hook "
-                            "(settings.json is backed up before it changes)"
-                        )
+                        # every session, so it is dropped like the cases
+                        # above; the notice is worded once the loop knows
+                        # whether the current hook replaces it.
+                        retired_hooks.append((event, suffix, retired_script))
                         continue
                     else:
                         # A marker-bearing command changed after installation
@@ -1075,6 +1115,14 @@ def clean_hook_groups(
             result[event] = cleaned_entries
         else:
             del result[event]
+
+    for event, suffix, script in retired_hooks:
+        replaced = f"{event}:{suffix}" in incoming_commands and f"{event}:{suffix}" not in edited_suffixes
+        action = "replacing it with the current hook" if replaced else "removing it"
+        notices.append(
+            f"  refresh: hook:{event}:{suffix} ran {home / '.claude' / script}, "
+            f"which is gone after this update; {action} (settings.json is backed up before it changes)"
+        )
 
     for event, entries in incoming.items():
         for group in entries if isinstance(entries, list) else []:
@@ -3051,7 +3099,14 @@ def settings_for_uninstall(path: Path, meta: dict) -> tuple[bytes | None, bool]:
                     # settings.json and the journal recorded the same command
                     # in different quoting/marker forms (see
                     # normalized_hook_command), so uninstall still finds it.
-                    if command == entry["command"] or (isinstance(command, str) and normalized_hook_command(command) == normalized_hook_command(entry["command"])):
+                    # The normalized match requires the same marker kind, as
+                    # clean_hook_groups does: an unmarked hook is the user's.
+                    if command == entry["command"] or (
+                        isinstance(command, str)
+                        and hook_suffix(command) is not None
+                        and hook_suffix(command) == hook_suffix(entry["command"])
+                        and normalized_hook_command(command) == normalized_hook_command(entry["command"])
+                    ):
                         removed = True
                     else:
                         keep.append(hook)
