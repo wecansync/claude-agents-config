@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 ROOT = Path(__file__).resolve().parent.parent
 PYTHON = sys.executable
@@ -120,7 +121,10 @@ class ShimGenerationTests(unittest.TestCase):
         self.assertIn("where py", body, "the py launcher fallback must still be present")
         self.assertIn("python ", body, "the bare python fallback must still be present")
         self.assertLess(body.index(pinned), body.index("where py"), "the pinned interpreter must be tried first")
-        self.assertNotIn("(", body.split("\r\n", 1)[0], "no parenthesized errorlevel block")
+        if_lines = [line for line in body.split("\r\n") if line.lower().startswith("if ")]
+        self.assertTrue(if_lines, "expected at least one if line")
+        for line in if_lines:
+            self.assertNotIn("(", line, f"no parenthesized errorlevel block: {line!r}")
 
     def test_ps1_shim_tries_pinned_interpreter_before_py_and_python(self):
         script = Path("C:/fleet/claude-agents-doctor.py")
@@ -213,6 +217,58 @@ class ShimExecutionTests(unittest.TestCase):
             self.assertEqual(ps1_result.returncode, 0, ps1_result.stdout + ps1_result.stderr)
             self.assertEqual(ps1_result.stdout.strip(), sys.executable)
 
+    def test_shim_falls_back_to_python_when_the_pinned_interpreter_is_missing(self):
+        installer = load_installer()
+        with tempfile.TemporaryDirectory(prefix="af-shim-missing-pin-") as raw:
+            root = Path(raw)
+            probe = root / "probe.py"
+            probe.write_text("import sys\nprint(sys.executable)\n", encoding="utf-8")
+            with unittest.mock.patch.object(installer.sys, "executable", r"C:\nonexistent\python.exe"):
+                cmd_bytes = installer.cmd_dispatch(probe, "python")
+                ps1_bytes = installer.powershell_dispatch(probe, "python")
+            # The pinned path in the shim is now nonexistent, but the real
+            # interpreter's directory is back on PATH, so "python" resolves.
+            real_dir = str(Path(sys.executable).parent)
+            env = {**os.environ, "PATH": real_dir + os.pathsep + path_dirs_without_python(), "PYTHONDONTWRITEBYTECODE": "1"}
+
+            cmd_path = root / "probe.cmd"
+            cmd_path.write_bytes(cmd_bytes)
+            cmd_result = subprocess.run(["cmd.exe", "/c", str(cmd_path)], env=env, text=True, capture_output=True, timeout=30)
+            self.assertEqual(cmd_result.returncode, 0, cmd_result.stdout + cmd_result.stderr)
+            self.assertEqual(cmd_result.stdout.strip(), sys.executable)
+
+            ps1_path = root / "probe.ps1"
+            ps1_path.write_bytes(ps1_bytes)
+            ps1_result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1_path)],
+                env=env, text=True, capture_output=True, timeout=30,
+            )
+            self.assertEqual(ps1_result.returncode, 0, ps1_result.stdout + ps1_result.stderr)
+            self.assertEqual(ps1_result.stdout.strip(), sys.executable)
+
+    def test_shim_forwards_exit_code_and_arguments(self):
+        installer = load_installer()
+        with tempfile.TemporaryDirectory(prefix="af-shim-args-") as raw:
+            root = Path(raw)
+            probe = root / "probe.py"
+            probe.write_text("import json, sys\nprint(json.dumps(sys.argv[1:]))\nsys.exit(3)\n", encoding="utf-8")
+            env = {**os.environ, "PATH": path_dirs_without_python(), "PYTHONDONTWRITEBYTECODE": "1"}
+
+            cmd_path = root / "probe.cmd"
+            cmd_path.write_bytes(installer.cmd_dispatch(probe, "python"))
+            cmd_result = subprocess.run(["cmd.exe", "/c", str(cmd_path), "alpha", "beta"], env=env, text=True, capture_output=True, timeout=30)
+            self.assertEqual(cmd_result.returncode, 3, cmd_result.stdout + cmd_result.stderr)
+            self.assertEqual(json.loads(cmd_result.stdout), ["alpha", "beta"])
+
+            ps1_path = root / "probe.ps1"
+            ps1_path.write_bytes(installer.powershell_dispatch(probe, "python"))
+            ps1_result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1_path), "alpha", "beta"],
+                env=env, text=True, capture_output=True, timeout=30,
+            )
+            self.assertEqual(ps1_result.returncode, 3, ps1_result.stdout + ps1_result.stderr)
+            self.assertEqual(json.loads(ps1_result.stdout), ["alpha", "beta"])
+
 
 class MarkerBearingHookRepairTests(unittest.TestCase):
     """Marker-bearing hooks frozen as a false "user edit" (bin/install.py
@@ -294,7 +350,7 @@ class MarkerBearingHookRepairTests(unittest.TestCase):
             self.assertEqual(reinstall.returncode, 0, reinstall.stderr)
             self.assertIn("sync-omniroute-models.mjs", reinstall.stdout, "the notice must name the retired script")
             self.assertIn("hook:SessionStart:model-sync", reinstall.stdout, "the notice must name the hook")
-            self.assertIn("backup snapshot", reinstall.stdout.lower())
+            self.assertIn("backed up", reinstall.stdout.lower())
 
             settings_after = json.loads(settings_path.read_text())
             command_after = find_hook(settings_after, "SessionStart", "model-sync")["command"]
@@ -303,10 +359,104 @@ class MarkerBearingHookRepairTests(unittest.TestCase):
             meta = json.loads((home / ".claude/.claude-agents-config-install.json").read_text())
             self.assertEqual(journal_entry(meta, "SessionStart", "model-sync")["installed"], refreshed)
 
+            # Idempotency: a third install with nothing left to repair prints
+            # no further notice and leaves settings.json and the journal alone.
+            settings_bytes_before = settings_path.read_bytes()
+            meta_bytes_before = (home / ".claude/.claude-agents-config-install.json").read_bytes()
+            third = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(third.returncode, 0, third.stderr)
+            self.assertNotIn("refresh:", third.stdout)
+            self.assertEqual(settings_path.read_bytes(), settings_bytes_before, "settings.json is unchanged once nothing needs repair")
+            self.assertEqual((home / ".claude/.claude-agents-config-install.json").read_bytes(), meta_bytes_before, "the journal entry is unchanged once nothing needs repair")
+
             uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
             self.assertEqual(uninstall.returncode, 0, uninstall.stderr)
             settings_uninstalled = json.loads(settings_path.read_text())
             self.assertFalse(hook_present(settings_uninstalled, "SessionStart", "model-sync"), "uninstall removes the refreshed hook it installed")
+
+    def test_hook_chained_to_a_user_owned_retired_script_name_survives_reinstall(self):
+        # The retired-script name appears at the *exact* home/.claude path,
+        # but the file is the user's own (never installer-managed): it will
+        # not disappear this run, so the hook must be left alone.
+        with tempfile.TemporaryDirectory(prefix="af-hook-retired-userowned-") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = env_for(home, config)
+            settings_path = home / ".claude" / "settings.json"
+
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr)
+            settings = json.loads(settings_path.read_text())
+            refreshed = find_hook(settings, "SessionStart", "model-sync")["command"]
+
+            proposal = home / ".claude" / "fleet-model-proposal.py"
+            proposal.write_text("# the user's own prototype, not installer-managed\n", encoding="utf-8")
+            match = re.search(r"\s*#\s*claude-agents-config:model-sync\s*$", refreshed)
+            self.assertIsNotNone(match)
+            edited = refreshed[: match.start()] + f" && {sys.executable} {proposal}" + match.group(0)
+            self.assertNotEqual(edited, refreshed)
+            find_hook(settings, "SessionStart", "model-sync")["command"] = edited
+            settings_path.write_text(json.dumps(settings, indent=2))
+
+            reinstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(reinstall.returncode, 0, reinstall.stderr)
+            self.assertNotIn("refresh:", reinstall.stdout, "a user-owned file that will still exist must not be treated as retired")
+            settings_after = json.loads(settings_path.read_text())
+            self.assertEqual(find_hook(settings_after, "SessionStart", "model-sync")["command"], edited)
+
+    def test_hook_referencing_a_retired_script_name_outside_home_survives_reinstall(self):
+        # Same retired filename, but under a different project's .claude
+        # directory entirely -- never a candidate for this home's repair.
+        with tempfile.TemporaryDirectory(prefix="af-hook-retired-outside-") as raw:
+            root = Path(raw)
+            home, config = root / "home", root / "config"
+            env = env_for(home, config)
+            settings_path = home / ".claude" / "settings.json"
+
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr)
+            settings = json.loads(settings_path.read_text())
+            refreshed = find_hook(settings, "SessionStart", "model-sync")["command"]
+
+            outside = root / "proj" / ".claude" / "sync-omniroute-models.mjs"
+            match = re.search(r"\s*#\s*claude-agents-config:model-sync\s*$", refreshed)
+            self.assertIsNotNone(match)
+            edited = refreshed[: match.start()] + f" && {sys.executable} {outside}" + match.group(0)
+            self.assertNotEqual(edited, refreshed)
+            find_hook(settings, "SessionStart", "model-sync")["command"] = edited
+            settings_path.write_text(json.dumps(settings, indent=2))
+
+            reinstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(reinstall.returncode, 0, reinstall.stderr)
+            self.assertNotIn("refresh:", reinstall.stdout, "a retired filename outside home/.claude must never match")
+            settings_after = json.loads(settings_path.read_text())
+            self.assertEqual(find_hook(settings_after, "SessionStart", "model-sync")["command"], edited)
+
+    def test_uninstall_removes_a_hook_whose_journal_entry_is_in_the_legacy_marker_form(self):
+        with tempfile.TemporaryDirectory(prefix="af-hook-uninstall-legacy-") as raw:
+            home, config = Path(raw) / "home", Path(raw) / "config"
+            env = env_for(home, config)
+            settings_path = home / ".claude" / "settings.json"
+            meta_path = home / ".claude" / ".claude-agents-config-install.json"
+
+            install = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(install.returncode, 0, install.stderr)
+            settings = json.loads(settings_path.read_text())
+            original = find_hook(settings, "UserPromptSubmit", "route")["command"]
+
+            # Simulate a 2.0.5 install broken exactly as in the real incident:
+            # both journal fields recorded in the legacy "& rem" form while
+            # settings.json (untouched here) still holds the current form.
+            meta = json.loads(meta_path.read_text())
+            entry = journal_entry(meta, "UserPromptSubmit", "route")
+            legacy_form = alternate_marker_form(original)
+            entry["installed"] = legacy_form
+            entry["command"] = legacy_form
+            meta_path.write_text(json.dumps(meta, indent=2))
+
+            uninstall = subprocess.run([PYTHON, str(ROOT / "bin/install.py"), "--uninstall", "--apply", "--home", str(home), "--config-home", str(config)], cwd=ROOT, env=env, text=True, capture_output=True)
+            self.assertEqual(uninstall.returncode, 0, uninstall.stderr)
+            settings_after = json.loads(settings_path.read_text())
+            self.assertFalse(hook_present(settings_after, "UserPromptSubmit", "route"), "uninstall removes the hook even though the journal recorded it in the legacy marker form")
 
     def test_edited_hook_with_a_current_script_survives_reinstall_verbatim(self):
         with tempfile.TemporaryDirectory(prefix="af-hook-edited-") as raw:
@@ -347,13 +497,42 @@ class HookRepairUnitTests(unittest.TestCase):
             self.installer.normalized_hook_command('python3 "/home/u/.claude/route-to-fleet.py" --extra # claude-agents-config:route'),
         )
 
-    def test_retired_hook_script_for_kind_matches_the_reported_incident(self):
+    def test_retired_hook_script_for_kind_only_fires_on_the_exact_home_path_when_truly_gone(self):
         fn = self.installer.retired_hook_script_for_kind
-        self.assertEqual(fn("model-sync", "node /home/u/.claude/sync-omniroute-models.mjs --quiet"), "sync-omniroute-models.mjs")
-        self.assertEqual(fn("model-sync", r"node C:\u\.claude\sync-omniroute-models.mjs --quiet"), "sync-omniroute-models.mjs")
-        self.assertEqual(fn("model-sync", "python3 /home/u/.claude/fleet-model-proposal.py"), "fleet-model-proposal.py")
-        self.assertIsNone(fn("model-sync", "node /home/u/.claude/sync-provider-models.mjs --quiet"), "the current script is not retired")
-        self.assertIsNone(fn("route", "python3 /home/u/.claude/route-to-fleet.py"), "an unrelated kind never matches")
+        with tempfile.TemporaryDirectory(prefix="af-retired-script-unit-") as raw:
+            home = Path(raw) / "home"
+            claude = home / ".claude"
+            claude.mkdir(parents=True)
+            omniroute = claude / "sync-omniroute-models.mjs"
+
+            # Absent: the script is simply gone.
+            self.assertEqual(fn("model-sync", f"node {omniroute} --quiet", home, {}), "sync-omniroute-models.mjs")
+            self.assertEqual(fn("model-sync", f"node {omniroute.as_posix()} --quiet", home, {}), "sync-omniroute-models.mjs")
+
+            # Present, and a previously managed record proves it is unchanged
+            # since install (obsolete_paths would retire it too).
+            data = b"// old omniroute sync\n"
+            omniroute.write_bytes(data)
+            item = {"path": str(omniroute), "sha256": hashlib.sha256(data).hexdigest(), "mode": "0o755"}
+            self.assertEqual(fn("model-sync", f"node {omniroute} --quiet", home, {str(omniroute): item}), "sync-omniroute-models.mjs")
+
+            # Present, but not a previously managed record at all: a user's
+            # own file by that name, which will still exist after this run.
+            self.assertIsNone(fn("model-sync", f"node {omniroute} --quiet", home, {}), "an unmanaged file that will still exist is not retired")
+
+            # Present and "managed", but its content no longer matches the
+            # recorded sha256 and carries no marker: the user changed it, so
+            # it is not the file obsolete_paths would remove.
+            omniroute.write_bytes(b"// user's own edits\n")
+            self.assertIsNone(fn("model-sync", f"node {omniroute} --quiet", home, {str(omniroute): item}), "a user-edited file is not the one obsolete_paths would retire")
+
+            # Same filename, different home entirely: never a match.
+            other_home = Path(raw) / "other-project"
+            outside = other_home / ".claude" / "sync-omniroute-models.mjs"
+            self.assertIsNone(fn("model-sync", f"node {outside} --quiet", home, {}), "a path outside this home never matches")
+
+            self.assertIsNone(fn("model-sync", f"node {claude / 'sync-provider-models.mjs'} --quiet", home, {}), "the current script is not retired")
+            self.assertIsNone(fn("route", f"python3 {claude / 'route-to-fleet.py'}", home, {}), "an unrelated kind never matches")
 
 
 if __name__ == "__main__":

@@ -931,26 +931,42 @@ def normalized_hook_command(command: object) -> str:
     return " ".join(text.split())
 
 
-def retired_hook_script_for_kind(kind: str, command: object) -> str | None:
+def retired_hook_script_for_kind(kind: str, command: object, home: Path, previous_managed: dict[str, dict]) -> str | None:
     """The retired legacy script this marker-bearing command still names for
     kind's hook, or None. A command can be a genuine, deliberate user edit
-    (see clean_hook_groups) and still be unsafe to keep verbatim: if it
-    names a script LEGACY_FRAGMENT_KIND maps to kind but HOOK_SCRIPT_FOR_KIND
-    no longer does, the bundle has retired that script for this kind (e.g.
-    sync-omniroute-models.mjs, superseded by sync-provider-models.mjs for
-    model-sync), and this same run deletes it -- keeping the edit wired would
-    guarantee a broken hook."""
+    (see clean_hook_groups) and still be unsafe to keep verbatim: if it names
+    a script LEGACY_FRAGMENT_KIND maps to kind but HOOK_SCRIPT_FOR_KIND no
+    longer does (e.g. sync-omniroute-models.mjs, superseded by
+    sync-provider-models.mjs for model-sync), keeping the edit wired risks a
+    broken hook once that script is gone.
+
+    Only fires on the exact home/.claude/<script> path (str(path), or its
+    forward-slash form on Windows) -- never a bare filename substring -- and
+    only when that file will truly be gone after this run: absent, or a
+    previously managed file still_recognisably_ours would let obsolete_paths
+    retire. A command that merely mentions a retired filename elsewhere (the
+    user's own untracked script, or a path outside this home) is left alone;
+    see the genuine-edit branch in clean_hook_groups.
+    """
     if not isinstance(command, str):
         return None
     current_script = HOOK_SCRIPT_FOR_KIND.get(kind)
     if current_script is None:
         return None
-    for fragment, frag_kind in LEGACY_FRAGMENT_KIND.items():
-        if frag_kind != kind or fragment not in command:
+    retired_names = {
+        fragment.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        for fragment, frag_kind in LEGACY_FRAGMENT_KIND.items()
+        if frag_kind == kind
+    } - {current_script}
+    for name in sorted(retired_names):
+        candidate = home / ".claude" / name
+        if str(candidate) not in command and candidate.as_posix() not in command:
             continue
-        script_name = fragment.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-        if script_name and script_name != current_script:
-            return script_name
+        if not candidate.is_file():
+            return name
+        item = previous_managed.get(str(candidate))
+        if item and still_recognisably_ours(candidate, item, home):
+            return name
     return None
 
 
@@ -969,7 +985,15 @@ def incoming_kinds_by_event(incoming: dict) -> dict[str, set[str]]:
     return result
 
 
-def clean_hook_groups(existing: dict, incoming: dict, journal: dict[str, dict], previous: dict[str, dict], notices: list[str]) -> dict:
+def clean_hook_groups(
+    existing: dict,
+    incoming: dict,
+    journal: dict[str, dict],
+    previous: dict[str, dict],
+    notices: list[str],
+    home: Path,
+    previous_managed: dict[str, dict],
+) -> dict:
     result = copy.deepcopy(existing)
     prior_commands = {
         str(entry.get("installed"))
@@ -1012,7 +1036,7 @@ def clean_hook_groups(existing: dict, incoming: dict, journal: dict[str, dict], 
                 elif f"hook:{event}:{suffix}" in previous:
                     identity = f"hook:{event}:{suffix}"
                     old_installed = previous[identity].get("installed")
-                    retired_script = retired_hook_script_for_kind(suffix, command)
+                    retired_script = retired_hook_script_for_kind(suffix, command, home, previous_managed)
                     if isinstance(old_installed, str) and normalized_hook_command(command) == normalized_hook_command(old_installed):
                         # Equal to the previously installed command once
                         # quoting and marker-style differences are stripped
@@ -1024,14 +1048,14 @@ def clean_hook_groups(existing: dict, incoming: dict, journal: dict[str, dict], 
                         continue
                     elif retired_script:
                         # A genuine edit, but one that still names a script
-                        # this bundle has retired for this kind, and this
-                        # same run deletes that script. Keeping the edit
-                        # verbatim would leave a hook that fails every
-                        # session, so it is replaced like the cases above.
+                        # this bundle has retired for this kind, and that
+                        # script will really be gone after this run. Keeping
+                        # the edit verbatim would leave a hook that fails
+                        # every session, so it is replaced like the cases above.
                         notices.append(
-                            f"  refresh: hook:{event}:{suffix} pointed at the retired {retired_script}; "
-                            "replacing the edited command with the refreshed hook "
-                            "(the pre-update settings.json is already in the backup snapshot)"
+                            f"  refresh: hook:{event}:{suffix} ran {home / '.claude' / retired_script}, "
+                            "which is gone after this update; installing the current hook "
+                            "(settings.json is backed up before it changes)"
                         )
                         continue
                     else:
@@ -1348,6 +1372,7 @@ def merge_settings(
     gateway_mode: bool,
     gateway_token: str | None,
     required_models: set[str],
+    previous_managed: dict[str, dict] | None = None,
 ) -> tuple[dict, list[dict], str | None, bool, list[str], list[str]]:
     desired = copy.deepcopy(existing)
     prior = previous_journal_map(previous)
@@ -1573,7 +1598,7 @@ def merge_settings(
     template_with_hooks = platform_hook_template(home, config_root, template, discovery_enabled)
     incoming_hooks = template_with_hooks.get("hooks") if isinstance(template_with_hooks.get("hooks"), dict) else {}
     existing_hooks = desired.get("hooks") if isinstance(desired.get("hooks"), dict) else {}
-    desired["hooks"] = clean_hook_groups(existing_hooks, incoming_hooks, journal, prior, notices)
+    desired["hooks"] = clean_hook_groups(existing_hooks, incoming_hooks, journal, prior, notices, home, previous_managed or {})
 
     status = template_with_hooks.get("subagentStatusLine")
     if isinstance(status, dict):
@@ -1720,27 +1745,41 @@ def agent_for_profile(
     return text.encode("utf-8")
 
 
+def still_recognisably_ours(path: Path, item: dict, home: Path) -> bool:
+    """Whether a previously managed file at ``path`` (its metadata record is
+    ``item``) is still recognisably ours: marker present, or content
+    unchanged since install.
+
+    Generated agents are rewritten by claude-fleet-sync after install, so
+    their bytes rarely match the install record; the generator marker
+    identifies them instead. Other files must still carry the bundle marker
+    or be unchanged since install (matches the recorded sha256). Shared by
+    obsolete_paths (a file this test passes is safe to retire) and
+    retired_hook_script_for_kind (a hook naming this file is only rewritten
+    when the file itself is really about to disappear).
+    """
+    if not path.is_file() or path.is_symlink():
+        return False
+    data = path.read_bytes()
+    is_agent = path.parent == home / ".claude" / "agents" and path.name.startswith("fleet-")
+    return (is_agent and GENERATED_MARKER.encode() in data) or (not is_agent and MARKER.encode() in data) or bytes_sha256(data) == item.get("sha256")
+
+
 def obsolete_paths(previous: dict, specs: dict, home: Path, bin_dir: Path, config_root: Path) -> list[Path]:
     """Files an earlier install created that this one no longer writes.
 
     Covers generated agents for retired lanes and managed scripts that were
     renamed. A previously owned file is retired only while it is still
-    recognisably ours (marker present or content unchanged since install);
-    any generated fleet agent without a lane in the new map goes too, which
-    is exactly what claude-fleet-sync would prune.
+    recognisably ours (still_recognisably_ours); any generated fleet agent
+    without a lane in the new map goes too, which is exactly what
+    claude-fleet-sync would prune.
     """
     found: dict[str, Path] = {}
     owned = {Path(item["path"]): item for item in (metadata_records(previous, home, bin_dir, config_root) if previous else [])}
     for path, item in owned.items():
-        if path in specs or path.is_symlink() or not path.is_file():
+        if path in specs:
             continue
-        data = path.read_bytes()
-        # Generated agents are rewritten by claude-fleet-sync after install,
-        # so their bytes rarely match the install record; the generator
-        # marker identifies them instead. Other files must still carry the
-        # bundle marker or be unchanged since install.
-        is_agent = path.parent == home / ".claude" / "agents" and path.name.startswith("fleet-")
-        if (is_agent and GENERATED_MARKER.encode() in data) or (not is_agent and MARKER.encode() in data) or bytes_sha256(data) == item.get("sha256"):
+        if still_recognisably_ours(path, item, home):
             found[str(path)] = path
     agents = home / ".claude" / "agents"
     if agents.is_dir():
@@ -2764,8 +2803,9 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
     existing = load_json(settings_path, "existing settings") if settings_path.is_file() else {}
     previous = old_metadata(home)
     config_root = config_home(args, home, previous)
-    if previous:
-        metadata_records(previous, home, bin_dir, config_root)
+    # Validated once here and reused for clean_hook_groups's retired-script
+    # check (still_recognisably_ours), rather than re-derived there.
+    previous_managed = {item["path"]: item for item in metadata_records(previous, home, bin_dir, config_root)}
     try:
         switched_to_native = (home / ".claude" / "agentfleet" / "active").read_text(encoding="utf-8").strip() == "native"
     except (OSError, UnicodeError):
@@ -2818,7 +2858,8 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
         if isinstance(model, str) and model
     }
     desired, journal, _, gateway_owned, permission_owned, hook_notices = merge_settings(
-        existing, template, home, config_root, args, not dry, previous, gateway_mode, gateway_token, required_models
+        existing, template, home, config_root, args, not dry, previous, gateway_mode, gateway_token, required_models,
+        previous_managed=previous_managed,
     )
     settings_bytes = json_bytes(desired)
     fleet_hash = bytes_sha256(fleet_bytes)[:16]
@@ -3004,7 +3045,13 @@ def settings_for_uninstall(path: Path, meta: dict) -> tuple[bytes | None, bool]:
                     continue
                 keep = []
                 for hook in group["hooks"]:
-                    if isinstance(hook, dict) and hook.get("command") == entry["command"]:
+                    command = hook.get("command") if isinstance(hook, dict) else None
+                    # An exact match is the common case; a normalized match
+                    # also catches an install left in the 2.0.5 state where
+                    # settings.json and the journal recorded the same command
+                    # in different quoting/marker forms (see
+                    # normalized_hook_command), so uninstall still finds it.
+                    if command == entry["command"] or (isinstance(command, str) and normalized_hook_command(command) == normalized_hook_command(entry["command"])):
                         removed = True
                     else:
                         keep.append(hook)
