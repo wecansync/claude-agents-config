@@ -59,7 +59,7 @@
       <h1>A fleet of specialist agents that runs on any provider</h1>
       <p class="lede">AgentFleet installs 19 native Claude Code subagents ("lanes"), each named for a role — plan, implement, review, test — never a model. Point it at your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway, and every lane gets the best-fit model automatically.</p>
 
-      <p class="latest-badge"><span class="latest-badge-version" data-latest-version>v2.0.5</span> &middot; <span class="latest-badge-date" data-latest-date>September 24, 2026</span> &middot; <a href="#changelog">What's new</a></p>
+      <p class="latest-badge"><span class="latest-badge-version" data-latest-version>v2.0.6</span> &middot; <span class="latest-badge-date" data-latest-date>September 25, 2026</span> &middot; <a href="#changelog">What's new</a></p>
 
       <div class="tabs" id="install-tabs">
         <div role="tablist" aria-label="Operating system">
@@ -398,21 +398,30 @@ agentfleet save &lt;name&gt;       # name the current setup</code></pre>
 
     <div class="release-card">
       <div class="release-head">
-        <span class="release-version" data-latest-version>v2.0.5</span>
-        <span class="release-date" data-latest-date>September 24, 2026</span>
+        <span class="release-version" data-latest-version>v2.0.6</span>
+        <span class="release-date" data-latest-date>September 25, 2026</span>
       </div>
-      <p>Any number of provider profiles: add and remove gateways without reinstalling, and give each profile its own settings.</p>
+      <p>Windows fixes: the one-command install works on the PowerShell built into Windows, and updates repair hooks an older install left behind.</p>
       <ul class="release-list">
-        <li>New <code class="il">agentfleet add NAME --gateway-url URL</code> and <code class="il">agentfleet remove NAME</code> add and remove gateway profiles without reinstalling.</li>
-        <li>Each profile keeps its own provider policy, model pins, exclusions, and tier labels, instead of sharing one policy across every profile.</li>
-        <li>Gateway tokens are handled more safely: no redirect leaks, a digest instead of plaintext in the install journal, and no live token sent to a new URL during a dry run.</li>
-        <li><code class="il">agentfleet update</code> (including automatic updates) now succeeds after <code class="il">agentfleet use native</code>.</li>
-        <li>Uninstall keeps the API-key mask for a gateway you switched to and restores a pre-install gateway exactly.</li>
+        <li><code class="il">irm https://agentfleet.wecansync.com/install.ps1 | iex</code> works on Windows PowerShell 5.1. It had stopped on the Microsoft Store <code class="il">python3</code> placeholder and wrongly reported Node.js 18+ as missing. <code class="il">agentfleet update</code> and automatic updates on Windows are fixed too.</li>
+        <li>The Windows installer finds a Python installed with <code class="il">uv python install</code> even when it is not on PATH.</li>
+        <li><code class="il">agentfleet</code>, <code class="il">claude-agents-doctor</code>, and <code class="il">claude-fleet-setup</code> on Windows run with the Python the installer used, instead of failing with "Python was not found".</li>
+        <li>Updates refresh hooks that differ only in quoting or comment style, and never leave a hook pointing at a script they just removed.</li>
       </ul>
     </div>
 
     <h3 class="version-history-heading">Version history</h3>
     <div class="version-history">
+      <details class="version-item">
+        <summary><span class="release-version">v2.0.5</span><span class="release-date">September 24, 2026</span><span class="version-summary">Any number of provider profiles, each with its own settings.</span></summary>
+        <ul class="release-list">
+          <li>New <code class="il">agentfleet add NAME --gateway-url URL</code> and <code class="il">agentfleet remove NAME</code> add and remove gateway profiles without reinstalling.</li>
+          <li>Each profile keeps its own provider policy, model pins, exclusions, and tier labels, instead of sharing one policy across every profile.</li>
+          <li>Gateway tokens are handled more safely: no redirect leaks, a digest instead of plaintext in the install journal, and no live token sent to a new URL during a dry run.</li>
+          <li><code class="il">agentfleet update</code> (including automatic updates) now succeeds after <code class="il">agentfleet use native</code>.</li>
+          <li>Uninstall keeps the API-key mask for a gateway you switched to and restores a pre-install gateway exactly.</li>
+        </ul>
+      </details>
       <details class="version-item">
         <summary><span class="release-version">v2.0.4</span><span class="release-date">September 23, 2026</span><span class="version-summary">Model-to-lane interview in <code class="il">/fleet-setup</code>, automatic updates.</span></summary>
         <ul class="release-list">

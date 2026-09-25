@@ -10,7 +10,7 @@ hook, a privacy-safe status line, a global `CLAUDE.md`, and the `/fleet-setup`
 skill. Everything lives under your home directory; no root or admin access is
 required.
 
-Version: **2.0.5** — MIT license. See [LICENSE](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for release history.
+Version: **2.0.6** — MIT license. See [LICENSE](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 > AgentFleet is an independent project by WeCanSync. It is not affiliated with
 > or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.
@@ -20,7 +20,7 @@ Version: **2.0.5** — MIT license. See [LICENSE](LICENSE). See [CHANGELOG.md](C
 ## Requirements
 
 - Claude Code
-- Python 3.10+
+- Python 3.10+ (on Windows, one installed with `uv python install` is found even when it is not on PATH)
 - Node.js 18+
 
 ---

@@ -89,6 +89,59 @@ function Test-VersionString {
     }
 }
 
+function Test-PythonCandidate {
+    param([string] $Exe, [string[]] $Prefix)
+    # Windows PowerShell 5.1 turns native stderr into a terminating error under
+    # $ErrorActionPreference = 'Stop', even with 2>$null -- and the Microsoft
+    # Store stub writes "Python was not found" to stderr. Probe with 'Continue'
+    # (scoped to this function) so an unusable candidate is skipped, not fatal.
+    $ErrorActionPreference = 'Continue'
+    try {
+        $checkArgs = @($Prefix) + @('-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)')
+        & $Exe @checkArgs 2>$null | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
+function Find-UvPython {
+    # `uv python install` keeps interpreters off PATH; ask uv for one. `find`
+    # only reports installed interpreters and never downloads, and --system
+    # skips virtual environments, whose interpreter would otherwise be pinned
+    # into every hook. --no-config and --no-project ignore any uv.toml or
+    # pyproject.toml in the current directory or its parents, so the repo this
+    # runs from cannot steer the choice. Only a real uv.exe: through a .cmd
+    # shim, cmd.exe would read '>=3.10' as a redirect.
+    $uv = Get-Command uv -CommandType Application -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -eq '.exe' } | Select-Object -First 1
+    if (-not $uv) { return $null }
+    $ErrorActionPreference = 'Continue'
+    # uv writes UTF-8 to a pipe, but PowerShell decodes native output with the
+    # console code page, which would garble a non-ASCII profile path.
+    $savedEncoding = $null
+    try {
+        $savedEncoding = [Console]::OutputEncoding
+        [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+    } catch {
+        $savedEncoding = $null
+    }
+    try {
+        $output = @(& $uv.Source python find --system --no-config --no-project '>=3.10' 2>$null)
+        $exitCode = $LASTEXITCODE
+    } catch {
+        return $null
+    } finally {
+        if ($savedEncoding) {
+            try { [Console]::OutputEncoding = $savedEncoding } catch { }
+        }
+    }
+    if ($exitCode -ne 0 -or $output.Count -eq 0) { return $null }
+    $found = "$($output[0])".Trim()
+    if ([string]::IsNullOrWhiteSpace($found) -or -not (Test-Path -LiteralPath $found)) { return $null }
+    return $found
+}
+
 function Get-PythonCommand {
     # Try each launcher and keep the first that is Python 3.10+: a bare
     # `python` may be an old install or the Microsoft Store stub.
@@ -100,11 +153,13 @@ function Get-PythonCommand {
     foreach ($candidate in $candidates) {
         $command = Get-Command $candidate.Name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $command) { continue }
-        $checkArgs = $candidate.Prefix + @('-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)')
-        & $command.Source @checkArgs 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) {
+        if (Test-PythonCandidate -Exe $command.Source -Prefix $candidate.Prefix) {
             return [pscustomobject]@{ Exe = $command.Source; Prefix = $candidate.Prefix }
         }
+    }
+    $uvPython = Find-UvPython
+    if ($uvPython -and (Test-PythonCandidate -Exe $uvPython -Prefix @())) {
+        return [pscustomobject]@{ Exe = $uvPython; Prefix = @() }
     }
     Write-Host "agentfleet: Python 3.10 or newer is required but was not found on PATH." -ForegroundColor Red
     Write-Host "agentfleet:   install it from https://www.python.org/downloads/windows/" -ForegroundColor Red
@@ -119,7 +174,10 @@ function Test-Node {
         Write-Host "agentfleet:   install it from https://nodejs.org/" -ForegroundColor Red
         Fail "Node.js (>= 18) is required"
     }
-    & $node.Source -e 'process.exit(parseInt(process.versions.node.split(".")[0], 10) >= 18 ? 0 : 1)'
+    # No double quotes in this script: Windows PowerShell 5.1 strips them from
+    # native arguments, which made split(".") a syntax error. parseInt stops
+    # at the first ".", so it reads the major version on its own.
+    & $node.Source -e 'process.exit(parseInt(process.versions.node, 10) >= 18 ? 0 : 1)'
     if ($LASTEXITCODE -ne 0) {
         Write-Host "agentfleet: Node.js >= 18 is required (found an older version)." -ForegroundColor Red
         Write-Host "agentfleet:   install a newer Node.js from https://nodejs.org/" -ForegroundColor Red
