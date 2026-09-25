@@ -444,14 +444,17 @@ def command_text(item: object) -> str:
 # Maps each pre-marker legacy command fragment to the claude-agents-config
 # marker "kind" that now supersedes it (every fragment is byte-identical to a
 # command this installer generated before the claude-agents-config:<kind>
-# marker convention existed). Single source of truth for two uses: classify
-# ownership (is_owned_command, for picker/statusline values) and retire the
+# marker convention existed). Single source of truth for three uses: classify
+# ownership (is_owned_command, for picker/statusline values); retire the
 # pre-marker survivor once a marker-bearing replacement of the same kind is
 # actually installed for the same event (clean_hook_groups / retired_hook_kind),
 # so a hook does not end up wired twice -- once under the old unmarked command
 # and once under the new marked one -- which duplicates the work and, for
 # sync-omniroute-models.mjs specifically, would let two independent processes
-# race each other's cache write instead of just the one marked run.
+# race each other's cache write instead of just the one marked run; and, paired
+# with HOOK_SCRIPT_FOR_KIND, recognize a marker-bearing command that names a
+# script this bundle has since retired for its kind even though it was
+# genuinely user-edited afterward (retired_hook_script_for_kind).
 LEGACY_FRAGMENT_KIND = {
     "/.claude/route-to-fleet.py": "route",
     "\\.claude\\route-to-fleet.py": "route",
@@ -736,15 +739,23 @@ def windows_command(*parts: str) -> str:
     return " ".join(f'"{part}"' for part in parts)
 
 
+# The script each hook kind currently invokes. Single source of truth for
+# hook_command_for and retired_hook_script_for_kind (below), which flags a
+# marker-bearing hook that still names a script this bundle has since
+# retired for its kind (per LEGACY_FRAGMENT_KIND) so it never keeps such a
+# hook wired to a script that no longer exists after this same run deletes it.
+HOOK_SCRIPT_FOR_KIND = {
+    "route": "route-to-fleet.py",
+    "statusline": "subagent-statusline.py",
+    "model-sync": "sync-provider-models.mjs",
+    "model-context": "sync-model-context.py",
+    "fleet-reconcile": "fleet-reconcile.py",
+    "auto-update": "agentfleet.py",
+}
+
+
 def hook_command_for(kind: str, claude_dir: Path, config_root: Path | None = None) -> str:
-    script = claude_dir / {
-        "route": "route-to-fleet.py",
-        "statusline": "subagent-statusline.py",
-        "model-sync": "sync-provider-models.mjs",
-        "model-context": "sync-model-context.py",
-        "fleet-reconcile": "fleet-reconcile.py",
-        "auto-update": "agentfleet.py",
-    }[kind]
+    script = claude_dir / HOOK_SCRIPT_FOR_KIND[kind]
     if kind == "model-sync":
         runtime = node_path(require=True)
         # --drift is intentionally only ever passed here, never by any other
@@ -902,6 +913,47 @@ def retired_hook_kind(command: object) -> str | None:
     return None
 
 
+def normalized_hook_command(command: object) -> str:
+    """A hook command reduced to a form comparable across quoting and marker
+    conventions: the trailing claude-agents-config marker, in either its
+    current " # ..." form or the pre-2.0 Windows " & rem ..." form, is
+    stripped; the double quotes windows_command wraps every argument in are
+    removed; and internal whitespace is collapsed. Two commands equal once
+    normalized differ only cosmetically -- e.g. a tool outside the installer
+    re-quoted settings.json, or the journal recorded the command back when a
+    different marker convention was in use -- and are the same installed
+    command for ownership purposes, in whichever direction (settings.json or
+    the journal) still carries the older form."""
+    if not isinstance(command, str):
+        return ""
+    text = re.sub(r"\s*(?:&\s*rem|#)\s*" + re.escape(MARKER) + r"[a-z0-9-]+\s*$", "", command)
+    text = text.replace('"', "")
+    return " ".join(text.split())
+
+
+def retired_hook_script_for_kind(kind: str, command: object) -> str | None:
+    """The retired legacy script this marker-bearing command still names for
+    kind's hook, or None. A command can be a genuine, deliberate user edit
+    (see clean_hook_groups) and still be unsafe to keep verbatim: if it
+    names a script LEGACY_FRAGMENT_KIND maps to kind but HOOK_SCRIPT_FOR_KIND
+    no longer does, the bundle has retired that script for this kind (e.g.
+    sync-omniroute-models.mjs, superseded by sync-provider-models.mjs for
+    model-sync), and this same run deletes it -- keeping the edit wired would
+    guarantee a broken hook."""
+    if not isinstance(command, str):
+        return None
+    current_script = HOOK_SCRIPT_FOR_KIND.get(kind)
+    if current_script is None:
+        return None
+    for fragment, frag_kind in LEGACY_FRAGMENT_KIND.items():
+        if frag_kind != kind or fragment not in command:
+            continue
+        script_name = fragment.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if script_name and script_name != current_script:
+            return script_name
+    return None
+
+
 def incoming_kinds_by_event(incoming: dict) -> dict[str, set[str]]:
     result: dict[str, set[str]] = {}
     for event, entries in incoming.items():
@@ -917,7 +969,7 @@ def incoming_kinds_by_event(incoming: dict) -> dict[str, set[str]]:
     return result
 
 
-def clean_hook_groups(existing: dict, incoming: dict, journal: dict[str, dict], previous: dict[str, dict]) -> dict:
+def clean_hook_groups(existing: dict, incoming: dict, journal: dict[str, dict], previous: dict[str, dict], notices: list[str]) -> dict:
     result = copy.deepcopy(existing)
     prior_commands = {
         str(entry.get("installed"))
@@ -958,10 +1010,36 @@ def clean_hook_groups(existing: dict, incoming: dict, journal: dict[str, dict], 
                     # refreshed command below.
                     continue
                 elif f"hook:{event}:{suffix}" in previous:
-                    # A marker-bearing command changed after installation. Treat
-                    # it as a later user edit and never overwrite it.
-                    edited_suffixes.add(f"{event}:{suffix}")
-                    kept_hooks.append(hook)
+                    identity = f"hook:{event}:{suffix}"
+                    old_installed = previous[identity].get("installed")
+                    retired_script = retired_hook_script_for_kind(suffix, command)
+                    if isinstance(old_installed, str) and normalized_hook_command(command) == normalized_hook_command(old_installed):
+                        # Equal to the previously installed command once
+                        # quoting and marker-style differences are stripped
+                        # away (e.g. something outside the installer
+                        # re-quoted settings.json, or this journal entry
+                        # predates the "# marker" convention). Treat exactly
+                        # like the exact-match branch above: drop it so the
+                        # refreshed command below takes its place.
+                        continue
+                    elif retired_script:
+                        # A genuine edit, but one that still names a script
+                        # this bundle has retired for this kind, and this
+                        # same run deletes that script. Keeping the edit
+                        # verbatim would leave a hook that fails every
+                        # session, so it is replaced like the cases above.
+                        notices.append(
+                            f"  refresh: hook:{event}:{suffix} pointed at the retired {retired_script}; "
+                            "replacing the edited command with the refreshed hook "
+                            "(the pre-update settings.json is already in the backup snapshot)"
+                        )
+                        continue
+                    else:
+                        # A marker-bearing command changed after installation
+                        # for a reason other than the two above. Treat it as
+                        # a later user edit and never overwrite it.
+                        edited_suffixes.add(f"{event}:{suffix}")
+                        kept_hooks.append(hook)
                 else:
                     # Legacy marker-bearing commands are safe to migrate.
                     continue
@@ -1270,10 +1348,11 @@ def merge_settings(
     gateway_mode: bool,
     gateway_token: str | None,
     required_models: set[str],
-) -> tuple[dict, list[dict], str | None, bool, list[str]]:
+) -> tuple[dict, list[dict], str | None, bool, list[str], list[str]]:
     desired = copy.deepcopy(existing)
     prior = previous_journal_map(previous)
     journal: dict[str, dict] = dict(prior)
+    notices: list[str] = []
     redact_journal_secrets(journal)
     env_before = get_nested(existing, ["env"])
     permissions_before = get_nested(existing, ["permissions"])
@@ -1494,7 +1573,7 @@ def merge_settings(
     template_with_hooks = platform_hook_template(home, config_root, template, discovery_enabled)
     incoming_hooks = template_with_hooks.get("hooks") if isinstance(template_with_hooks.get("hooks"), dict) else {}
     existing_hooks = desired.get("hooks") if isinstance(desired.get("hooks"), dict) else {}
-    desired["hooks"] = clean_hook_groups(existing_hooks, incoming_hooks, journal, prior)
+    desired["hooks"] = clean_hook_groups(existing_hooks, incoming_hooks, journal, prior, notices)
 
     status = template_with_hooks.get("subagentStatusLine")
     if isinstance(status, dict):
@@ -1586,7 +1665,7 @@ def merge_settings(
         }
     # Keep only useful journal entries and return stable order.
     journal_list = sorted(journal.values(), key=lambda item: item.get("id", ""))
-    return desired, journal_list, gateway_state, gateway_owned, sorted(permission_owned)
+    return desired, journal_list, gateway_state, gateway_owned, sorted(permission_owned), notices
 
 
 MEMORY_TOOLS_SUFFIX = ", mcp__agent-brain-memory__memory_search, mcp__agent-brain-memory__memory_save, mcp__agent-brain-memory__session_summary"
@@ -1770,7 +1849,28 @@ def cmd_dispatch(
     if runtime == "node":
         body = f"@echo off\r\nsetlocal\r\nwhere node >nul 2>nul\r\nif errorlevel 1 (echo Node.js ^>=18 is required 1^>^&2 & exit /b 1)\r\nnode {script_arg}{args} %*\r\nexit /b %errorlevel%\r\n"
     else:
-        body = f"@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\nwhere py >nul 2>nul\r\nif not errorlevel 1 goto run_py\r\npython {script_arg}{args} %*\r\nexit /b %errorlevel%\r\n:run_py\r\npy -3 {script_arg}{args} %*\r\nexit /b %errorlevel%\r\n"
+        # Try the interpreter this installer ran under first: on a machine
+        # whose only Python is off PATH (e.g. uv-managed), bare "python" is
+        # the Microsoft Store stub and "py" may not exist either, so the
+        # shim would exit 9009 even though hook_command_for's hooks (pinned
+        # the same way) work fine. "if not exist ... goto" is required
+        # instead of a parenthesized "if errorlevel" block: %errorlevel%
+        # expands at parse time, so it would read stale inside parentheses.
+        pinned = quote(sys.executable)
+        body = (
+            f"@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\n"
+            f"if not exist {pinned} goto no_pin\r\n"
+            f"{pinned} {script_arg}{args} %*\r\n"
+            f"exit /b %errorlevel%\r\n"
+            f":no_pin\r\n"
+            f"where py >nul 2>nul\r\n"
+            f"if not errorlevel 1 goto run_py\r\n"
+            f"python {script_arg}{args} %*\r\n"
+            f"exit /b %errorlevel%\r\n"
+            f":run_py\r\n"
+            f"py -3 {script_arg}{args} %*\r\n"
+            f"exit /b %errorlevel%\r\n"
+        )
     return body.encode("utf-8")
 
 
@@ -1794,7 +1894,18 @@ def powershell_dispatch(
     if runtime == "node":
         body = f"$node = Get-Command node -ErrorAction SilentlyContinue\nif (-not $node) {{ throw 'Node.js >=18 is required' }}\n& $node.Source {path}{target_args} @args\nexit $LASTEXITCODE\n"
     else:
-        body = f"$py = Get-Command py -ErrorAction SilentlyContinue\nif ($py) {{ & $py.Source '-3' {path}{target_args} @args }} else {{ $python = Get-Command python -ErrorAction Stop; & $python.Source {path}{target_args} @args }}\nexit $LASTEXITCODE\n"
+        # Same pinned-interpreter-first fallback as cmd_dispatch, for the
+        # same reason (see its comment). ps_quote's single-quoted literals
+        # keep this compatible with Windows PowerShell 5.1, which strips a
+        # double quote embedded inside a native-command argument.
+        pinned = ps_quote(sys.executable)
+        body = (
+            f"$py = Get-Command py -ErrorAction SilentlyContinue\n"
+            f"if (Test-Path -LiteralPath {pinned}) {{ & {pinned} {path}{target_args} @args }} "
+            f"elseif ($py) {{ & $py.Source '-3' {path}{target_args} @args }} "
+            f"else {{ $python = Get-Command python -ErrorAction Stop; & $python.Source {path}{target_args} @args }}\n"
+            f"exit $LASTEXITCODE\n"
+        )
     return body.encode("utf-8")
 
 
@@ -2706,7 +2817,7 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
         for model in [config.get("model"), *(config.get("fallbacks") or [])]
         if isinstance(model, str) and model
     }
-    desired, journal, _, gateway_owned, permission_owned = merge_settings(
+    desired, journal, _, gateway_owned, permission_owned, hook_notices = merge_settings(
         existing, template, home, config_root, args, not dry, previous, gateway_mode, gateway_token, required_models
     )
     settings_bytes = json_bytes(desired)
@@ -2745,6 +2856,8 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
     print_plan(specs, conflicts, gateway_state, dry)
     for path in retired:
         print(f"  remove: {path}")
+    for notice in hook_notices:
+        print(notice)
     if conflicts:
         return 1
     if dry:
