@@ -3,6 +3,18 @@
 All notable changes to AgentFleet are documented here. Dates are UTC. This
 file follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [2.0.6] - 2026-09-25
+
+Windows fixes: the one-command install works on the PowerShell built into
+Windows, and updates repair hooks an older install left behind.
+
+### Fixed
+- The Windows one-command install (`irm https://agentfleet.wecansync.com/install.ps1 | iex`) works on Windows PowerShell 5.1, the version built into Windows. It stopped with an error when the Microsoft Store `python3` placeholder was on PATH, and it always reported Node.js 18+ as missing because PowerShell 5.1 drops the quotes in the version check. This also fixes `agentfleet update` and automatic updates on Windows machines without PowerShell 7.
+- The Windows installer finds a Python installed with `uv python install` even when it is not on PATH. It never picks a project's virtual environment.
+- On Windows, `agentfleet`, `claude-agents-doctor`, and `claude-fleet-setup` run with the Python the installer used, as the hooks already did, instead of whatever `py` or `python` finds on PATH. They had failed with "Python was not found" on machines whose only Python is not on PATH.
+- An update refreshes managed hooks whose commands differ from the recorded install only in quoting or comment style, instead of treating them as your edits and never updating them again.
+- An update no longer leaves a hook pointing at a script it has just removed. An edited hook that still runs a retired script, such as `sync-omniroute-models.mjs`, is replaced with the current hook and the installer says so. Your previous `settings.json` is in the backup snapshot.
+
 ## [2.0.5] - 2026-09-24
 
 Any number of provider profiles: add and remove gateways without

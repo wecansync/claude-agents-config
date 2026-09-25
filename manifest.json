@@ -1,6 +1,6 @@
 {
   "format": "claude-agents-config.bundle.v1",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "files": [
     {
       "path": ".gitattributes",
@@ -14,7 +14,7 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "18a60c231b333e8a95a3238b6724cdb112c5ae152ac6b2e75c58f22340610b3b",
+      "sha256": "d598cba091c51f77ab8821ea42ba5a70ea54c592e91e4a0d912e896c1a57d279",
       "mode": "0o644"
     },
     {
@@ -29,12 +29,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "f6bc376f9792790e210ece19d02c91358a8eab4a9214600962e1269b81b8f760",
+      "sha256": "28755598022a73aec1e1c301131b39b254a7f957cf54e78dd8fbab29a4069b96",
       "mode": "0o644"
     },
     {
       "path": "VERSION",
-      "sha256": "ce0a2005da2b159fde33efc005d063470ccc2ccc54ffb702dfafb2c330285040",
+      "sha256": "5586bab26415fe15a8d5ace77ab932358d3ff0af628b8acaf326415293838aa6",
       "mode": "0o644"
     },
     {
@@ -154,7 +154,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "416ad267071e414cf140b200dafc79ca496315fc239bf1a98fac7776a45f6b4b",
+      "sha256": "38d6be3c67ece3e0df8a2e58f877197575da0f5aebc2327e28989b0af0a027cd",
       "mode": "0o755"
     },
     {
@@ -240,6 +240,11 @@
     {
       "path": "tests/test_auto_update.py",
       "sha256": "c9e8b8b4c3fde17556205f7f5bb3d0adf14f711103ea9788d4835e74949182f3",
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_install_windows_repairs.py",
+      "sha256": "a1f50cca62182ac9b0a7927f23eef4553d9c6fbe7333153bd087c02b39542e51",
       "mode": "0o644"
     },
     {
