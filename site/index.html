@@ -59,7 +59,7 @@
       <h1>A fleet of specialist agents that runs on any provider</h1>
       <p class="lede">AgentFleet installs 19 native Claude Code subagents ("lanes"), each named for a role — plan, implement, review, test — never a model. Point it at your Claude subscription, an Anthropic API key, or any Anthropic-compatible gateway, and every lane gets the best-fit model automatically.</p>
 
-      <p class="latest-badge"><span class="latest-badge-version" data-latest-version>v2.0.6</span> &middot; <span class="latest-badge-date" data-latest-date>September 25, 2026</span> &middot; <a href="#changelog">What's new</a></p>
+      <p class="latest-badge"><span class="latest-badge-version" data-latest-version>v2.1.0</span> &middot; <span class="latest-badge-date" data-latest-date>October 9, 2026</span> &middot; <a href="#changelog">What's new</a></p>
 
       <div class="tabs" id="install-tabs">
         <div role="tablist" aria-label="Operating system">
@@ -173,6 +173,13 @@ How should Claude Code reach its models?
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><path d="M3 3l18 18"/></svg></div>
         <h3>Privacy-safe routing log</h3>
         <p>The routing hook logs the lane, reason, timestamp, and character count — never prompt text — to a mode-0600 file that purges itself.</p>
+      </div>
+      <div class="feature-card feature-wide">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="2"/><path d="M3 15h18M3 20h10"/></svg></div>
+        <div>
+          <h3>Status band and optional mods</h3>
+          <p>The included <code class="il">fleet-status</code> mod draws a band above the prompt only when something needs action. Context forecasts and Jev compaction are opt-in mods. <a href="/docs/#mods">See mods, requirements, and privacy</a>.</p>
+        </div>
       </div>
       <div class="feature-card feature-wide">
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg></div>
@@ -398,20 +405,29 @@ agentfleet save &lt;name&gt;       # name the current setup</code></pre>
 
     <div class="release-card">
       <div class="release-head">
-        <span class="release-version" data-latest-version>v2.0.6</span>
-        <span class="release-date" data-latest-date>September 25, 2026</span>
+        <span class="release-version" data-latest-version>v2.1.0</span>
+        <span class="release-date" data-latest-date>October 9, 2026</span>
       </div>
-      <p>Windows fixes: the one-command install works on the PowerShell built into Windows, and updates repair hooks an older install left behind.</p>
+      <p>Claude Code mods: a status band when something needs action, with optional context forecasts and Jev compaction in a local plugin catalog.</p>
       <ul class="release-list">
-        <li><code class="il">irm https://agentfleet.wecansync.com/install.ps1 | iex</code> works on Windows PowerShell 5.1. It had stopped on the Microsoft Store <code class="il">python3</code> placeholder and wrongly reported Node.js 18+ as missing. <code class="il">agentfleet update</code> and automatic updates on Windows are fixed too.</li>
-        <li>The Windows installer finds a Python installed with <code class="il">uv python install</code> even when it is not on PATH.</li>
-        <li><code class="il">agentfleet</code>, <code class="il">claude-agents-doctor</code>, and <code class="il">claude-fleet-setup</code> on Windows run with the Python the installer used, instead of failing with "Python was not found".</li>
-        <li>Updates refresh hooks that differ only in quoting or comment style, and never leave a hook pointing at a script they just removed.</li>
+        <li><code class="il">fleet-status</code> is installed and on by default. It shows restart notices, failed automatic updates, lanes without a model, and model changes waiting for review; <code class="il">/fleet-status</code> prints the full status.</li>
+        <li>The <code class="il">agentfleet</code> catalog includes two opt-in mods: Anthropic's <code class="il">token-weather</code> and tamaratran's <code class="il">fast-jev-compaction</code>. Jev compaction needs a paid TypeSafe API key and sends conversation text and tool inputs to TypeSafe.</li>
+        <li>Mods need Claude Code 2.1.287 or later and show in the terminal and Desktop's Code tab. <code class="il">fleet-status</code> reads only four AgentFleet files, never settings or tokens, and sends nothing anywhere.</li>
+        <li>Opt out with <code class="il">--no-mods</code> or <code class="il">AGENTFLEET_MODS=0</code>; <code class="il">--mods</code> opts back in. Updates refresh mod files without re-registering disabled or uninstalled plugins. <a href="/docs/#mods">Read the mods guide</a>.</li>
       </ul>
     </div>
 
     <h3 class="version-history-heading">Version history</h3>
     <div class="version-history">
+      <details class="version-item">
+        <summary><span class="release-version">v2.0.6</span><span class="release-date">September 25, 2026</span><span class="version-summary">Windows fixes: the one-command install works on the PowerShell built into Windows, and updates repair hooks an older install left behind.</span></summary>
+        <ul class="release-list">
+          <li><code class="il">irm https://agentfleet.wecansync.com/install.ps1 | iex</code> works on Windows PowerShell 5.1. It had stopped on the Microsoft Store <code class="il">python3</code> placeholder and wrongly reported Node.js 18+ as missing. <code class="il">agentfleet update</code> and automatic updates on Windows are fixed too.</li>
+          <li>The Windows installer finds a Python installed with <code class="il">uv python install</code> even when it is not on PATH.</li>
+          <li><code class="il">agentfleet</code>, <code class="il">claude-agents-doctor</code>, and <code class="il">claude-fleet-setup</code> on Windows run with the Python the installer used, instead of failing with "Python was not found".</li>
+          <li>Updates refresh hooks that differ only in quoting or comment style, and never leave a hook pointing at a script they just removed.</li>
+        </ul>
+      </details>
       <details class="version-item">
         <summary><span class="release-version">v2.0.5</span><span class="release-date">September 24, 2026</span><span class="version-summary">Any number of provider profiles, each with its own settings.</span></summary>
         <ul class="release-list">

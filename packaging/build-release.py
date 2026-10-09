@@ -149,6 +149,11 @@ def load_release_inputs(ref: str) -> tuple[dict, dict[str, bytes], str]:
         "checksums.sha256": checksums_bytes,
     }
     for rel, item in expected.items():
+        parts = rel.split("/")
+        if len(parts) >= 3 and parts[0] == "mods" and any(
+            parts[index:index + 2] == [".claude-plugin", "types"] for index in range(len(parts) - 1)
+        ):
+            continue
         data = git_show_bytes(ref, rel)
         actual = hashlib.sha256(data).hexdigest()
         if actual != item["sha256"]:

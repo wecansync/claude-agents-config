@@ -1,0 +1,23 @@
+{
+  "name": "agentfleet",
+  "owner": {
+    "name": "WeCanSync"
+  },
+  "plugins": [
+    {
+      "name": "fleet-status",
+      "source": "./fleet-status",
+      "description": "Actionable AgentFleet updates and model proposals above the prompt."
+    },
+    {
+      "name": "token-weather",
+      "source": "./token-weather",
+      "description": "Optional: a live forecast of the context window above the prompt (Anthropic sample, Apache-2.0)."
+    },
+    {
+      "name": "fast-jev-compaction",
+      "source": "./fast-jev-compaction",
+      "description": "Optional: verbatim compaction guided by TypeSafe Jev (needs a TypeSafe API key; sends conversation text to TypeSafe). By tamaratran, MIT."
+    }
+  ]
+}

@@ -33,6 +33,7 @@ def env_for(home: Path, config: Path, **extra: str) -> dict:
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(config),
         "PYTHONDONTWRITEBYTECODE": "1",
+        "AGENTFLEET_MODS": "0",
         "AGENTFLEET_NONINTERACTIVE": "1",
         **extra,
     }

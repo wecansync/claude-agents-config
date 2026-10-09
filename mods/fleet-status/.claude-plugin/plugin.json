@@ -1,0 +1,9 @@
+{
+  "name": "fleet-status",
+  "version": "1.0.0",
+  "description": "Actionable AgentFleet updates and model proposals above the prompt.",
+  "author": { "name": "WeCanSync" },
+  "homepage": "https://agentfleet.wecansync.com",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

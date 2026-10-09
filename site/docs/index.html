@@ -68,6 +68,7 @@
         <li><a href="#profiles">Profiles</a></li>
         <li><a href="#commands">Commands</a></li>
         <li><a href="#fleet-setup">fleet-setup</a></li>
+        <li><a href="#mods">Mods</a></li>
         <li><a href="#what-gets-installed">What gets installed</a></li>
         <li><a href="#context-compaction">Context compaction</a></li>
         <li><a href="#privacy">Privacy</a></li>
@@ -202,6 +203,8 @@ curl -fsSL https://agentfleet.wecansync.com/install.sh | \
               <tr><td><code class="il">--gateway-token-env NAME</code></td><td>Environment variable that holds the gateway token.</td></tr>
               <tr><td><code class="il">--enable-model-discovery</code></td><td>Turn on startup model discovery for a bare <code class="il">--gateway-url</code> install (implied by <code class="il">--provider gateway</code>).</td></tr>
               <tr><td><code class="il">--no-wizard</code></td><td>Never prompt; keep or infer the provider.</td></tr>
+              <tr><td><code class="il">--mods</code></td><td>Opt back in to mods. The choice is remembered.</td></tr>
+              <tr><td><code class="il">--no-mods</code></td><td>Opt out of mods. The choice is remembered; <code class="il">AGENTFLEET_MODS=0</code> also opts out and is honored by <code class="il">agentfleet update</code>.</td></tr>
               <tr><td><code class="il">--wizard</code></td><td>Force the wizard even on an existing install.</td></tr>
               <tr><td><code class="il">--dry-run</code></td><td>Show changes without writing anything.</td></tr>
               <tr><td><code class="il">--check</code></td><td>Run the bundle doctor without changing files.</td></tr>
@@ -270,6 +273,8 @@ curl -fsSL https://agentfleet.wecansync.com/install.sh | \
               <tr><td><code class="il">--check</code></td><td>Run the bundle doctor without changing any files.</td></tr>
               <tr><td><code class="il">--wizard</code></td><td>Force the provider wizard even on an existing install.</td></tr>
               <tr><td><code class="il">--no-wizard</code></td><td>Never prompt; keep or infer the provider.</td></tr>
+              <tr><td><code class="il">--mods</code></td><td>Opt back in to mods. The choice is remembered.</td></tr>
+              <tr><td><code class="il">--no-mods</code></td><td>Opt out of mods. The choice is remembered; <code class="il">AGENTFLEET_MODS=0</code> also opts out and is honored by <code class="il">agentfleet update</code>.</td></tr>
               <tr><td><code class="il">--force-owned</code></td><td>Replace conflicting files that lack an ownership marker (after taking a backup).</td></tr>
             </tbody>
           </table>
@@ -638,12 +643,61 @@ agentfleet use openrouter     # or pass --use to add</code></pre>
         <aside class="callout note"><span class="callout-label">Note</span><p>The wizard never shows raw JSON, never edits files by hand, and always writes through <code class="il">claude-fleet-setup</code> and <code class="il">agentfleet</code> to hold the shared lock and keep both fleet mirrors in sync.</p></aside>
       </section>
 
+      <section id="mods">
+        <h2 class="anchor-heading">Mods<a class="anchor-link" href="#mods" aria-label="Link to this section">#</a></h2>
+        <p>Mods are plugins whose code runs inside Claude Code and can draw in its interface. AgentFleet ships a local plugin catalog (marketplace) named <code class="il">agentfleet</code> at <code class="il">~/.claude/agentfleet/mods/</code>. Only <code class="il">fleet-status</code> is installed and on by default; the other two mods are opt-in.</p>
+        <aside class="callout note"><span class="callout-label">Note</span><p>Mods need Claude Code 2.1.287 or later. They show in the terminal and the Code tab of the Claude Desktop app, not in the VS Code extension's chat panel, <code class="il">claude -p</code>, the Agent SDK, or Desktop WSL sessions. Mods run with your user permissions and are not sandboxed.</p></aside>
+
+        <h3 id="mods-fleet-status" class="anchor-heading">fleet-status<a class="anchor-link" href="#mods-fleet-status" aria-label="Link to this section">#</a></h3>
+        <p>A band above the prompt appears only when something needs action. It has a Hide button and covers four cases:</p>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> AgentFleet was updated during the session: "Restart Claude Code to use it".</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> An automatic update failed: it points to <code class="il">~/.claude/agentfleet/auto-update.log</code>.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Fleet lanes have no available model: "Run /fleet-setup".</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> Model changes are waiting for review: "Run /fleet-setup".</li>
+        </ul>
+        <p>Run <code class="il">/fleet-status</code> to print the version, profile, auto-update state, model proposals, and any notices. It reads only four AgentFleet files: the install manifest, the active profile marker, <code class="il">auto-update.json</code>, and <code class="il">fleet-model-proposal.json</code>. It never reads <code class="il">settings.json</code> or tokens, sends nothing anywhere, and adds nothing to Claude's context except the reply when you run <code class="il">/fleet-status</code>.</p>
+        <p>To turn it off:</p>
+        <div class="code-wrap">
+          <pre><code>claude plugin disable fleet-status@agentfleet</code></pre>
+          <button class="copy-btn" type="button" aria-label="Copy fleet-status disable command">Copy</button>
+        </div>
+
+        <h3 id="mods-optional" class="anchor-heading">Optional mods<a class="anchor-link" href="#mods-optional" aria-label="Link to this section">#</a></h3>
+        <p><strong>token-weather</strong> is Anthropic's sample mod (Apache-2.0): a forecast of how full the context window is, drawn above the prompt. It is not installed by default.</p>
+        <div class="code-wrap">
+          <pre><code>claude plugin install token-weather@agentfleet</code></pre>
+          <button class="copy-btn" type="button" aria-label="Copy token-weather install command">Copy</button>
+        </div>
+        <p><strong>fast-jev-compaction</strong>, by tamaratran (MIT), replaces Claude Code's compaction summary. A fast request to TypeSafe's Jev model decides which old tool calls and results to drop or truncate; everything kept stays word for word. It is not installed by default.</p>
+        <aside class="callout note"><span class="callout-label">Note</span><p>Jev compaction needs a paid TypeSafe API key, set through <code class="il">TYPESAFE_API_KEY</code> or the plugin's <code class="il">apiKey</code> option. At each compaction it sends the conversation's text and tool inputs to <code class="il">api.typesafe.ai</code>; tool results are replaced by short notes. It compacts at 60% of the context window by default. Set its <code class="il">compactAtPercent</code> option to <code class="il">80</code> to match AgentFleet. AgentFleet's copy is changed so it never forces compaction when no key is configured.</p></aside>
+        <div class="code-wrap">
+          <pre><code>claude plugin install fast-jev-compaction@agentfleet</code></pre>
+          <button class="copy-btn" type="button" aria-label="Copy fast-jev-compaction install command">Copy</button>
+        </div>
+
+        <h3 id="mods-registration" class="anchor-heading">Registration and updates<a class="anchor-link" href="#mods-registration" aria-label="Link to this section">#</a></h3>
+        <p>On install, when Claude Code 2.1.287 or later is on PATH, the installer runs these commands once. Otherwise it prints them to run by hand and retries on the next update:</p>
+        <div class="code-wrap">
+          <pre><code>claude plugin marketplace add ~/.claude/agentfleet/mods
+claude plugin install fleet-status@agentfleet</code></pre>
+          <button class="copy-btn" type="button" aria-label="Copy mod registration commands">Copy</button>
+        </div>
+        <p>Updates, including automatic ones, rewrite the mod files in place; the next Claude Code session loads them. Updates never re-register, so a mod you disabled or uninstalled stays that way.</p>
+        <h3 id="mods-opt-out" class="anchor-heading">Opting out<a class="anchor-link" href="#mods-opt-out" aria-label="Link to this section">#</a></h3>
+        <p>Pass <code class="il">--no-mods</code> on install or set <code class="il">AGENTFLEET_MODS=0</code>. The choice is remembered, and <code class="il">agentfleet update</code> honors the variable. <code class="il">--mods</code> opts back in. Uninstall removes the <code class="il">agentfleet</code> catalog and its plugins from Claude Code; a rollback to a backup from before 2.1.0 does too.</p>
+      </section>
+
       <section id="what-gets-installed">
         <h2 class="anchor-heading">What gets installed<a class="anchor-link" href="#what-gets-installed" aria-label="Link to this section">#</a></h2>
         <p>Everything lives under your home directory. No root or admin access is required.</p>
         <h3 id="wgi-agents" class="anchor-heading">Fleet agents<a class="anchor-link" href="#wgi-agents" aria-label="Link to this section">#</a></h3>
         <ul class="req-list">
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/agents/fleet-*.md</code> — one generated agent file per lane, each with an optional fallback model chain (at most three entries, used only for provider unavailability or overload).</li>
+        </ul>
+        <h3 id="wgi-mods" class="anchor-heading">Mods<a class="anchor-link" href="#wgi-mods" aria-label="Link to this section">#</a></h3>
+        <ul class="req-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg> <code class="il">~/.claude/agentfleet/mods/</code> — the local <code class="il">agentfleet</code> plugin catalog. <code class="il">fleet-status</code> is installed and on by default; <code class="il">token-weather</code> and <code class="il">fast-jev-compaction</code> are opt-in. See <a href="#mods">Mods</a>.</li>
         </ul>
         <h3 id="wgi-settings" class="anchor-heading">Settings<a class="anchor-link" href="#wgi-settings" aria-label="Link to this section">#</a></h3>
         <ul class="req-list">
@@ -682,6 +736,7 @@ agentfleet use openrouter     # or pass --use to add</code></pre>
 
       <section id="privacy">
         <h2 class="anchor-heading">Privacy<a class="anchor-link" href="#privacy" aria-label="Link to this section">#</a></h2>
+        <p><code class="il">fleet-status</code> sends nothing anywhere; the opt-in <code class="il">fast-jev-compaction</code> mod sends conversation text and tool inputs to TypeSafe at each compaction, with tool results replaced by short notes. See <a href="#mods">Mods</a> for its key requirements and data sharing.</p>
         <p>The routing hook writes only to a mode-0600 JSONL log at <code class="il">~/.claude/routing-log.jsonl</code>.</p>
         <h3 id="privacy-what-stored" class="anchor-heading">What is stored<a class="anchor-link" href="#privacy-what-stored" aria-label="Link to this section">#</a></h3>
         <div class="table-wrap">
@@ -777,6 +832,7 @@ agentfleet auto-update on       # turn them back on</code></pre>
           <pre><code>agentfleet uninstall</code></pre>
         </div>
         <p>This removes only files and hook entries owned by this bundle. Unrelated top-level settings, plugin selections, and your own rules are left untouched.</p>
+        <p>Uninstall also removes the <code class="il">agentfleet</code> catalog and its plugins from Claude Code; a rollback to a backup from before 2.1.0 does too.</p>
         <h3 id="uninstall-rollback" class="anchor-heading">Rollback<a class="anchor-link" href="#uninstall-rollback" aria-label="Link to this section">#</a></h3>
         <p>To restore the state from before the last install or update:</p>
         <div class="code-wrap">
@@ -797,6 +853,15 @@ agentfleet rollback --backup ~/.claude/backups/claude-agents-config/20240101-120
 
       <section id="troubleshooting">
         <h2 class="anchor-heading">Troubleshooting<a class="anchor-link" href="#troubleshooting" aria-label="Link to this section">#</a></h2>
+
+        <h3 id="ts-fleet-status" class="anchor-heading">fleet-status doesn't show<a class="anchor-link" href="#ts-fleet-status" aria-label="Link to this section">#</a></h3>
+        <p>Check <code class="il">claude --version</code> is 2.1.287 or later, and use a <a href="#mods">supported interface</a>. Run <code class="il">/plugin</code> and look for "1 mod active · fleet-status". If registration was skipped, run these commands by hand:</p>
+        <div class="code-wrap">
+          <pre><code>claude plugin marketplace add ~/.claude/agentfleet/mods
+claude plugin install fleet-status@agentfleet</code></pre>
+          <button class="copy-btn" type="button" aria-label="Copy fleet-status registration commands">Copy</button>
+        </div>
+        <p>The band only appears when something needs action; <code class="il">/fleet-status</code> always answers.</p>
 
         <h3 id="ts-path" class="anchor-heading">Commands not found after install<a class="anchor-link" href="#ts-path" aria-label="Link to this section">#</a></h3>
         <p>The CLI wrappers are installed to <code class="il">~/.local/bin/</code>. If your shell does not include that directory in <code class="il">PATH</code>, add it:</p>
@@ -872,7 +937,7 @@ curl -fsSL https://agentfleet.wecansync.com/install.sh | sh -s -- --provider gat
           <details class="faq-item"><summary>Where should I put my own Claude Code instructions?</summary><p>Put them in <code class="il">~/.claude/rules/*.md</code>. Claude Code loads all files in that directory in every session. AgentFleet manages <code class="il">~/.claude/CLAUDE.md</code> and rewrites it on update, so personal instructions placed there will be lost.</p></details>
           <details class="faq-item"><summary>How do I revert an update that broke something?</summary><p>Run <code class="il">agentfleet rollback</code>. Every apply operation takes a backup of the managed files first, stored in <code class="il">~/.claude/backups/claude-agents-config/</code>. The rollback restores the newest backup. Use <code class="il">--backup DIR</code> to restore a specific named snapshot.</p></details>
           <details class="faq-item"><summary>Is root or admin access required?</summary><p>No. Everything is installed under your home directory. The only directories created are under <code class="il">~/.claude/</code>, <code class="il">~/.config/</code>, and <code class="il">~/.local/</code>.</p></details>
-          <details class="faq-item"><summary>Does AgentFleet send prompt data anywhere?</summary><p>No. The routing hook writes only to a local mode-0600 log file. Routed entries contain the lane name, reason code, timestamp, and character count — never the prompt text. No-match entries keep a brief excerpt (max 160 characters, credentials redacted) that is purged after 14 days.</p></details>
+          <details class="faq-item"><summary>Does AgentFleet send prompt data anywhere?</summary><p>The opt-in <code class="il">fast-jev-compaction</code> mod sends conversation text and tool inputs to TypeSafe at each compaction; tool results are replaced by short notes. <code class="il">fleet-status</code> sends nothing anywhere. The routing hook writes only to a local mode-0600 log file. Routed entries contain the lane name, reason code, timestamp, and character count — never the prompt text. No-match entries keep a brief excerpt (max 160 characters, credentials redacted) that is purged after 14 days.</p></details>
           <details class="faq-item"><summary>Is AgentFleet affiliated with Anthropic?</summary><p>No. AgentFleet is an independent open-source project by WeCanSync, released under the MIT license. Claude and Claude Code are trademarks of Anthropic.</p></details>
         </div>
       </section>

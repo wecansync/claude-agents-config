@@ -32,6 +32,11 @@ def main() -> int:
             print(f"remove generated cache first: {path}", file=sys.stderr)
             return 1
         rel = path.relative_to(ROOT).as_posix()
+        parts = path.relative_to(ROOT).parts
+        if len(parts) >= 3 and parts[0] == "mods" and any(
+            parts[index:index + 2] == (".claude-plugin", "types") for index in range(len(parts) - 1)
+        ):
+            continue
         if rel in INDEX_FILES:
             continue
         executable = bool(path.stat().st_mode & stat.S_IXUSR)

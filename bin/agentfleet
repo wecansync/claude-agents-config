@@ -1087,7 +1087,10 @@ def _auto_update_hook(paths: Paths) -> None:
 
 def cmd_update(paths: Paths, args: argparse.Namespace) -> int:
     try:
-        return _run_installer(paths, list(getattr(args, "installer_args", [])))
+        forwarded = list(getattr(args, "installer_args", []))
+        if os.environ.get("AGENTFLEET_MODS") == "0" and "--mods" not in forwarded and "--no-mods" not in forwarded:
+            forwarded.append("--no-mods")
+        return _run_installer(paths, forwarded)
     except DownloadError as exc:
         die(str(exc))
 
