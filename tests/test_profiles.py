@@ -106,7 +106,7 @@ class ProfileTests(unittest.TestCase):
         self.addCleanup(self.raw.cleanup)
         self.home, self.config = Path(self.raw.name) / "home", Path(self.raw.name) / "config"
         self.env = {"PATH": os.environ.get("PATH", ""), "HOME": str(self.home), "XDG_CONFIG_HOME": str(self.config),
-                    "PYTHONDONTWRITEBYTECODE": "1", "AGENTFLEET_NONINTERACTIVE": "1",
+                    "PYTHONDONTWRITEBYTECODE": "1", "AGENTFLEET_MODS": "0", "AGENTFLEET_NONINTERACTIVE": "1",
                     **{f"TOK_{key.upper()}": value for key, value in TOKENS.items()}}
         install = self.run_cmd([PYTHON, str(ROOT / "bin/install.py"), "--provider", "gateway", "--gateway-url", self.url("a"),
                                 "--allow-insecure-http", "--gateway-token-env", "TOK_A", "--home", str(self.home), "--config-home", str(self.config)])

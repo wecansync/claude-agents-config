@@ -1,6 +1,6 @@
 {
   "format": "claude-agents-config.bundle.v1",
-  "version": "2.0.6",
+  "version": "2.1.0",
   "files": [
     {
       "path": ".gitattributes",
@@ -9,12 +9,12 @@
     },
     {
       "path": ".gitignore",
-      "sha256": "dfd34945f289fe31594a703b10c905c7d4b1ee5e3735a7be5baa13f6c70ac695",
+      "sha256": "0bc8fb7adb891174c8e59cbf1307401d397424b198cf2ab985c932ad244a8380",
       "mode": "0o644"
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "72d12ccfb884afa2f35578a4b487961cfb32e39c4f8db0fc325fac362f54c324",
+      "sha256": "384efa22ae9b9ddd5993b60eddba8c311ce4bbb5b88986c1b266c5502a85dd79",
       "mode": "0o644"
     },
     {
@@ -29,12 +29,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "28755598022a73aec1e1c301131b39b254a7f957cf54e78dd8fbab29a4069b96",
+      "sha256": "a5fc38a3922a7cbf7f63fc2708eea4e15b478089079ffc80b28e614e444c18be",
       "mode": "0o644"
     },
     {
       "path": "VERSION",
-      "sha256": "5586bab26415fe15a8d5ace77ab932358d3ff0af628b8acaf326415293838aa6",
+      "sha256": "c89b87c262e9d5ffd20e73aac74a1772adcc9f5a21682cc33adcf5086e5fef5c",
       "mode": "0o644"
     },
     {
@@ -134,7 +134,7 @@
     },
     {
       "path": "bin/agentfleet",
-      "sha256": "35eb7f76f0a670670a05d7085bfd7b690601b5c4ae27b3eaaf212d7f4782fd18",
+      "sha256": "e43d548f55f5b4130cc1166ba1d8a38370ca82c93e7d327872c372c9470cd16e",
       "mode": "0o755"
     },
     {
@@ -154,7 +154,7 @@
     },
     {
       "path": "bin/install.py",
-      "sha256": "35554a87fd555b39a7327230df66e511dedd9747162052dd4c9db69093ce6e22",
+      "sha256": "55c71ccbb34bf5519174b791c47ec9759690d57a1d80f35f6df3235eff08198f",
       "mode": "0o755"
     },
     {
@@ -191,6 +191,146 @@
       "path": "install.sh",
       "sha256": "6d01c168ca103c00d3c0935ecf0462e5fabed9dd6c0475b7b30327b323343cb5",
       "mode": "0o755"
+    },
+    {
+      "path": "mods/.claude-plugin/marketplace.json",
+      "sha256": "689988a5fffc35c55141f6175c96f9752f7d601d04c24659a11d49538422bb43",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/.claude-plugin/plugin.json",
+      "sha256": "a104a866f35027aad2bdb98b02d875b6ddabac837f5d2f08af42488a9aff48e2",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/LICENSE",
+      "sha256": "06dcddbb6908a0c6dd4a9e8ec822eea41d5a460a53089fecccc8a68049e99241",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/README.md",
+      "sha256": "5499bdb4f3ec13ac9e228cb09ab2894fd1a4e3128db04722735dbfc794f27299",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/UPSTREAM.md",
+      "sha256": "97cd336ae45f04ffd36e1d89cfd529a8b7b4a6d6f028727cafe113eff664f3dd",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/hooks/README.md",
+      "sha256": "df82bb0b166ca01f306eef57026b92b1d65e6f66e637ed9ff9b7dddc41232496",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/hooks/fast-jev.ts",
+      "sha256": "f1b1cbedbc9bad4a7754dd809dde5a19ebcc1a077cf8998c8cd1258f572dc08b",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/hooks/hooks.json",
+      "sha256": "096590fe886c53759c7a55661d8d4972724248a167851a56b55e5c051995c7d2",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/src/client.ts",
+      "sha256": "c324203676c7256abfd828110ab5181e2bb702c5b0acfb25f9930f1f529a1fff",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/src/compact.ts",
+      "sha256": "6dcfe27bc00c1ba9065135a61a128bde0da41b9d300dbfd286de3cd6ce8b745b",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/src/index.ts",
+      "sha256": "5f832b5688b80900fa4ef50a5f9d150137b19c8dceaa7cbe8a1fa2980cc1de4a",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/src/messages.ts",
+      "sha256": "fe60ebbde4f588a8fd0af4a8c88e8d6a4d308ae06b7eab6ad7dc80a01702a0f9",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/src/request.ts",
+      "sha256": "aaa0922f89b1a38b304cf8cf922038641338cdae04e1a636c2a618c60c55b53a",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/src/state.ts",
+      "sha256": "585a9e571340a56d604ea7b90a395f286e575fe24b8394600c38064d972c03dc",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fast-jev-compaction/src/types.ts",
+      "sha256": "dbb401b0f9b09af3a8ec4bb331f2c7141dfa70dc38c3dbfd501183d44930973f",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fleet-status/.claude-plugin/plugin.json",
+      "sha256": "c62deba325657843a2a12e34467a2a0d0ebf1c68f117f661bfeb5aeb18d32f08",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fleet-status/README.md",
+      "sha256": "a93a36ee35158c0d6ef2d8e7f494c6742402a5a94e81e7a92a2b8ea2cebe9d74",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fleet-status/hooks/hooks.json",
+      "sha256": "529fd7aa9b22d012870c0a106899b65f6a37eac022c7ffb77898042038e03167",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fleet-status/hooks/register.tsx",
+      "sha256": "765e45d3f7ada08f2f7a2f9d44289cbedc5b5a065fbc812094afc4bbaa0817e3",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fleet-status/hooks/status.ts",
+      "sha256": "10c90564d007650ddadca4febcb19bbcda4d3c5221ef90bba3eb3004d3b42f05",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fleet-status/tests/status.test.ts",
+      "sha256": "6e08fa8e5590437ce4a832aacd11532f41acbc24385185f88b6850301f52bf63",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/fleet-status/types/index.d.ts",
+      "sha256": "3017a6102f86a5c4c7fbd6696c57c0c03f9cccfd1c6e97946f8d334d02147128",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/token-weather/.claude-plugin/plugin.json",
+      "sha256": "fee0ce40e337e524da9f8fe51d7569f5a34615af63c0a95c429175e0cc771a96",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/token-weather/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/token-weather/README.md",
+      "sha256": "9798ba970411903d858656dfb0b2e15c57b2f308772495cdbdb208418a3e8a0c",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/token-weather/UPSTREAM.md",
+      "sha256": "07522b2fe7ce920d1d0c949874a984324962e58c89a992f9646d243af412906c",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/token-weather/hooks/hooks.json",
+      "sha256": "a395403b07ddf4dddc07657145783cfe40363449540ecba033a7b7d9fe55e075",
+      "mode": "0o644"
+    },
+    {
+      "path": "mods/token-weather/hooks/token-weather.mjs",
+      "sha256": "547cadbeaa2f9a662ce27cf9935d7963fc7833c377a938d2b872afe9f7fba3af",
+      "mode": "0o644"
     },
     {
       "path": "scripts/fleet-model-drift.py",
@@ -239,22 +379,27 @@
     },
     {
       "path": "tests/test_auto_update.py",
-      "sha256": "c9e8b8b4c3fde17556205f7f5bb3d0adf14f711103ea9788d4835e74949182f3",
+      "sha256": "00ebff63c76fc1413e4457ace18215f3c1101c159e08fe8ffdd1625ffe315630",
       "mode": "0o644"
     },
     {
       "path": "tests/test_install_windows_repairs.py",
-      "sha256": "25d6c8993d56a10843318917969dfae58cf865011707b45eaf476c59104ba8e4",
+      "sha256": "cbb3d6767aff8de73b9a0d76166ded447bbdcadaea15ade26fd644a3aed144a7",
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_mods.py",
+      "sha256": "91baf343971f12e536d90f711b09cff6f7fa8ac305e2c4be936d93ae7f18a7c6",
       "mode": "0o644"
     },
     {
       "path": "tests/test_profiles.py",
-      "sha256": "374f4f9640568c372146e12e65f3409b5f2bb4d3554112a202ddc76563a7aabe",
+      "sha256": "23780a7fcfa7a3a712ad47ea0a60761c1e77ce83fd866e17aa619a27553a31ad",
       "mode": "0o755"
     },
     {
       "path": "tests/test_provider_repair.py",
-      "sha256": "d03b388ef9840a7eb7713a4fb4ec1949ad394e145bb74da2740595d0e7750fb3",
+      "sha256": "3dc20d5f818bf11839b8b22616e21857f152cb96a6594b270dc31f1bcb3cca3b",
       "mode": "0o755"
     },
     {

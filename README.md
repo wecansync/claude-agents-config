@@ -6,11 +6,11 @@ provider offers: a Claude subscription, an Anthropic API key, or any
 Anthropic-compatible gateway whose models are discovered from `GET /v1/models`.
 
 It also installs a routing hook, a model-sync startup hook, a context-budget
-hook, a privacy-safe status line, a global `CLAUDE.md`, and the `/fleet-setup`
-skill. Everything lives under your home directory; no root or admin access is
-required.
+hook, a privacy-safe status line, a global `CLAUDE.md`, the `/fleet-setup`
+skill, and a local Claude Code mods catalog with `fleet-status` on by default.
+Everything lives under your home directory; no root or admin access is required.
 
-Version: **2.0.6** — MIT license. See [LICENSE](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for release history.
+Version: **2.1.0** — MIT license. See [LICENSE](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 > AgentFleet is an independent project by WeCanSync. It is not affiliated with
 > or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.
@@ -104,6 +104,8 @@ curl -fsSL https://agentfleet.wecansync.com/install.sh | \
 | `--enable-model-discovery` | Turn on startup model discovery for a bare `--gateway-url` install (implied by `--provider gateway`). |
 | `--no-wizard` | Never prompt; keep or infer the provider. |
 | `--wizard` | Force the wizard even on an existing install. |
+| `--mods` | Opt back in to mods. The choice is remembered. |
+| `--no-mods` | Opt out of mods. The choice is remembered. |
 | `--dry-run` | Show changes without writing anything. |
 | `--check` | Run the bundle doctor without changing files. |
 | `--uninstall --apply` | Remove setup-owned files. |
@@ -111,6 +113,9 @@ curl -fsSL https://agentfleet.wecansync.com/install.sh | \
 | `--home`, `--config-home`, `--prefix` | Override path roots. |
 
 `AGENTFLEET_NONINTERACTIVE=1` disables all prompts.
+
+`AGENTFLEET_MODS=0` also opts out of mods; `agentfleet update` honors the
+variable. See [Mods](#mods) for requirements and optional plugins.
 
 ---
 
@@ -329,6 +334,9 @@ install command (or an update) keeps the gateway you switched to.
 - `~/.claude/agents/fleet-*.md` — one generated agent per fleet lane, each with
   an optional fallback model chain (at most three entries, for provider
   unavailability or overload only).
+- `~/.claude/agentfleet/mods/` — the local `agentfleet` plugin catalog.
+  `fleet-status` is installed and on by default; `token-weather` and
+  `fast-jev-compaction` are opt-in. See [Mods](#mods).
 - `~/.claude/settings.json` — merged settings. Unrelated permissions, hooks,
   plugins, and environment values are preserved. Mode 0600 because it can
   contain a gateway token.
@@ -368,6 +376,64 @@ with `command -v` and are inert when that optional tool is absent.
 
 ---
 
+## Mods
+
+Mods are plugins whose code runs inside Claude Code and can draw in its
+interface. The local `agentfleet` catalog lives at
+`~/.claude/agentfleet/mods/`. Mods need Claude Code 2.1.287 or later and show
+in the terminal and Claude Desktop's Code tab, not in the VS Code extension's
+chat panel, `claude -p`, the Agent SDK, or Desktop WSL sessions. They run with
+your user permissions and are not sandboxed.
+
+**fleet-status** is installed and on by default. Its band above the prompt
+appears only when something needs action: an update during the session says
+“Restart Claude Code to use it”; a failed automatic update points to
+`~/.claude/agentfleet/auto-update.log`; lanes without an available model or
+model changes waiting for review say “Run /fleet-setup”. The band has a Hide
+button. `/fleet-status` prints the version, profile, auto-update state, model
+proposals, and notices. It reads only the install manifest, active profile
+marker, `auto-update.json`, and `fleet-model-proposal.json`, never
+`settings.json` or tokens. It sends nothing anywhere and adds nothing to
+Claude's context except the command reply. Turn it off with:
+
+```bash
+claude plugin disable fleet-status@agentfleet
+```
+
+Two optional mods are in the catalog, neither installed by default:
+
+- **token-weather**, Anthropic's sample mod (Apache-2.0), forecasts how full
+  the context window is above the prompt.
+- **fast-jev-compaction**, by tamaratran (MIT), replaces Claude Code's
+  compaction summary. A fast request to TypeSafe's Jev model chooses which
+  old tool calls and results to drop or truncate; everything kept stays word
+  for word. It needs a paid TypeSafe API key (`TYPESAFE_API_KEY` or its
+  `apiKey` option). At each compaction it sends conversation text and tool
+  inputs to `api.typesafe.ai`; tool results are replaced by short notes.
+  It compacts at 60% by default; set `compactAtPercent` to 80 to match
+  AgentFleet. AgentFleet's copy never forces compaction without a configured key.
+
+```bash
+claude plugin install token-weather@agentfleet
+claude plugin install fast-jev-compaction@agentfleet
+```
+
+On install, if Claude Code 2.1.287 or later is on PATH, the installer runs
+these commands once. Otherwise it prints them to run by hand and retries on
+the next update:
+
+```bash
+claude plugin marketplace add ~/.claude/agentfleet/mods
+claude plugin install fleet-status@agentfleet
+```
+
+Updates, including automatic ones, rewrite mod files in place for the next
+Claude Code session. They never re-register, so disabled or uninstalled mods
+stay that way. Opt out with `--no-mods` or `AGENTFLEET_MODS=0`; the choice is
+remembered, and `agentfleet update` honors the variable. `--mods` opts back in.
+
+---
+
 ## Context compaction
 
 The context-budget hook keeps `autoCompactWindow` and
@@ -388,6 +454,10 @@ credential-shaped values redacted. Text excerpts are removed after 14 days;
 entries after 90 days. Purging runs at most daily. The log rotates at
 2,000,000 bytes. The hook is fail-open: logging failure does not block a
 prompt. The doctor checks these values in the packaged and installed hook.
+
+`fleet-status` sends nothing anywhere. The opt-in `fast-jev-compaction` mod
+sends conversation text and tool inputs to TypeSafe at each compaction, with
+tool results replaced by short notes. See [Mods](#mods).
 
 ---
 
@@ -410,6 +480,9 @@ prompt. The doctor checks these values in the packaged and installed hook.
   literals. The gateway token is the only secret normally needed; keep it in a
   protected environment variable, not in version control, shell history, or
   logs.
+
+`agentfleet uninstall` also removes the `agentfleet` catalog and its plugins
+from Claude Code. A rollback to a backup from before 2.1.0 does too.
 
 ---
 

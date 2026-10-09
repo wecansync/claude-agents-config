@@ -45,7 +45,7 @@ def load_installer():
 
 
 def env_for(home: Path, config: Path) -> dict:
-    return {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config), "PYTHONDONTWRITEBYTECODE": "1"}
+    return {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "XDG_CONFIG_HOME": str(config), "PYTHONDONTWRITEBYTECODE": "1", "AGENTFLEET_MODS": "0"}
 
 
 def find_hook(settings: dict, event: str, kind: str) -> dict:

@@ -3,6 +3,23 @@
 All notable changes to AgentFleet are documented here. Dates are UTC. This
 file follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [2.1.0] - 2026-10-09
+
+Claude Code mods: a status band when something needs action, with optional
+context forecasts and Jev compaction in a local plugin catalog.
+
+### Added
+- A local plugin catalog named `agentfleet` at `~/.claude/agentfleet/mods/`. Mods need Claude Code 2.1.287 or later and show in the terminal and the Code tab of Claude Desktop, not in the VS Code extension's chat panel, `claude -p`, the Agent SDK, or Desktop WSL sessions. They run with your user permissions and are not sandboxed.
+- `fleet-status`, installed and on by default, draws a band above the prompt only for an update during the session, a failed automatic update, lanes without an available model, or model changes waiting for review. It has a Hide button; `/fleet-status` prints the version, profile, auto-update state, model proposals, and notices. It reads only the install manifest, active profile marker, `auto-update.json`, and `fleet-model-proposal.json`, never settings or tokens. It sends nothing anywhere and adds nothing to Claude's context except the command reply. Turn it off with `claude plugin disable fleet-status@agentfleet`.
+- Two optional mods, neither installed by default: Anthropic's `token-weather` (Apache-2.0) forecasts context-window fullness above the prompt; tamaratran's `fast-jev-compaction` (MIT) replaces the compaction summary with a request to TypeSafe's Jev model that chooses which old tool calls and results to drop or truncate, keeping the rest word for word. Install with `claude plugin install token-weather@agentfleet` or `claude plugin install fast-jev-compaction@agentfleet`.
+- Jev compaction needs a paid TypeSafe API key through `TYPESAFE_API_KEY` or its `apiKey` option. At each compaction it sends conversation text and tool inputs to `api.typesafe.ai`, with tool results replaced by short notes. Its default threshold is 60%; set `compactAtPercent` to 80 to match AgentFleet. AgentFleet's copy never forces compaction without a configured key.
+- `--no-mods` and `AGENTFLEET_MODS=0` opt out; the choice is remembered and `agentfleet update` honors the variable. `--mods` opts back in.
+
+### Changed
+- On install, when Claude Code 2.1.287 or later is on PATH, the installer runs `claude plugin marketplace add ~/.claude/agentfleet/mods` and `claude plugin install fleet-status@agentfleet` once. Otherwise it prints the commands to run by hand and retries on the next update.
+- Updates, including automatic ones, rewrite mod files in place for the next Claude Code session without re-registering plugins, so disabled or uninstalled mods stay that way.
+- Uninstall removes the `agentfleet` catalog and its plugins from Claude Code. Rolling back to a backup from before 2.1.0 does too.
+
 ## [2.0.6] - 2026-09-25
 
 Windows fixes: the one-command install works on the PowerShell built into
@@ -117,6 +134,7 @@ through 2026-09-22:
 - A bytecode-guard preflight check, manifest/fleet-hash sync, and the gateway catalog's user agent, each of which could otherwise break installs or model discovery.
 - Windows compatibility: UTF-8 output across scripts and binaries.
 
+[2.1.0]: https://github.com/wecansync/claude-agents-config/pull/23
 [2.0.6]: https://github.com/wecansync/claude-agents-config/pull/22
 [2.0.5]: https://github.com/wecansync/claude-agents-config/pull/20
 [2.0.4]: https://github.com/wecansync/claude-agents-config/pull/19

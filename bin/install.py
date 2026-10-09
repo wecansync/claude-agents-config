@@ -204,6 +204,314 @@ def bytes_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def is_generated_mod_types_path(rel: str) -> bool:
+    parts = Path(rel).parts
+    return len(parts) >= 3 and parts[0] == "mods" and any(
+        parts[index:index + 2] == (".claude-plugin", "types") for index in range(len(parts) - 1)
+    )
+
+
+def is_mod_payload_path(rel: str) -> bool:
+    parts = Path(rel).parts
+    return len(parts) > 1 and parts[0] == "mods" and "tests" not in parts[1:] and not is_generated_mod_types_path(rel)
+
+
+def mods_declined(previous: dict, args: argparse.Namespace) -> bool:
+    if getattr(args, "mods", False):
+        return False
+    return getattr(args, "no_mods", False) or os.environ.get("AGENTFLEET_MODS") == "0" or previous.get("modsState") == "declined"
+
+
+def mods_owned(meta: dict) -> bool:
+    """Whether this install registered the agentfleet marketplace, whatever the
+    current consent: a later --no-mods must not orphan it."""
+    return meta.get("modsMarketplace") is True or meta.get("modsState") == "registered"
+
+
+def update_mods_metadata(home: Path, changes: dict[str, object]) -> None:
+    """Record mod registration state in the install metadata; a None value
+    removes the key. Best-effort: a failure leaves the next run to retry."""
+    metadata_path = home / ".claude" / ".claude-agents-config-install.json"
+    if not metadata_path.is_file():
+        return
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict):
+            return
+        for key, value in changes.items():
+            if value is None:
+                metadata.pop(key, None)
+            else:
+                metadata[key] = value
+        atomic_write(metadata_path, json_bytes(metadata), 0o600)
+    except Exception as exc:  # noqa: BLE001 - recording state must never fail the run
+        print(f"Could not record the Claude Code plugin state ({exc.__class__.__name__}); the next update retries.")
+
+
+# The plugin commands need no credentials, so the child gets only what a
+# process needs to run and find its config: never ANTHROPIC_AUTH_TOKEN or a
+# gateway token the wizard put in this process's environment.
+MOD_CLI_ENV_NAMES = {
+    "PATH", "PATHEXT", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+    "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR", "USER", "USERNAME", "LOGNAME",
+    "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+    "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "CLAUDE_CONFIG_DIR",
+}
+
+
+def mod_cli_environment(home: Path) -> dict[str, str]:
+    environment = {name: value for name, value in os.environ.items() if name.upper() in MOD_CLI_ENV_NAMES}
+    try:
+        real_home = Path.home().resolve(strict=False)
+    except RuntimeError:
+        real_home = home.resolve(strict=False)
+    if home.resolve(strict=False) != real_home:
+        environment["HOME"] = str(home)
+        environment.pop("CLAUDE_CONFIG_DIR", None)
+        if os.name == "nt":
+            environment["USERPROFILE"] = str(home)
+    return environment
+
+
+def claude_executable() -> str | None:
+    found = shutil.which("claude")
+    if not found or not os.path.isabs(found):
+        return None
+    # Trust only a claude found in an absolute PATH entry: on Windows,
+    # shutil.which also looks in the current directory first.
+    trusted = {Path(entry).resolve(strict=False) for entry in os.environ.get("PATH", "").split(os.pathsep)
+               if entry and os.path.isabs(entry)}
+    if Path(found).parent.resolve(strict=False) not in trusted:
+        return None
+    return str(Path(found).resolve(strict=False))
+
+
+def cmd_shim_unsafe(executable: str, *args: str) -> bool:
+    """cmd.exe runs a .cmd/.bat shim and expands these characters in its
+    arguments, so such an argument is not passed through it."""
+    return (os.name == "nt" and Path(executable).suffix.lower() in {".cmd", ".bat"}
+            and any(char in '&|<>^%!"' for arg in args for char in arg))
+
+
+def run_claude(executable: str, home: Path, *args: str) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run([executable, *args], text=True, encoding="utf-8", errors="replace",
+                              capture_output=True, check=False, timeout=60, env=mod_cli_environment(home))
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def claude_version_ok(executable: str, home: Path) -> bool:
+    result = run_claude(executable, home, "--version")
+    if result is None or result.returncode != 0:
+        return False
+    match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", result.stdout + " " + result.stderr)
+    return bool(match and tuple(int(part) for part in match.groups()) >= (2, 1, 287))
+
+
+def claude_json(executable: str, home: Path, *args: str) -> object | None:
+    result = run_claude(executable, home, *args)
+    if result is None or result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def manual_mod_commands(mods_dir: Path) -> str:
+    return (f'claude plugin marketplace add "{mods_dir}" and '
+            'claude plugin install fleet-status@agentfleet')
+
+
+def marketplace_is_ours(item: dict, mods_dir: Path) -> bool:
+    expected = mods_dir.resolve(strict=False)
+    source = item.get("source")
+    if isinstance(source, dict):
+        if source.get("source") != "directory" or not isinstance(source.get("path"), str):
+            return False
+        source_path = Path(source["path"]).expanduser().resolve(strict=False)
+        listed_path = item.get("path")
+        install_location = item.get("installLocation")
+        return (
+            source_path == expected
+            and isinstance(listed_path, str)
+            and Path(listed_path).expanduser().resolve(strict=False) == expected
+            and (install_location is None or Path(install_location).resolve(strict=False) == expected)
+        )
+    if source != "directory":
+        return False
+    listed_path = item.get("path")
+    return isinstance(listed_path, str) and Path(listed_path).expanduser().resolve(strict=False) == expected
+
+
+def marketplace_entry(value: object) -> dict | None:
+    if not isinstance(value, list):
+        return None
+    return next((item for item in value if isinstance(item, dict) and item.get("name") == "agentfleet"), None)
+
+
+def print_mod_manual(mods_dir: Path) -> None:
+    print(f"Claude Code plugin registration was skipped; run: {manual_mod_commands(mods_dir)}")
+
+
+def register_mods(home: Path, mods_dir: Path) -> tuple[bool, bool]:
+    """Register the agentfleet marketplace and install fleet-status, once.
+
+    Answers (our marketplace is registered, fleet-status is installed). A plugin
+    already listed is left alone: `plugin install` would re-enable one the user
+    disabled."""
+    executable = claude_executable()
+    if not executable or not claude_version_ok(executable, home) or cmd_shim_unsafe(executable, str(mods_dir)):
+        print_mod_manual(mods_dir)
+        return False, False
+    market_list = claude_json(executable, home, "plugin", "marketplace", "list", "--json")
+    if not isinstance(market_list, list):
+        print_mod_manual(mods_dir)
+        return False, False
+    market = marketplace_entry(market_list)
+    if market is not None and not marketplace_is_ours(market, mods_dir):
+        print('Claude Code already has a different "agentfleet" marketplace; leaving it untouched.')
+        return False, False
+    if market is None:
+        result = run_claude(executable, home, "plugin", "marketplace", "add", str(mods_dir))
+        if result is None or result.returncode != 0:
+            print_mod_manual(mods_dir)
+            return False, False
+    plugins = claude_json(executable, home, "plugin", "list", "--json")
+    if not isinstance(plugins, list):
+        print_mod_manual(mods_dir)
+        return True, False
+    if not any(isinstance(item, dict) and item.get("id") == "fleet-status@agentfleet" for item in plugins):
+        result = run_claude(executable, home, "plugin", "install", "fleet-status@agentfleet")
+        if result is None or result.returncode != 0:
+            print_mod_manual(mods_dir)
+            return True, False
+    return True, True
+
+
+def marketplace_present(home: Path, mods_dir: Path) -> bool | None:
+    """Whether our marketplace is registered; None when the CLI cannot say."""
+    executable = claude_executable()
+    if not executable or not claude_version_ok(executable, home):
+        return None
+    market_list = claude_json(executable, home, "plugin", "marketplace", "list", "--json")
+    if not isinstance(market_list, list):
+        return None
+    market = marketplace_entry(market_list)
+    return market is not None and marketplace_is_ours(market, mods_dir)
+
+
+def remove_mod_marketplace(home: Path, mods_dir: Path) -> bool:
+    """Best-effort removal of our marketplace, which also uninstalls its plugins.
+    Works after the folder is gone; never touches a foreign marketplace."""
+    manual = "Could not remove the AgentFleet plugin catalog from Claude Code; run: claude plugin marketplace remove agentfleet"
+    try:
+        executable = claude_executable()
+        if not executable or not claude_version_ok(executable, home):
+            print(manual)
+            return False
+        market_list = claude_json(executable, home, "plugin", "marketplace", "list", "--json")
+        if not isinstance(market_list, list):
+            print(manual)
+            return False
+        market = marketplace_entry(market_list)
+        if market is None or not marketplace_is_ours(market, mods_dir):
+            return False
+        result = run_claude(executable, home, "plugin", "marketplace", "remove", "agentfleet")
+        if result is None or result.returncode != 0:
+            print(manual)
+            return False
+        return True
+    except Exception:  # noqa: BLE001 - cleanup must never fail the operation
+        print(manual)
+        return False
+
+
+def strip_mod_settings(data: bytes | None, mods_dir: Path) -> tuple[bytes | None, bool]:
+    """Drop the agentfleet marketplace and its plugins from settings, but only
+    when that marketplace is the directory this install owns."""
+    if data is None:
+        return None, False
+    try:
+        settings = json.loads(data)
+    except (UnicodeError, json.JSONDecodeError):
+        return data, False
+    markets = settings.get("extraKnownMarketplaces") if isinstance(settings, dict) else None
+    market = markets.get("agentfleet") if isinstance(markets, dict) else None
+    source = market.get("source") if isinstance(market, dict) else None
+    if not (isinstance(source, dict) and source.get("source") == "directory" and isinstance(source.get("path"), str)
+            and Path(source["path"]).expanduser().resolve(strict=False) == mods_dir.resolve(strict=False)):
+        return data, False
+    del markets["agentfleet"]
+    plugins = settings.get("enabledPlugins")
+    if isinstance(plugins, dict):
+        for key in [key for key in plugins if key.endswith("@agentfleet")]:
+            del plugins[key]
+    return json_bytes(settings), True
+
+
+def mods_dir_for_home(home: Path) -> Path:
+    return home / ".claude" / "agentfleet" / "mods"
+
+
+def ensure_private_mod_store(home: Path) -> None:
+    store = home / ".claude" / "agentfleet"
+    store.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "nt":
+        os.chmod(store, 0o700)
+
+
+def metadata_in_snapshot(backup: Path, records: list, home: Path) -> dict | None:
+    """The install metadata a rollback to this snapshot leaves: its saved copy,
+    {} when the snapshot removes it, or None when it does not touch it."""
+    metadata_path = home / ".claude" / ".claude-agents-config-install.json"
+    record = next((item for item in records if isinstance(item, dict) and item.get("path") == str(metadata_path)), None)
+    if not isinstance(record, dict):
+        return None
+    if record.get("existed") is not True:
+        return {}
+    payload_name = record.get("backup")
+    if not isinstance(payload_name, str):
+        return {}
+    try:
+        value = json.loads((backup / payload_name).read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+
+
+def reconcile_mods_after_restore(home: Path, before: dict) -> None:
+    """Make Claude Code's registration match the files a rollback restored:
+    re-register mods an uninstall had removed, or remove the marketplace when
+    the restored install has no mods. Best-effort."""
+    try:
+        after = old_metadata(home)
+        mods_dir = mods_dir_for_home(home)
+        if metadata_has_mods(after, home):
+            # Only with consent on record: a declined install stays declined.
+            if after.get("modsState") == "registered" and marketplace_present(home, mods_dir) is False:
+                owned, registered = register_mods(home, mods_dir)
+                update_mods_metadata(home, {"modsMarketplace": True if owned else None,
+                                            "modsState": "registered" if registered else None})
+        elif mods_owned(before):
+            remove_mod_marketplace(home, mods_dir)
+            update_mods_metadata(home, {"modsMarketplace": None, "modsState": None})
+    except (Exception, SystemExit) as exc:  # noqa: BLE001 - the rollback itself succeeded
+        print(f"Could not update the Claude Code plugin catalog after rollback ({exc.__class__.__name__}); run: agentfleet update")
+
+
+def metadata_has_mods(meta: dict, home: Path) -> bool:
+    root = mods_dir_for_home(home)
+    records = meta.get("managed")
+    return isinstance(records, list) and any(
+        isinstance(item, dict)
+        and isinstance(item.get("path"), str)
+        and root in Path(item["path"]).parents
+        for item in records
+    )
+
+
 def validate_rel_path(value: object, label: str) -> str:
     if not isinstance(value, str) or not value or "\\" in value:
         fail(f"{label} contains an invalid path: {value!r}")
@@ -284,6 +592,8 @@ def validate_bundle(bundle: Path) -> tuple[dict, str]:
                 fail(f"remove generated __pycache__ from bundle: {path}")
             continue
         rel = path.relative_to(bundle).as_posix()
+        if is_generated_mod_types_path(rel):
+            continue
         if rel in {"manifest.json", "checksums.sha256"}:
             continue
         actual_paths.add(rel)
@@ -2197,6 +2507,8 @@ def managed_specs(
     gateway_owned: bool,
     permission_owned: list[str],
     policy_data: bytes,
+    mods_state: str | None = None,
+    mods_marketplace: bool = False,
 ) -> dict[Path, tuple[bytes, int, str]]:
     claude = home / ".claude"
     fleet = config_root / "delegate-skills"
@@ -2237,6 +2549,12 @@ def managed_specs(
     add(bin_dir / "claude-fleet-setup.cmd", cmd_dispatch(claude / "claude-fleet-setup.py", "python", home, prefix, config_root), 0o644, "prefix:claude-fleet-setup.cmd")
     add(bin_dir / "claude-fleet-setup.ps1", powershell_dispatch(claude / "claude-fleet-setup.py", "python", home, prefix, config_root), 0o644, "prefix:claude-fleet-setup.ps1")
     add(claude / "agentfleet.py", source_bytes(bundle, "bin/agentfleet"), 0o755, "home:.claude/agentfleet.py")
+    mods_dir = claude / "agentfleet" / "mods"
+    manifest = load_json(bundle / "manifest.json", "bundle manifest")
+    for item in manifest.get("files", []):
+        rel = item.get("path") if isinstance(item, dict) else None
+        if isinstance(rel, str) and is_mod_payload_path(rel):
+            add(mods_dir / Path(rel).relative_to("mods"), source_bytes(bundle, rel), 0o644, f"home:.claude/agentfleet/mods/{Path(rel).relative_to('mods').as_posix()}")
     add(bin_dir / "agentfleet", posix_python_wrapper(claude / "agentfleet.py", home, prefix, config_root), 0o755, "prefix:agentfleet")
     add(bin_dir / "agentfleet.cmd", cmd_dispatch(claude / "agentfleet.py", "python", home, prefix, config_root), 0o644, "prefix:agentfleet.cmd")
     add(bin_dir / "agentfleet.ps1", powershell_dispatch(claude / "agentfleet.py", "python", home, prefix, config_root), 0o644, "prefix:agentfleet.ps1")
@@ -2260,6 +2578,10 @@ def managed_specs(
     # would be self-referential. The stable verification manifest is cross-linked
     # by digest instead, while its managed IDs remain exactly equal to metadata.
     metadata["verificationSha256"] = bytes_sha256(json_bytes(verification))
+    if mods_state:
+        metadata["modsState"] = mods_state
+    if mods_marketplace:
+        metadata["modsMarketplace"] = True
     add(metadata_path, json_bytes(metadata), 0o600, "home:.claude/.claude-agents-config-install.json")
     return specs
 
@@ -2935,9 +3257,14 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
     custom_lanes = sorted(set(fleet.get("lanes", {})) - bundle_lanes)
     if custom_lanes:
         print(f"Keeping custom lane(s): {', '.join('fleet-' + name for name in custom_lanes)}")
+    declined_mods = mods_declined(previous, args)
+    mods_state = "declined" if declined_mods else ("registered" if previous.get("modsState") == "registered" else None)
+    # Ownership outlives consent: a --no-mods after registering still lets
+    # uninstall remove the marketplace this install added.
+    mods_marketplace = mods_owned(previous)
     specs = managed_specs(
         bundle, home, config_root, bin_dir, settings_bytes, fleet_bytes, agent_bytes, {}, version, profile,
-        journal, gateway_owned, permission_owned, policy_data,
+        journal, gateway_owned, permission_owned, policy_data, mods_state, mods_marketplace,
     )
     meta = old_metadata(home)
     conflicts = check_parent_conflicts(specs, meta, bundle, args.force_owned)
@@ -2958,6 +3285,7 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
     assert backup is not None
     print(f"Created backup snapshot: {backup}")
     try:
+        ensure_private_mod_store(home)
         stage_and_commit(specs, backup)
         for path in retired:
             path.unlink()
@@ -2985,6 +3313,10 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
             restore_snapshot(backup, home, bin_dir, config_root)
         except BaseException as rollback_exc:
             fail(f"apply failed ({exc!r}) and automatic rollback also failed ({rollback_exc!r}); backup retained at {backup}")
+        if not previous.get("managed"):
+            store = home / ".claude" / "agentfleet"
+            if store.is_dir() and not any(store.iterdir()):
+                store.rmdir()
         return 1
     print(f"Installed AgentFleet {version} ({profile}) under {home}")
     in_path = str(bin_dir) in os.environ.get("PATH", "").split(os.pathsep)
@@ -2992,6 +3324,22 @@ def _apply_install_locked(args: argparse.Namespace, bundle: Path, dry: bool, hom
         print(f"Tip: add {bin_dir} to your PATH to run agentfleet, claude-fleet-setup, claude-fleet-sync, and claude-agents-doctor directly.")
     print("Next: start Claude Code with 'claude', then run /fleet-setup to review the fleet.")
     print("      agentfleet profiles | agentfleet use native | agentfleet status | agentfleet doctor")
+    if declined_mods and not getattr(args, "mods", False):
+        print("Claude Code plugin registration was declined; pass --mods to enable it.")
+    elif mods_state != "registered":
+        mods_dir = mods_dir_for_home(home)
+        try:
+            owned, registered = register_mods(home, mods_dir)
+        except Exception as exc:  # noqa: BLE001 - registration must never fail an install
+            print(f"Claude Code plugin registration failed ({exc.__class__.__name__}); run: {manual_mod_commands(mods_dir)}")
+            owned, registered = False, False
+        changes: dict[str, object] = {}
+        if owned:
+            changes["modsMarketplace"] = True
+        if registered:
+            changes["modsState"] = "registered"
+        if changes:
+            update_mods_metadata(home, changes)
     return 0
 
 
@@ -3137,6 +3485,9 @@ def uninstall(args: argparse.Namespace, bundle: Path, dry: bool) -> int:
 
 def _uninstall_locked(args: argparse.Namespace, bundle: Path, dry: bool, home: Path) -> int:
     meta = old_metadata(home)
+    mods_dir = mods_dir_for_home(home)
+    if dry and mods_owned(meta):
+        print(f"  would remove Claude Code marketplace if it points to: {mods_dir}")
     config_root = config_home(args, home, meta)
     bin_dir = target_bin(args, home)
     if not meta:
@@ -3145,6 +3496,10 @@ def _uninstall_locked(args: argparse.Namespace, bundle: Path, dry: bool, home: P
     records = metadata_records(meta, home, bin_dir, config_root)
     settings_path = home / ".claude" / "settings.json"
     new_settings, settings_changed = settings_for_uninstall(settings_path, meta)
+    # The settings above were read before the marketplace is removed below, so
+    # drop its entries here too or the write would bring them back.
+    new_settings, mod_settings_changed = strip_mod_settings(new_settings, mods_dir)
+    settings_changed = settings_changed or mod_settings_changed
     removable: list[Path] = []
     preserved = []
     for item in records:
@@ -3167,7 +3522,11 @@ def _uninstall_locked(args: argparse.Namespace, bundle: Path, dry: bool, home: P
     # The uninstall backup keeps copies (0600 in a 0700 snapshot) so that a
     # rollback can restore them, as it keeps settings.json; the user is told.
     store = home / ".claude" / "agentfleet"
-    store_files = sorted(path for path in store.rglob("*") if path.is_file() and not path.is_symlink()) if store.is_dir() and not store.is_symlink() else []
+    mods_root = store / "mods"
+    store_files = sorted(
+        path for path in store.rglob("*")
+        if path.is_file() and not path.is_symlink() and mods_root not in path.parents
+    ) if store.is_dir() and not store.is_symlink() else []
     removable.extend(store_files)
     metadata_path = home / ".claude" / ".claude-agents-config-install.json"
     verification_path = home / ".claude" / ".claude-agents-config-manifest.json"
@@ -3198,6 +3557,14 @@ def _uninstall_locked(args: argparse.Namespace, bundle: Path, dry: bool, home: P
                     fail(f"refusing to remove directory or symlink: {path}")
                 path.unlink()
                 fsync_dir(path.parent)
+        # The mod files are gone; remove the folders they left, deepest first.
+        # A folder still holding a file we did not install (Claude Code may
+        # generate some) is kept, and so is that file.
+        if mods_root.is_dir() and not mods_root.is_symlink():
+            mod_dirs = [path for path in mods_root.rglob("*") if path.is_dir() and not path.is_symlink()]
+            for directory in sorted(mod_dirs, key=lambda path: len(path.parts), reverse=True) + [mods_root]:
+                if not any(directory.iterdir()):
+                    directory.rmdir()
         for directory in (store / "secrets", store / "profiles", store):
             if directory.is_dir() and not directory.is_symlink() and not any(directory.iterdir()):
                 directory.rmdir()
@@ -3208,7 +3575,6 @@ def _uninstall_locked(args: argparse.Namespace, bundle: Path, dry: bool, home: P
         if preserved and metadata_path not in preserved:
             print("Uninstall left metadata because user-edited managed files remain.")
         print(f"Removed setup-owned Claude fleet files under {home}; unrelated settings remain.")
-        return 0
     except (Exception, SystemExit) as exc:
         print(f"claude-agents-config: uninstall failed; restoring pre-uninstall state ({exc})", file=sys.stderr)
         try:
@@ -3216,6 +3582,13 @@ def _uninstall_locked(args: argparse.Namespace, bundle: Path, dry: bool, home: P
         except BaseException as rollback_exc:
             fail(f"uninstall failed ({exc!r}) and automatic rollback also failed ({rollback_exc!r}); backup retained at {backup}")
         return 1
+    # Only after the files are gone: a failed uninstall above is restored with
+    # its registration intact. The removal works on a deleted folder.
+    if mods_owned(meta):
+        remove_mod_marketplace(home, mods_dir)
+    # Only matters when uninstall kept the metadata for user-edited files.
+    update_mods_metadata(home, {"modsState": None, "modsMarketplace": None})
+    return 0
 
 
 def find_latest_backup(home: Path) -> Path:
@@ -3264,14 +3637,19 @@ def _rollback_locked(args: argparse.Namespace, home: Path, dry: bool) -> int:
         print(f"  {'restore' if record.get('existed') else 'remove'}: {record.get('path')}")
     if dry:
         restore_snapshot(backup, home, bin_dir, config_root, write=False)
+        restored_meta = metadata_in_snapshot(backup, records, home)
+        if restored_meta is None:
+            restored_meta = current_meta
+        if mods_owned(current_meta) and not metadata_has_mods(restored_meta, home):
+            print(f"  would remove Claude Code marketplace if it points to: {mods_dir_for_home(home)}")
+        elif restored_meta.get("modsState") == "registered" and metadata_has_mods(restored_meta, home):
+            print("  would register the AgentFleet plugin catalog with Claude Code again if it is missing")
         return 0
     current_paths = [Path(record["path"]) for record in records]
     current_backup = create_backup(current_paths, home, False, "rollback-before")
     assert current_backup is not None
     try:
         restore_snapshot(backup, home, bin_dir, config_root)
-        print("Rollback restored the selected backup snapshot.")
-        return 0
     except (Exception, SystemExit) as exc:
         print(f"claude-agents-config: rollback failed; restoring current state ({exc})", file=sys.stderr)
         try:
@@ -3279,6 +3657,9 @@ def _rollback_locked(args: argparse.Namespace, home: Path, dry: bool) -> int:
         except BaseException as rollback_exc:
             fail(f"rollback failed ({exc!r}) and recovery also failed ({rollback_exc!r}); recovery backup retained at {current_backup}")
         return 1
+    print("Rollback restored the selected backup snapshot.")
+    reconcile_mods_after_restore(home, current_meta)
+    return 0
 
 
 def main() -> int:
@@ -3300,6 +3681,9 @@ def main() -> int:
     parser.add_argument("--provider", choices=("native", "anthropic-api", "gateway"), help="native = Claude subscription login; anthropic-api = ANTHROPIC_API_KEY; gateway = --gateway-url endpoint")
     parser.add_argument("--wizard", action="store_true", help="run the interactive provider wizard even on an existing install")
     parser.add_argument("--no-wizard", action="store_true", help="never prompt; keep or infer the provider")
+    mods = parser.add_mutually_exclusive_group()
+    mods.add_argument("--mods", action="store_true", help="enable Claude Code plugin registration, overriding a previous decline")
+    mods.add_argument("--no-mods", action="store_true", help="skip Claude Code plugin registration and remember the choice")
     parser.add_argument("--force-owned", action="store_true", help="replace conflicting unmarked managed files after backup")
     parser.add_argument("--backup", help="backup directory for --rollback")
     # Retain a suppressed compatibility option, but never require it.  The
